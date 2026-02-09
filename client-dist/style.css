@@ -57,6 +57,7 @@ body {
   font-size: 0.9rem;
   line-height: 1.45;
   word-wrap: break-word;
+  white-space: pre-wrap;
   animation: fadeIn 0.15s ease-out;
 }
 

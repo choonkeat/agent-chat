@@ -130,6 +130,13 @@ chatInput.addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     handleSend();
+  } else if (e.key === 'Enter' && e.altKey) {
+    e.preventDefault();
+    var start = chatInput.selectionStart;
+    var end = chatInput.selectionEnd;
+    chatInput.value = chatInput.value.substring(0, start) + '\n' + chatInput.value.substring(end);
+    chatInput.selectionStart = chatInput.selectionEnd = start + 1;
+    autoGrow();
   }
 });
 
