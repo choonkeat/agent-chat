@@ -112,6 +112,7 @@ function handleSend() {
   sendMessage(text);
   chatInput.value = '';
   chatInput.style.height = 'auto';
+  quickReplies.classList.remove('visible');
   showLoading();
 }
 
