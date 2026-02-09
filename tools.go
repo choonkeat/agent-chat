@@ -9,7 +9,8 @@ import (
 
 // MessageParams are the parameters for the send_message tool.
 type MessageParams struct {
-	Text string `json:"text"`
+	Text         string   `json:"text"`
+	QuickReplies []string `json:"quick_replies,omitempty"`
 }
 
 func registerTools(server *mcp.Server, bus *EventBus) {
@@ -38,7 +39,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		ack := bus.CreateAck()
 
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text, AckID: ack.ID})
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text, AckID: ack.ID, QuickReplies: params.QuickReplies})
 
 		var result string
 		select {

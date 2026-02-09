@@ -11,9 +11,10 @@ import (
 
 // Event represents a chat event sent to browser clients.
 type Event struct {
-	Type  string `json:"type"`            // "agentMessage", "userMessage"
-	Text  string `json:"text,omitempty"`
-	AckID string `json:"ack_id,omitempty"`
+	Type         string   `json:"type"`                    // "agentMessage", "userMessage"
+	Text         string   `json:"text,omitempty"`
+	AckID        string   `json:"ack_id,omitempty"`
+	QuickReplies []string `json:"quick_replies,omitempty"`
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.

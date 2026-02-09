@@ -60,7 +60,20 @@ function addUserMessage(text) {
 
 // --- Input enable/disable ---
 
-function enableInput() {
+function setQuickReplies(replies) {
+  quickReplies.innerHTML = '';
+  var items = replies && replies.length > 0 ? replies : ['Continue', 'Tell me more'];
+  for (var i = 0; i < items.length; i++) {
+    var btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.dataset.message = items[i];
+    btn.textContent = items[i];
+    quickReplies.appendChild(btn);
+  }
+}
+
+function enableInput(replies) {
+  setQuickReplies(replies);
   chatInput.disabled = false;
   sendBtn.disabled = false;
   quickReplies.classList.add('visible');
@@ -237,7 +250,7 @@ function connect() {
         addAgentMessage(data.text || '');
         if (data.ack_id) {
           pendingAckId = data.ack_id;
-          enableInput();
+          enableInput(data.quick_replies);
         }
         break;
     }
