@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Chat</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="chat">
+      <div id="messages"></div>
+      <div id="quick-replies">
+        <button class="chip" data-message="Continue">Continue</button>
+        <button class="chip" data-message="Tell me more">Tell me more</button>
+      </div>
+      <div id="input-bar">
+        <span id="status-dot"></span>
+        <input id="chat-input" type="text" placeholder="Type a message..." disabled />
+        <button id="btn-send" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
