@@ -16,7 +16,7 @@ type MessageParams struct {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. Returns the current canvas dimensions — call this before your first draw to discover the canvas size.",
+		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. Returns the current canvas dimensions — call this before your first draw to discover the canvas size. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Lazily start HTTP server + open browser
 		if err := ensureHTTPServer(); err != nil {
@@ -53,6 +53,26 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
+			},
+		}, nil, nil
+	})
+
+	type EmptyParams struct{}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "check_messages",
+		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
+		result := bus.DrainMessages()
+		if result == "" {
+			result = "No new messages."
+		} else {
+			bus.LogUserMessage(result)
+			result = "User said: " + result
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: result},
 			},
 		}, nil, nil
 	})

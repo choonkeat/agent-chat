@@ -60,6 +60,20 @@ func (eb *EventBus) PushMessage(text string) {
 	}
 }
 
+// DrainMessages returns all currently queued messages joined with "\n\n",
+// or empty string if none are queued. Non-blocking.
+func (eb *EventBus) DrainMessages() string {
+	var msgs []string
+	for {
+		select {
+		case msg := <-eb.msgQueue:
+			msgs = append(msgs, msg)
+		default:
+			return strings.Join(msgs, "\n\n")
+		}
+	}
+}
+
 // WaitForMessages waits for at least one queued message, drains any additional,
 // and returns them joined with "\n\n".
 func (eb *EventBus) WaitForMessages(ctx context.Context) (string, error) {
