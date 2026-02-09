@@ -16,7 +16,7 @@ type MessageParams struct {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. Returns the current canvas dimensions — call this before your first draw to discover the canvas size. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything.",
+		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. Returns the current canvas dimensions — call this before your first draw to discover the canvas size. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Lazily start HTTP server + open browser
 		if err := ensureHTTPServer(); err != nil {
