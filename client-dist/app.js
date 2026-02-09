@@ -111,12 +111,22 @@ function handleSend() {
   isUserScrolledUp = false;
   sendMessage(text);
   chatInput.value = '';
+  chatInput.style.height = 'auto';
   showLoading();
 }
 
-// Send on Enter or click
+// Auto-grow textarea
+function autoGrow() {
+  chatInput.style.height = 'auto';
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+  chatInput.style.overflowY = chatInput.scrollHeight > 150 ? 'auto' : 'hidden';
+}
+
+chatInput.addEventListener('input', autoGrow);
+
+// Enter sends, Shift+Enter / Alt+Enter inserts newline
 chatInput.addEventListener('keydown', function (e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
     e.preventDefault();
     handleSend();
   }

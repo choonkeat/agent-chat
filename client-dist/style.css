@@ -129,7 +129,7 @@ body {
 
 #input-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
   padding: 0.5rem 0;
   flex-shrink: 0;
@@ -160,12 +160,18 @@ body {
   flex: 1;
   padding: 0.5rem 0.75rem;
   font-size: 0.9rem;
+  font-family: inherit;
   border: 1px solid #37474f;
   border-radius: 18px;
   background: #16213e;
   color: #e0e0e0;
   outline: none;
   transition: border-color 0.2s;
+  resize: none;
+  overflow-y: hidden;
+  min-height: 36px;
+  max-height: 150px;
+  line-height: 1.4;
 }
 
 #chat-input:focus {
