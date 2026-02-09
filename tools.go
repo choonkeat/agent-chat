@@ -37,25 +37,14 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
 		}
 
-		ack := bus.CreateAck()
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: params.QuickReplies})
 
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text, AckID: ack.ID, QuickReplies: params.QuickReplies})
-
-		var result string
-		select {
-		case result = <-ack.Ch:
-		case <-ctx.Done():
-			return nil, nil, fmt.Errorf("message cancelled: %w", ctx.Err())
+		result, err := bus.WaitForMessages(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
-		var text string
-		switch {
-		case result == "ack":
-			text = "User acknowledged."
-		default:
-			msg := result[len("ack:"):]
-			text = "User responded: " + msg
-		}
+		text := "User responded: " + result
 
 		if uiURL != "" {
 			text += " Chat UI: " + uiURL

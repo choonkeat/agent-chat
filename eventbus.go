@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,8 @@ type EventBus struct {
 
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
+
+	msgQueue chan string // queued user messages from browser
 }
 
 // NewEventBus creates a new EventBus.
@@ -39,6 +42,42 @@ func NewEventBus() *EventBus {
 	return &EventBus{
 		subscribers: make(map[chan Event]struct{}),
 		pending:     make(map[string]chan string),
+		msgQueue:    make(chan string, 256),
+	}
+}
+
+// PushMessage queues a user message from the browser.
+func (eb *EventBus) PushMessage(text string) {
+	select {
+	case eb.msgQueue <- text:
+	default:
+		// queue full, drop oldest
+		select {
+		case <-eb.msgQueue:
+		default:
+		}
+		eb.msgQueue <- text
+	}
+}
+
+// WaitForMessages waits for at least one queued message, drains any additional,
+// and returns them joined with "\n\n".
+func (eb *EventBus) WaitForMessages(ctx context.Context) (string, error) {
+	var msgs []string
+	select {
+	case msg := <-eb.msgQueue:
+		msgs = append(msgs, msg)
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	// drain any additional queued messages
+	for {
+		select {
+		case msg := <-eb.msgQueue:
+			msgs = append(msgs, msg)
+		default:
+			return strings.Join(msgs, "\n\n"), nil
+		}
 	}
 }
 

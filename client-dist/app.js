@@ -9,7 +9,6 @@ var sendBtn = document.getElementById('btn-send');
 var statusDot = document.getElementById('status-dot');
 var quickReplies = document.getElementById('quick-replies');
 
-var pendingAckId = null;
 var activeWs = null;
 var isUserScrolledUp = false;
 
@@ -81,45 +80,38 @@ function enableInput(replies) {
   setTimeout(function () { scrollToBottom(true); }, 100);
 }
 
-function disableInput() {
-  chatInput.disabled = true;
-  sendBtn.disabled = true;
-  quickReplies.classList.remove('visible');
+function showLoading() {
+  removeLoading();
+  var div = document.createElement('div');
+  div.className = 'bubble agent loading';
+  div.id = 'loading-bubble';
+  div.textContent = '...';
+  messages.appendChild(div);
+  scrollToBottom(false);
 }
 
-function showTyping() {
-  sendBtn.classList.add('loading');
-}
-
-function hideTyping() {
-  sendBtn.classList.remove('loading');
+function removeLoading() {
+  var el = document.getElementById('loading-bubble');
+  if (el) el.remove();
 }
 
 // --- Send ---
 
-function sendAck(id, message) {
+function sendMessage(text) {
   if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-    var msg = { type: 'ack', id: id };
-    if (message) {
-      msg.message = message;
-    }
-    activeWs.send(JSON.stringify(msg));
+    activeWs.send(JSON.stringify({ type: 'message', text: text }));
   }
 }
 
 function handleSend() {
-  if (!pendingAckId) return;
-
   var text = chatInput.value.trim();
-  if (text) {
-    addUserMessage(text);
-  }
+  if (!text) return;
+
+  addUserMessage(text);
   isUserScrolledUp = false;
-  sendAck(pendingAckId, text);
-  pendingAckId = null;
+  sendMessage(text);
   chatInput.value = '';
-  disableInput();
-  showTyping();
+  showLoading();
 }
 
 // Send on Enter or click
@@ -135,16 +127,15 @@ sendBtn.addEventListener('click', handleSend);
 // Quick-reply chips
 quickReplies.addEventListener('click', function (e) {
   var chip = e.target.closest('.chip');
-  if (!chip || chip.disabled || !pendingAckId) return;
+  if (!chip || chip.disabled) return;
 
   var message = chip.dataset.message || '';
+  if (!message) return;
   addUserMessage(message);
   isUserScrolledUp = false;
-  sendAck(pendingAckId, message);
-  pendingAckId = null;
+  sendMessage(message);
   chatInput.value = '';
-  disableInput();
-  showTyping();
+  showLoading();
 });
 
 // --- Connection status ---
@@ -162,7 +153,7 @@ var reconnectTimer = null;
 
 // --- History replay for browser reconnect ---
 
-function replayHistory(history, reconnectAckId) {
+function replayHistory(history) {
   console.log('[' + ts() + '] Replaying ' + history.length + ' history events');
   clearMessages();
 
@@ -180,13 +171,6 @@ function replayHistory(history, reconnectAckId) {
         }
         break;
     }
-  }
-
-  // If there's a pending ack, enable input so the user can respond
-  if (reconnectAckId) {
-    pendingAckId = reconnectAckId;
-    hideTyping();
-    enableInput();
   }
 }
 
@@ -240,18 +224,16 @@ function connect() {
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
         if (data.history && Array.isArray(data.history) && data.history.length > 0) {
-          replayHistory(data.history, data.pendingAckId || null);
+          replayHistory(data.history);
         }
+        enableInput();
         break;
 
       case 'agentMessage':
         console.log('[' + ts() + '] Agent message received: "' + data.text + '"');
-        hideTyping();
+        removeLoading();
         addAgentMessage(data.text || '');
-        if (data.ack_id) {
-          pendingAckId = data.ack_id;
-          enableInput(data.quick_replies);
-        }
+        enableInput(data.quick_replies);
         break;
     }
   };

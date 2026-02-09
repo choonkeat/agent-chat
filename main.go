@@ -196,7 +196,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Read incoming messages (acks)
+	// Read incoming messages
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -204,6 +204,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		var m struct {
 			Type    string `json:"type"`
+			Text    string `json:"text"`
 			ID      string `json:"id"`
 			Message string `json:"message"`
 		}
@@ -211,6 +212,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		switch m.Type {
+		case "message":
+			if m.Text != "" {
+				bus.PushMessage(m.Text)
+				bus.LogUserMessage(m.Text)
+			}
 		case "ack":
 			if m.ID != "" {
 				result := "ack"
