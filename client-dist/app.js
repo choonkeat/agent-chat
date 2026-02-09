@@ -145,6 +145,7 @@ quickReplies.addEventListener('click', function (e) {
   isUserScrolledUp = false;
   sendMessage(message);
   chatInput.value = '';
+  quickReplies.classList.remove('visible');
   showLoading();
 });
 

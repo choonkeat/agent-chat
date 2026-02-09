@@ -68,7 +68,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			result = "No new messages."
 		} else {
 			bus.LogUserMessage(result)
-			result = "User said: " + result
+			result = "User said: " + result + "\n\n(Reply to user in chat when done)"
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
