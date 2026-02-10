@@ -57,6 +57,77 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}, nil, nil
 	})
 
+	// DrawParams are the parameters for the draw tool.
+	type DrawParams struct {
+		Instructions []any    `json:"instructions"`
+		QuickReplies []string `json:"quick_replies,omitempty"`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "draw",
+		Description: `Draw a diagram as an inline canvas bubble in the chat and wait for viewer response.
+
+Each draw call creates a new canvas bubble in the chat history, rendered with a hand-drawn aesthetic.
+Use send_message for explanatory text before or after drawing.
+
+INSTRUCTIONS FORMAT — JSON objects with "type" field:
+  [{"type":"drawRect","x":100,"y":100,"width":150,"height":60,"fill":"#E3F2FD"},
+   {"type":"writeText","text":"Client","x":130,"y":140,"fontSize":16},
+   {"type":"moveTo","x":250,"y":130},{"type":"lineTo","x":350,"y":130}]
+
+COMMON TYPES: moveTo, lineTo, drawRect, drawCircle, writeText, setColor
+
+Read whiteboard://instructions for all instruction types with parameters.
+Read whiteboard://diagramming-guide for layout rules and cognitive principles.`,
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
+		if err := ensureHTTPServer(); err != nil {
+			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
+		}
+
+		httpMu.Lock()
+		shouldOpen := uiURL != "" && !browserOpened
+		if shouldOpen {
+			openBrowser(uiURL)
+			browserOpened = true
+		}
+		httpMu.Unlock()
+
+		if err := bus.WaitForSubscriber(ctx); err != nil {
+			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
+		}
+
+		ack := bus.CreateAck()
+		bus.Publish(Event{
+			Type:         "draw",
+			Instructions: params.Instructions,
+			QuickReplies: params.QuickReplies,
+			AckID:        ack.ID,
+		})
+
+		var result string
+		select {
+		case result = <-ack.Ch:
+		case <-ctx.Done():
+			return nil, nil, fmt.Errorf("draw cancelled: %w", ctx.Err())
+		}
+
+		text := "Viewer acknowledged."
+		if result != "ack" && len(result) > 4 {
+			msg := result[4:] // strip "ack:" prefix
+			text = "Viewer responded: " + msg
+		}
+
+		if uiURL != "" {
+			text += " Chat UI: " + uiURL
+		}
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: text},
+			},
+		}, nil, nil
+	})
+
 	type EmptyParams struct{}
 
 	mcp.AddTool(server, &mcp.Tool{

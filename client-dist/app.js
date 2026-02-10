@@ -11,6 +11,7 @@ var quickReplies = document.getElementById('quick-replies');
 
 var activeWs = null;
 var isUserScrolledUp = false;
+var pendingAckId = null;
 
 // --- Scroll tracking ---
 
@@ -30,6 +31,12 @@ function scrollToBottom(force) {
 function ts() {
   return new Date().toISOString().slice(11, 23);
 }
+
+// --- Canvas constants ---
+
+var CANVAS_W = 900;
+var CANVAS_H = 550;
+var DPR = window.devicePixelRatio || 1;
 
 // --- Message rendering ---
 
@@ -79,6 +86,60 @@ function addUserMessage(text) {
   }
 }
 
+// --- Canvas bubble ---
+
+function canvasToImg(canvas, div) {
+  var img = document.createElement('img');
+  img.src = canvas.toDataURL('image/png');
+  var w = div.getBoundingClientRect().width;
+  div.style.height = (w * CANVAS_H / CANVAS_W) + 'px';
+  div.replaceChild(img, canvas);
+}
+
+function addCanvasBubble(instructions, skipAnimation, onDone) {
+  var div = document.createElement('div');
+  div.className = 'bubble agent canvas-bubble';
+
+  var canvas = document.createElement('canvas');
+  canvas.width = CANVAS_W * DPR;
+  canvas.height = CANVAS_H * DPR;
+  div.appendChild(canvas);
+
+  messages.appendChild(div);
+  scrollToBottom(false);
+
+  var finalize = function () {
+    // Wait two frames so the renderer composites before we snapshot
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        canvasToImg(canvas, div);
+        if (onDone) onDone();
+      });
+    });
+  };
+
+  var board = new CanvasBundle.AgentWhiteboard(canvas, {
+    width: CANVAS_W,
+    height: CANVAS_H,
+    backgroundColor: '#0d1525',
+    onQueueEmpty: finalize,
+  });
+  board.resize(CANVAS_W, CANVAS_H, DPR);
+
+  if (skipAnimation) {
+    board.setSkipAnimation(true);
+  }
+
+  // Validate instructions
+  var result = CanvasBundle.validateInstructions(instructions);
+  if (result.errors.length > 0) {
+    console.warn('Canvas instruction validation errors:', result.errors);
+  }
+  board.addInstructions(result.valid);
+
+  return { div: div, board: board, canvas: canvas };
+}
+
 // --- Input enable/disable ---
 
 function setQuickReplies(replies) {
@@ -120,7 +181,11 @@ function removeLoading() {
 // --- Send ---
 
 function sendMessage(text) {
-  if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+  if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
+  if (pendingAckId) {
+    activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: text }));
+    pendingAckId = null;
+  } else {
     activeWs.send(JSON.stringify({ type: 'message', text: text }));
   }
 }
@@ -211,6 +276,11 @@ function replayHistory(history) {
           addBubble(event.text, 'user');
         }
         break;
+      case 'draw':
+        if (event.instructions) {
+          addCanvasBubble(event.instructions, true, null);
+        }
+        break;
     }
   }
 }
@@ -267,6 +337,9 @@ function connect() {
         if (data.history && Array.isArray(data.history) && data.history.length > 0) {
           replayHistory(data.history);
         }
+        if (data.pendingAckId) {
+          pendingAckId = data.pendingAckId;
+        }
         enableInput();
         break;
 
@@ -275,6 +348,20 @@ function connect() {
         removeLoading();
         addAgentMessage(data.text || '');
         enableInput(data.quick_replies);
+        break;
+
+      case 'draw':
+        console.log('[' + ts() + '] Draw event received (' + (data.instructions || []).length + ' instructions)');
+        removeLoading();
+
+        // Store ack_id so quick-reply/send resolves the draw ack
+        if (data.ack_id) {
+          pendingAckId = data.ack_id;
+        }
+
+        addCanvasBubble(data.instructions || [], false, function () {
+          enableInput(data.quick_replies);
+        });
         break;
     }
   };
@@ -292,5 +379,51 @@ function connect() {
     console.log('[' + ts() + '] WebSocket error');
   };
 }
+
+// --- Export / Download ---
+
+document.getElementById('btn-download').addEventListener('click', function () {
+  var bubbles = messages.querySelectorAll('.bubble');
+  var items = [];
+
+  for (var i = 0; i < bubbles.length; i++) {
+    var b = bubbles[i];
+    if (b.id === 'loading-bubble') continue;
+
+    if (b.classList.contains('canvas-bubble')) {
+      var img = b.querySelector('img');
+      if (img) {
+        items.push('<div class="bubble agent canvas-bubble"><img src="' + img.src + '" style="width:100%;height:auto;display:block;border-radius:8px;"></div>');
+      }
+    } else {
+      var role = b.classList.contains('user') ? 'user' : b.classList.contains('system') ? 'system' : 'agent';
+      items.push('<div class="bubble ' + role + '">' + b.innerHTML + '</div>');
+    }
+  }
+
+  var html = '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8"><title>Chat Export</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:2rem;display:flex;justify-content:center;}'
+    + '.chat{max-width:800px;width:100%;display:flex;flex-direction:column;gap:0.4rem;}'
+    + '.bubble{max-width:80%;padding:0.5rem 0.75rem;border-radius:12px;font-size:0.9rem;line-height:1.45;word-wrap:break-word;}'
+    + '.bubble.agent{align-self:flex-start;background:#16213e;color:#ccc;border-bottom-left-radius:3px;}'
+    + '.bubble.user{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px;}'
+    + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;}'
+    + '.bubble.canvas-bubble{padding:0;background:#0d1525;overflow:hidden;max-width:90%;}'
+    + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
+    + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
+    + '.bubble pre code{background:none;padding:0;}'
+    + '.bubble a{color:#60a5fa;text-decoration:underline;}'
+    + '</style></head><body><div class="chat">'
+    + items.join('\n')
+    + '</div></body></html>';
+
+  var blob = new Blob([html], { type: 'text/html' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'chat-export-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.html';
+  a.click();
+  URL.revokeObjectURL(url);
+});
 
 connect();

@@ -37,6 +37,29 @@ body {
   min-height: 0;
 }
 
+#chat-header {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0;
+  flex-shrink: 0;
+}
+
+#btn-download {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.75rem;
+  border: 1px solid #37474f;
+  border-radius: 6px;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+#btn-download:hover {
+  background: #263238;
+  color: #e0e0e0;
+}
+
 #messages {
   flex: 1;
   overflow-y: auto;
@@ -105,6 +128,24 @@ body {
 .bubble a {
   color: #60a5fa;
   text-decoration: underline;
+}
+
+/* --- Canvas bubbles --- */
+
+.bubble.canvas-bubble {
+  padding: 0;
+  background: #0d1525;
+  overflow: hidden;
+  width: 90%;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.bubble.canvas-bubble canvas,
+.bubble.canvas-bubble img {
+  display: block;
+  width: 100%;
+  height: auto;
 }
 
 @keyframes fadeIn {

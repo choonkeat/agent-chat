@@ -77,6 +77,7 @@ func main() {
 	}, nil)
 	mcpServerRef = server
 	registerTools(server, bus)
+	registerResources(server)
 
 	// Always start HTTP server eagerly
 	if err := ensureHTTPServer(); err != nil {
