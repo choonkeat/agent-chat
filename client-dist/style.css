@@ -207,6 +207,7 @@ body {
   border-radius: 50%;
   background: #666;
   flex-shrink: 0;
+  align-self: center;
   transition: background 0.3s;
 }
 

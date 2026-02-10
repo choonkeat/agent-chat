@@ -144,12 +144,12 @@ function addCanvasBubble(instructions, skipAnimation, onDone) {
 
 function setQuickReplies(replies) {
   quickReplies.innerHTML = '';
-  var items = replies && replies.length > 0 ? replies : ['Continue', 'Tell me more'];
-  for (var i = 0; i < items.length; i++) {
+  if (!replies || replies.length === 0) return;
+  for (var i = 0; i < replies.length; i++) {
     var btn = document.createElement('button');
     btn.className = 'chip';
-    btn.dataset.message = items[i];
-    btn.textContent = items[i];
+    btn.dataset.message = replies[i];
+    btn.textContent = replies[i];
     quickReplies.appendChild(btn);
   }
 }
@@ -158,7 +158,11 @@ function enableInput(replies) {
   setQuickReplies(replies);
   chatInput.disabled = false;
   sendBtn.disabled = false;
-  quickReplies.classList.add('visible');
+  if (replies && replies.length > 0) {
+    quickReplies.classList.add('visible');
+  } else {
+    quickReplies.classList.remove('visible');
+  }
   chatInput.focus();
   setTimeout(function () { scrollToBottom(true); }, 100);
 }

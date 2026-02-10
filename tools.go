@@ -16,7 +16,7 @@ type MessageParams struct {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. Returns the current canvas dimensions — call this before your first draw to discover the canvas size. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.",
+		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Lazily start HTTP server + open browser
 		if err := ensureHTTPServer(); err != nil {
@@ -45,7 +45,6 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}
 
 		text := "User responded: " + result
-
 		if uiURL != "" {
 			text += " Chat UI: " + uiURL
 		}
@@ -59,6 +58,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 	// DrawParams are the parameters for the draw tool.
 	type DrawParams struct {
+		Text         string   `json:"text"`
 		Instructions []any    `json:"instructions"`
 		QuickReplies []string `json:"quick_replies,omitempty"`
 	}
@@ -69,6 +69,11 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 Each draw call creates a new canvas bubble in the chat history, rendered with a hand-drawn aesthetic.
 Use send_message for explanatory text before or after drawing.
+
+HOW IT WORKS:
+• Each draw call = one slide. Build complex diagrams across multiple slides (gradual reveal).
+• Viewer clicks Continue (or gives feedback like "Slower pace") before this tool returns.
+• The result tells you what the viewer said—adjust your next slide accordingly.
 
 INSTRUCTIONS FORMAT — JSON objects with "type" field:
   [{"type":"drawRect","x":100,"y":100,"width":150,"height":60,"fill":"#E3F2FD"},
@@ -95,6 +100,9 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.`,
 		if err := bus.WaitForSubscriber(ctx); err != nil {
 			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
 		}
+
+		// Publish text as a chat bubble before the canvas
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text})
 
 		ack := bus.CreateAck()
 		bus.Publish(Event{
