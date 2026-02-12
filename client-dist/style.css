@@ -225,7 +225,7 @@ body {
 
 #input-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 0;
   flex-shrink: 0;
@@ -266,7 +266,7 @@ body {
   transition: border-color 0.2s;
   resize: none;
   overflow-y: hidden;
-  min-height: 36px;
+  min-height: 0;
   max-height: 150px;
   line-height: 1.4;
 }
@@ -322,4 +322,63 @@ body {
 @keyframes dotPulse {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
+}
+
+/* --- Permission prompt bubble --- */
+
+.bubble.permission-bubble {
+  background: #1a2744;
+  border: 1px solid #f59e0b;
+  border-left: 3px solid #f59e0b;
+  max-width: 85%;
+}
+
+.permission-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.3rem;
+  color: #f59e0b;
+  font-size: 0.85rem;
+}
+
+.permission-icon {
+  font-size: 1rem;
+}
+
+.permission-title {
+  font-size: 0.85rem;
+  color: #ccc;
+  margin-bottom: 0.2rem;
+}
+
+.permission-detail {
+  font-size: 0.8rem;
+  color: #999;
+  margin-bottom: 0.5rem;
+}
+
+.permission-detail code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.permission-chips {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.permission-chip {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.75rem;
+}
+
+.permission-chip.selected {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
 }

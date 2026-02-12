@@ -12,11 +12,14 @@ import (
 
 // Event represents a chat event sent to browser clients.
 type Event struct {
-	Type         string   `json:"type"`                    // "agentMessage", "userMessage", "draw"
+	Type         string   `json:"type"`                    // "agentMessage", "userMessage", "draw", "permissionPrompt", "permissionResolved"
 	Text         string   `json:"text,omitempty"`
 	AckID        string   `json:"ack_id,omitempty"`
 	QuickReplies []string `json:"quick_replies,omitempty"`
 	Instructions []any    `json:"instructions,omitempty"`  // draw instructions
+	ToolUseID    string   `json:"tool_use_id,omitempty"`   // permission prompt: tool_use block ID
+	ToolName     string   `json:"tool_name,omitempty"`     // permission prompt: tool name (Bash, Read, etc.)
+	Detail       string   `json:"detail,omitempty"`        // permission prompt: command, path, pattern
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.

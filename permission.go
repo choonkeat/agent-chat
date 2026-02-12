@@ -1,6 +1,13 @@
 package main
 
-import "encoding/json"
+import (
+	"bufio"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
 
 // PermissionPrompt represents a pending tool use that needs user approval.
 // Produced by parsing JSONL assistant entries containing tool_use blocks.
@@ -156,4 +163,77 @@ func toolUseToPrompt(block toolUseBlock) (PermissionPrompt, bool) {
 func stringField(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return v
+}
+
+// SanitizeCWD converts a working directory path to the directory name
+// Claude Code uses inside ~/.claude/projects/. Slashes become dashes
+// and leading dashes are stripped.
+func SanitizeCWD(cwd string) string {
+	s := strings.ReplaceAll(cwd, "/", "-")
+	s = strings.TrimLeft(s, "-")
+	return s
+}
+
+// FindSessionFile searches for the most recent .jsonl file in projectDir
+// that contains the given bootID string. Returns the full path of the
+// matching file, or empty string if not found.
+func FindSessionFile(projectDir, bootID string) (string, error) {
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return "", err
+	}
+
+	// Collect .jsonl files with their mod times, sort newest first
+	type fileInfo struct {
+		path    string
+		modTime int64
+	}
+	var files []fileInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, fileInfo{
+			path:    filepath.Join(projectDir, e.Name()),
+			modTime: info.ModTime().UnixNano(),
+		})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].modTime > files[j].modTime
+	})
+
+	// Search up to 10 most recent files
+	limit := 10
+	if len(files) < limit {
+		limit = len(files)
+	}
+	for _, f := range files[:limit] {
+		if fileContains(f.path, bootID) {
+			return f.path, nil
+		}
+	}
+	return "", nil
+}
+
+// fileContains checks if a file contains the given substring by scanning
+// line by line (avoids reading entire large files into memory).
+func fileContains(path, substr string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 256*1024), 1024*1024)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), substr) {
+			return true
+		}
+	}
+	return false
 }

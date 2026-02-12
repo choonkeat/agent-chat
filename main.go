@@ -18,6 +18,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -26,6 +27,11 @@ import (
 var staticFS embed.FS
 
 var bus = NewEventBus()
+
+// bootID is a unique identifier for this MCP server instance.
+// It is sent to the browser in the WebSocket handshake and used to
+// locate the Claude Code session JSONL file that contains this ID.
+var bootID = uuid.New().String()
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -71,12 +77,16 @@ func main() {
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.Parse()
 
+	// Top-level context cancelled on shutdown — all goroutines should use this.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
 		Version: "0.1.0",
 	}, nil)
 	mcpServerRef = server
-	registerTools(server, bus)
+	registerTools(server, bus, ctx)
 	registerResources(server)
 
 	// Always start HTTP server eagerly
@@ -86,7 +96,7 @@ func main() {
 
 	if !*noStdio {
 		// Run MCP over stdio (blocks until client disconnects)
-		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 			log.Fatalf("mcp server error: %v", err)
 		}
 	} else {
@@ -169,7 +179,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send connected handshake with history for reconnect replay
 	history, pendingAckID := bus.History()
-	connectMsg := map[string]any{"type": "connected"}
+	connectMsg := map[string]any{"type": "connected", "bootID": bootID}
 	if len(history) > 0 {
 		connectMsg["history"] = history
 	}

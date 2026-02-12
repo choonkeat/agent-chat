@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -213,5 +214,75 @@ func TestParseJSONLLine_EmptyLine(t *testing.T) {
 	prompts, resolved := ParseJSONLLine([]byte(""))
 	if len(prompts) != 0 || len(resolved) != 0 {
 		t.Errorf("expected nothing for empty line")
+	}
+}
+
+// --- SanitizeCWD tests ---
+
+func TestSanitizeCWD(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/repos/agent-chat/workspace", "repos-agent-chat-workspace"},
+		{"/home/user/project", "home-user-project"},
+		{"/", ""},
+		{"foo/bar", "foo-bar"},
+	}
+	for _, tc := range tests {
+		got := SanitizeCWD(tc.input)
+		if got != tc.want {
+			t.Errorf("SanitizeCWD(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+
+// --- FindSessionFile tests ---
+
+func TestFindSessionFile(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a .jsonl file containing a known bootID
+	bootID := "test-boot-id-12345"
+	matchFile := filepath.Join(dir, "session-a.jsonl")
+	os.WriteFile(matchFile, []byte(`{"type":"user","message":{"role":"user","content":"`+bootID+`: check_messages"}}`+"\n"), 0644)
+
+	// Create another .jsonl file without the bootID
+	noMatchFile := filepath.Join(dir, "session-b.jsonl")
+	os.WriteFile(noMatchFile, []byte(`{"type":"user","message":{"role":"user","content":"hello"}}`+"\n"), 0644)
+
+	found, err := FindSessionFile(dir, bootID)
+	if err != nil {
+		t.Fatalf("FindSessionFile error: %v", err)
+	}
+	if found != matchFile {
+		t.Errorf("FindSessionFile = %q, want %q", found, matchFile)
+	}
+}
+
+func TestFindSessionFile_NotFound(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a .jsonl file without the bootID
+	os.WriteFile(filepath.Join(dir, "session.jsonl"), []byte(`{"type":"user"}`+"\n"), 0644)
+
+	found, err := FindSessionFile(dir, "nonexistent-boot-id")
+	if err != nil {
+		t.Fatalf("FindSessionFile error: %v", err)
+	}
+	if found != "" {
+		t.Errorf("FindSessionFile = %q, want empty string", found)
+	}
+}
+
+func TestFindSessionFile_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+
+	found, err := FindSessionFile(dir, "any-boot-id")
+	if err != nil {
+		t.Fatalf("FindSessionFile error: %v", err)
+	}
+	if found != "" {
+		t.Errorf("FindSessionFile = %q, want empty string", found)
 	}
 }
