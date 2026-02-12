@@ -171,16 +171,28 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 	type EmptyParams struct{}
 
-	var watcherOnce sync.Once
+	var watcherMu sync.Mutex
+	var watcherRunning bool
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_messages",
 		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
-		// On first call, try to locate the session JSONL and start the watcher
-		watcherOnce.Do(func() {
-			go startSessionWatcher(appCtx, bus)
-		})
+		// Try to start the session watcher on each call until it succeeds.
+		// The bootID may not be in the JSONL yet on early calls.
+		watcherMu.Lock()
+		if !watcherRunning {
+			watcherRunning = true
+			go func() {
+				ok := startSessionWatcher(appCtx, bus)
+				if !ok {
+					watcherMu.Lock()
+					watcherRunning = false
+					watcherMu.Unlock()
+				}
+			}()
+		}
+		watcherMu.Unlock()
 
 		result := bus.DrainMessages()
 		if result == "" {
@@ -198,23 +210,20 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 }
 
 // startSessionWatcher locates the Claude Code session JSONL file and
-// starts tailing it for permission prompts. This runs in a goroutine.
-// The provided context controls the watcher lifetime — when cancelled,
-// the watcher stops and all pending timers are cleaned up.
-//
-// The bootID flows: MCP server → browser → postMessage → parent frame → PTY → JSONL.
-// This takes a few seconds, so we retry with backoff before giving up.
-func startSessionWatcher(ctx context.Context, bus *EventBus) {
+// starts tailing it for permission prompts. Returns true if the watcher
+// started successfully (blocks while tailing), false if it couldn't find
+// the session file so the caller can retry later.
+func startSessionWatcher(ctx context.Context, bus *EventBus) bool {
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Printf("watcher: failed to get cwd: %v", err)
-		return
+		return false
 	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Printf("watcher: failed to get home dir: %v", err)
-		return
+		return false
 	}
 
 	projectDir := filepath.Join(homeDir, ".claude", "projects", SanitizeCWD(cwd))
@@ -222,11 +231,11 @@ func startSessionWatcher(ctx context.Context, bus *EventBus) {
 	// Retry with backoff — bootID needs time to flow through
 	// browser → parent frame → PTY → Claude Code → JSONL
 	var sessionFile string
-	delays := []time.Duration{3 * time.Second, 5 * time.Second, 10 * time.Second}
+	delays := []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second}
 	for _, delay := range delays {
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(delay):
 		}
 
@@ -242,11 +251,12 @@ func startSessionWatcher(ctx context.Context, bus *EventBus) {
 	}
 
 	if sessionFile == "" {
-		log.Printf("watcher: bootID %s not found in %s after retries", bootID, projectDir)
-		return
+		log.Printf("watcher: bootID %s not found in %s after retries, will retry on next check_messages", bootID, projectDir)
+		return false
 	}
 
 	log.Printf("watcher: tailing session file %s", sessionFile)
 	w := NewWatcher(sessionFile, bus)
 	w.Run(ctx)
+	return true
 }

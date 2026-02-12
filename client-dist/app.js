@@ -14,6 +14,8 @@ var isUserScrolledUp = false;
 var pendingAckId = null;
 var serverBootID = null;
 var pendingPermission = null; // { toolUseId, element }
+var pendingNotifyParent = false;
+var bootIDSent = false;
 
 // --- Scroll tracking ---
 
@@ -267,10 +269,12 @@ function handleSend() {
 
   addUserMessage(text);
   isUserScrolledUp = false;
-  sendMessage(text);
+  // Send message to server first; postMessage to parent happens after
+  // server confirms the message is queued (see 'messageQueued' handler).
   if (window.parent !== window) {
-    window.parent.postMessage({ type: 'agent-chat-first-user-message' }, '*');
+    pendingNotifyParent = true;
   }
+  sendMessage(text);
   chatInput.value = '';
   chatInput.style.height = 'auto';
   quickReplies.classList.remove('visible');
@@ -312,10 +316,12 @@ quickReplies.addEventListener('click', function (e) {
   if (!message) return;
   addUserMessage(message);
   isUserScrolledUp = false;
-  sendMessage(message);
+  // Send message to server first; postMessage to parent happens after
+  // server confirms the message is queued (see 'messageQueued' handler).
   if (window.parent !== window) {
-    window.parent.postMessage({ type: 'agent-chat-first-user-message' }, '*');
+    pendingNotifyParent = true;
   }
+  sendMessage(message);
   chatInput.value = '';
   quickReplies.classList.remove('visible');
   showLoading();
@@ -442,11 +448,8 @@ function connect() {
         setStatus('connected');
         if (data.bootID) {
           serverBootID = data.bootID;
-          // Send bootID to parent frame as text — parent blindly writes to PTY,
-          // which lands in the session JSONL so our watcher can find its file.
-          if (window.parent !== window) {
-            window.parent.postMessage({ type: 'agent-chat-first-user-message', text: serverBootID + ': check_messages; i sent u a chat message' }, '*');
-          }
+          // bootID is sent to parent frame later, on the first user message
+          // (see 'messageQueued' handler), so the watcher can find the JSONL.
         }
         if (data.history && Array.isArray(data.history) && data.history.length > 0) {
           replayHistory(data.history);
@@ -485,6 +488,22 @@ function connect() {
       case 'permissionPrompt':
         console.log('[' + ts() + '] Permission prompt: ' + data.tool_name + ' — ' + data.text);
         addPermissionBubble(data);
+        break;
+
+      case 'messageQueued':
+        // Server confirmed the message is in the queue — now safe to
+        // tell the parent frame so it can trigger check_messages.
+        if (pendingNotifyParent && window.parent !== window) {
+          var msg = { type: 'agent-chat-first-user-message' };
+          // First message includes bootID so it lands in the session JSONL
+          // and the watcher can locate the file.
+          if (!bootIDSent && serverBootID) {
+            msg.text = serverBootID + ': check_messages; i sent u a chat message';
+            bootIDSent = true;
+          }
+          window.parent.postMessage(msg, '*');
+          pendingNotifyParent = false;
+        }
         break;
 
       case 'permissionResolved':

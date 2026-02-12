@@ -192,17 +192,38 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	sub := bus.Subscribe()
 	defer bus.Unsubscribe(sub)
 
+	// writeCh allows the read loop to send messages back to the client.
+	// Only the writer goroutine writes to the WebSocket connection.
+	writeCh := make(chan any, 16)
+
 	// Forward events to WebSocket client
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for event := range sub {
-			data, err := json.Marshal(event)
-			if err != nil {
-				continue
-			}
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-				return
+		for {
+			select {
+			case event, ok := <-sub:
+				if !ok {
+					return
+				}
+				data, err := json.Marshal(event)
+				if err != nil {
+					continue
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+					return
+				}
+			case msg, ok := <-writeCh:
+				if !ok {
+					return
+				}
+				data, err := json.Marshal(msg)
+				if err != nil {
+					continue
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+					return
+				}
 			}
 		}
 	}()
@@ -227,6 +248,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			if m.Text != "" {
 				bus.PushMessage(m.Text)
 				bus.LogUserMessage(m.Text)
+				// Notify browser that message is queued — it waits for this
+				// before telling the parent frame to call check_messages.
+				select {
+				case writeCh <- map[string]string{"type": "messageQueued"}:
+				default:
+				}
 			}
 		case "ack":
 			if m.ID != "" {
