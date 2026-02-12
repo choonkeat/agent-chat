@@ -3,11 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
-	"sync"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -19,7 +14,7 @@ type MessageParams struct {
 	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 }
 
-func registerTools(server *mcp.Server, bus *EventBus, appCtx context.Context) {
+func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
 		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.",
@@ -171,29 +166,10 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 	type EmptyParams struct{}
 
-	var watcherMu sync.Mutex
-	var watcherRunning bool
-
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_messages",
 		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
-		// Try to start the session watcher on each call until it succeeds.
-		// The bootID may not be in the JSONL yet on early calls.
-		watcherMu.Lock()
-		if !watcherRunning {
-			watcherRunning = true
-			go func() {
-				ok := startSessionWatcher(appCtx, bus)
-				if !ok {
-					watcherMu.Lock()
-					watcherRunning = false
-					watcherMu.Unlock()
-				}
-			}()
-		}
-		watcherMu.Unlock()
-
 		result := bus.DrainMessages()
 		if result == "" {
 			result = "No new messages."
@@ -207,56 +183,4 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 			},
 		}, nil, nil
 	})
-}
-
-// startSessionWatcher locates the Claude Code session JSONL file and
-// starts tailing it for permission prompts. Returns true if the watcher
-// started successfully (blocks while tailing), false if it couldn't find
-// the session file so the caller can retry later.
-func startSessionWatcher(ctx context.Context, bus *EventBus) bool {
-	cwd, err := os.Getwd()
-	if err != nil {
-		log.Printf("watcher: failed to get cwd: %v", err)
-		return false
-	}
-
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		log.Printf("watcher: failed to get home dir: %v", err)
-		return false
-	}
-
-	projectDir := filepath.Join(homeDir, ".claude", "projects", SanitizeCWD(cwd))
-
-	// Retry with backoff — bootID needs time to flow through
-	// browser → parent frame → PTY → Claude Code → JSONL
-	var sessionFile string
-	delays := []time.Duration{2 * time.Second, 3 * time.Second, 5 * time.Second}
-	for _, delay := range delays {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(delay):
-		}
-
-		sessionFile, err = FindSessionFile(projectDir, bootID)
-		if err != nil {
-			log.Printf("watcher: failed to search project dir %s: %v", projectDir, err)
-			continue
-		}
-		if sessionFile != "" {
-			break
-		}
-		log.Printf("watcher: bootID not yet found in %s, retrying...", projectDir)
-	}
-
-	if sessionFile == "" {
-		log.Printf("watcher: bootID %s not found in %s after retries, will retry on next check_messages", bootID, projectDir)
-		return false
-	}
-
-	log.Printf("watcher: tailing session file %s", sessionFile)
-	w := NewWatcher(sessionFile, bus)
-	w.Run(ctx)
-	return true
 }

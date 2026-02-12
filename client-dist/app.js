@@ -12,10 +12,8 @@ var quickReplies = document.getElementById('quick-replies');
 var activeWs = null;
 var isUserScrolledUp = false;
 var pendingAckId = null;
-var serverBootID = null;
-var pendingPermission = null; // { toolUseId, element }
 var pendingNotifyParent = false;
-var bootIDSent = false;
+var firstMessageSent = false;
 
 // --- Scroll tracking ---
 
@@ -188,62 +186,6 @@ function removeLoading() {
   if (el) el.remove();
 }
 
-// --- Permission prompt bubble ---
-
-function addPermissionBubble(data) {
-  // Remove any existing permission bubble
-  removePermissionBubble();
-
-  var div = document.createElement('div');
-  div.className = 'bubble agent permission-bubble';
-  div.id = 'permission-bubble';
-
-  var toolLabel = data.tool_name || 'Tool';
-  var title = data.text || toolLabel;
-  var detail = data.detail || '';
-
-  var html = '<div class="permission-header">'
-    + '<span class="permission-icon">&#9888;</span> '
-    + '<strong>' + renderMarkdown(toolLabel) + '</strong>'
-    + '</div>'
-    + '<div class="permission-title">' + renderMarkdown(title) + '</div>';
-  if (detail) {
-    html += '<div class="permission-detail"><code>' + detail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</code></div>';
-  }
-  div.innerHTML = html;
-
-  // Permission-specific quick reply chips
-  var chipBar = document.createElement('div');
-  chipBar.className = 'permission-chips';
-
-  var actions = [
-    { label: 'Allow', keystroke: 'y' },
-    { label: 'Always allow', keystroke: 'a' },
-    { label: 'Deny', keystroke: 'n' }
-  ];
-
-  for (var i = 0; i < actions.length; i++) {
-    var btn = document.createElement('button');
-    btn.className = 'chip permission-chip';
-    btn.dataset.keystroke = actions[i].keystroke;
-    btn.textContent = actions[i].label;
-    chipBar.appendChild(btn);
-  }
-  div.appendChild(chipBar);
-
-  removeLoading();
-  messages.appendChild(div);
-  scrollToBottom(true);
-
-  pendingPermission = { toolUseId: data.tool_use_id, element: div };
-}
-
-function removePermissionBubble() {
-  var el = document.getElementById('permission-bubble');
-  if (el) el.remove();
-  pendingPermission = null;
-}
-
 // --- Send ---
 
 function sendMessage(text) {
@@ -259,13 +201,6 @@ function sendMessage(text) {
 function handleSend() {
   var text = chatInput.value.trim();
   if (!text) return;
-
-  // If a permission prompt is showing and user types free text,
-  // send Esc to dismiss the permission dialog first, then send the text
-  if (pendingPermission && window.parent !== window) {
-    window.parent.postMessage({ type: 'agent-chat-permission-response', keystroke: '\x1b' }, '*');
-    removePermissionBubble();
-  }
 
   addUserMessage(text);
   isUserScrolledUp = false;
@@ -327,29 +262,6 @@ quickReplies.addEventListener('click', function (e) {
   showLoading();
 });
 
-// Permission chip clicks — send keystroke to parent PTY
-document.addEventListener('click', function (e) {
-  var chip = e.target.closest('.permission-chip');
-  if (!chip) return;
-
-  var keystroke = chip.dataset.keystroke;
-  if (!keystroke || window.parent === window) return;
-
-  // Send keystroke to parent frame which forwards to PTY
-  window.parent.postMessage({ type: 'agent-chat-permission-response', keystroke: keystroke }, '*');
-
-  // Visual feedback: mark as responded
-  var bubble = document.getElementById('permission-bubble');
-  if (bubble) {
-    var chips = bubble.querySelectorAll('.permission-chip');
-    for (var i = 0; i < chips.length; i++) {
-      chips[i].disabled = true;
-    }
-    chip.classList.add('selected');
-  }
-  pendingPermission = null;
-});
-
 // --- Connection status ---
 
 function setStatus(state) {
@@ -386,12 +298,6 @@ function replayHistory(history) {
         if (event.instructions) {
           addCanvasBubble(event.instructions, true, null);
         }
-        break;
-      case 'permissionPrompt':
-        addPermissionBubble(event);
-        break;
-      case 'permissionResolved':
-        removePermissionBubble();
         break;
     }
   }
@@ -446,11 +352,6 @@ function connect() {
       case 'connected':
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
-        if (data.bootID) {
-          serverBootID = data.bootID;
-          // bootID is sent to parent frame later, on the first user message
-          // (see 'messageQueued' handler), so the watcher can find the JSONL.
-        }
         if (data.history && Array.isArray(data.history) && data.history.length > 0) {
           replayHistory(data.history);
         }
@@ -485,31 +386,18 @@ function connect() {
         });
         break;
 
-      case 'permissionPrompt':
-        console.log('[' + ts() + '] Permission prompt: ' + data.tool_name + ' — ' + data.text);
-        addPermissionBubble(data);
-        break;
-
       case 'messageQueued':
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
         if (pendingNotifyParent && window.parent !== window) {
           var msg = { type: 'agent-chat-first-user-message' };
-          // First message includes bootID so it lands in the session JSONL
-          // and the watcher can locate the file.
-          if (!bootIDSent && serverBootID) {
-            msg.text = serverBootID + ': check_messages; i sent u a chat message';
-            bootIDSent = true;
+          // First message includes hint text for the parent to type into the terminal.
+          if (!firstMessageSent) {
+            msg.text = 'check_messages; i sent u a chat message';
+            firstMessageSent = true;
           }
           window.parent.postMessage(msg, '*');
           pendingNotifyParent = false;
-        }
-        break;
-
-      case 'permissionResolved':
-        console.log('[' + ts() + '] Permission resolved: ' + data.tool_use_id);
-        if (pendingPermission && pendingPermission.toolUseId === data.tool_use_id) {
-          removePermissionBubble();
         }
         break;
     }

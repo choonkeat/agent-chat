@@ -18,7 +18,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,11 +26,6 @@ import (
 var staticFS embed.FS
 
 var bus = NewEventBus()
-
-// bootID is a unique identifier for this MCP server instance.
-// It is sent to the browser in the WebSocket handshake and used to
-// locate the Claude Code session JSONL file that contains this ID.
-var bootID = uuid.New().String()
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -86,7 +80,7 @@ func main() {
 		Version: "0.1.0",
 	}, nil)
 	mcpServerRef = server
-	registerTools(server, bus, ctx)
+	registerTools(server, bus)
 	registerResources(server)
 
 	// Always start HTTP server eagerly
@@ -179,7 +173,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send connected handshake with history for reconnect replay
 	history, pendingAckID := bus.History()
-	connectMsg := map[string]any{"type": "connected", "bootID": bootID}
+	connectMsg := map[string]any{"type": "connected"}
 	if len(history) > 0 {
 		connectMsg["history"] = history
 	}
