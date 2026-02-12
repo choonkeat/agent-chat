@@ -1,0 +1,21 @@
+{
+  "parentUuid": "6ef5ce9c-4088-4bbf-9ca3-686a10678157",
+  "isSidechain": false,
+  "userType": "external",
+  "cwd": "/repos/agent-chat/workspace",
+  "sessionId": "be2f8288-505e-44b6-94c0-06514bbbb24e",
+  "version": "2.1.39",
+  "gitBranch": "main",
+  "slug": "majestic-stirring-pudding",
+  "type": "progress",
+  "data": {
+    "type": "hook_progress",
+    "hookEvent": "PostToolUse",
+    "hookName": "PostToolUse:Glob",
+    "command": "callback"
+  },
+  "parentToolUseID": "toolu_01RG4o5dwqPHethsU7yB9GLQ",
+  "toolUseID": "toolu_01RG4o5dwqPHethsU7yB9GLQ",
+  "timestamp": "2026-02-12T14:17:22.455Z",
+  "uuid": "7db26aed-43a1-4314-95d1-c21c9effe97b"
+}
