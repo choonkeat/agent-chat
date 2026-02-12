@@ -9,14 +9,15 @@ import (
 
 // MessageParams are the parameters for the send_message tool.
 type MessageParams struct {
-	Text         string   `json:"text"`
-	QuickReplies []string `json:"quick_replies,omitempty"`
+	Text             string   `json:"text"`
+	QuickReply       string   `json:"quick_reply"`
+	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 }
 
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.",
+		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Lazily start HTTP server + open browser
 		if err := ensureHTTPServer(); err != nil {
@@ -37,16 +38,17 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
 		}
 
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: params.QuickReplies})
+		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies})
 
 		result, err := bus.WaitForMessages(ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
-		text := "User responded: " + result
+		text := "User responded: " + result + "\n\n(Reply to user in chat when done)"
 		if uiURL != "" {
-			text += " Chat UI: " + uiURL
+			text += "\nChat UI: " + uiURL
 		}
 
 		return &mcp.CallToolResult{
@@ -58,9 +60,10 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 	// DrawParams are the parameters for the draw tool.
 	type DrawParams struct {
-		Text         string   `json:"text"`
-		Instructions []any    `json:"instructions"`
-		QuickReplies []string `json:"quick_replies,omitempty"`
+		Text             string   `json:"text"`
+		Instructions     []any    `json:"instructions"`
+		QuickReply       string   `json:"quick_reply"`
+		MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -83,7 +86,9 @@ INSTRUCTIONS FORMAT — JSON objects with "type" field:
 COMMON TYPES: moveTo, lineTo, drawRect, drawCircle, writeText, setColor
 
 Read whiteboard://instructions for all instruction types with parameters.
-Read whiteboard://diagramming-guide for layout rules and cognitive principles.`,
+Read whiteboard://diagramming-guide for layout rules and cognitive principles.
+
+The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewer. Use ` + "`more_quick_replies`" + ` for additional options.`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -104,11 +109,12 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.`,
 		// Publish text as a chat bubble before the canvas
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text})
 
+		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		ack := bus.CreateAck()
 		bus.Publish(Event{
 			Type:         "draw",
 			Instructions: params.Instructions,
-			QuickReplies: params.QuickReplies,
+			QuickReplies: replies,
 			AckID:        ack.ID,
 		})
 
@@ -122,16 +128,38 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.`,
 		text := "Viewer acknowledged."
 		if result != "ack" && len(result) > 4 {
 			msg := result[4:] // strip "ack:" prefix
-			text = "Viewer responded: " + msg
+			text = "Viewer responded: " + msg + "\n\n(Reply to user in chat when done)"
 		}
 
 		if uiURL != "" {
-			text += " Chat UI: " + uiURL
+			text += "\nChat UI: " + uiURL
 		}
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
+			},
+		}, nil, nil
+	})
+
+	// ProgressParams are the parameters for the send_progress tool.
+	type ProgressParams struct {
+		Text string `json:"text"`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "send_progress",
+		Description: "Send a progress update to the chat UI without blocking. Use this for status updates (e.g., 'Working on it...', 'Found 3 matching files') when you want to keep the user informed but don't need a response. Unlike send_message, this returns immediately.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ProgressParams) (*mcp.CallToolResult, any, error) {
+		if err := ensureHTTPServer(); err != nil {
+			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
+		}
+
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text})
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "Progress sent."},
 			},
 		}, nil, nil
 	})

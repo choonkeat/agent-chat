@@ -113,6 +113,7 @@ function addCanvasBubble(instructions, skipAnimation, onDone) {
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
         canvasToImg(canvas, div);
+        scrollToBottom(false);
         if (onDone) onDone();
       });
     });
@@ -152,6 +153,7 @@ function setQuickReplies(replies) {
     btn.textContent = replies[i];
     quickReplies.appendChild(btn);
   }
+  scrollToBottom(false);
 }
 
 function enableInput(replies) {
@@ -172,7 +174,7 @@ function showLoading() {
   var div = document.createElement('div');
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
-  div.textContent = '...';
+  div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
   messages.appendChild(div);
   scrollToBottom(false);
 }
@@ -201,6 +203,9 @@ function handleSend() {
   addUserMessage(text);
   isUserScrolledUp = false;
   sendMessage(text);
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: 'agent-chat-first-user-message' }, '*');
+  }
   chatInput.value = '';
   chatInput.style.height = 'auto';
   quickReplies.classList.remove('visible');
@@ -243,6 +248,9 @@ quickReplies.addEventListener('click', function (e) {
   addUserMessage(message);
   isUserScrolledUp = false;
   sendMessage(message);
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: 'agent-chat-first-user-message' }, '*');
+  }
   chatInput.value = '';
   quickReplies.classList.remove('visible');
   showLoading();
@@ -352,6 +360,10 @@ function connect() {
         removeLoading();
         addAgentMessage(data.text || '');
         enableInput(data.quick_replies);
+        // Progress updates (no quick_replies) mean agent is still working — show thinking indicator
+        if (!data.quick_replies || data.quick_replies.length === 0) {
+          showLoading();
+        }
         break;
 
       case 'draw':
@@ -423,11 +435,14 @@ document.getElementById('btn-download').addEventListener('click', function () {
 
   var blob = new Blob([html], { type: 'text/html' });
   var url = URL.createObjectURL(blob);
+  var filename = 'chat-export-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.html';
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'chat-export-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.html';
+  a.download = filename;
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 });
 
 connect();
