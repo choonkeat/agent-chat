@@ -1,0 +1,26 @@
+{
+  "name": "@choonkeat/agent-chat",
+  "version": "0.1.0",
+  "description": "A \"less intimidating\" chat UI for any agent",
+  "type": "module",
+  "bin": {
+    "agent-chat": "bin/agent-chat.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/choonkeat/agent-chat.git"
+  },
+  "license": "MIT",
+  "optionalDependencies": {
+    "@choonkeat/agent-chat-linux-x64": "0.1.0",
+    "@choonkeat/agent-chat-linux-arm64": "0.1.0",
+    "@choonkeat/agent-chat-darwin-x64": "0.1.0",
+    "@choonkeat/agent-chat-darwin-arm64": "0.1.0",
+    "@choonkeat/agent-chat-win32-x64": "0.1.0",
+    "@choonkeat/agent-chat-win32-arm64": "0.1.0"
+  }
+}
