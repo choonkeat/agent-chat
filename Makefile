@@ -2,6 +2,7 @@
 
 build: bundle-client
 	go build -o dist/agent-chat .
+	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
 
 bundle-client:
 	npx esbuild canvas-entry.ts --bundle --format=iife --global-name=CanvasBundle --outfile=client-dist/canvas-bundle.js --target=es2020
