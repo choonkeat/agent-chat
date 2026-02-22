@@ -1,6 +1,6 @@
 {
   "name": "@choonkeat/agent-chat",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A \"less intimidating\" chat UI for any agent",
   "type": "module",
   "bin": {
@@ -9,7 +9,9 @@
   "files": [
     "bin"
   ],
-  "scripts": {},
+  "scripts": {
+    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(__dirname,'bin','agent-chat.js'),0o755)}catch(e){}\""
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/choonkeat/agent-chat.git"

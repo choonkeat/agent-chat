@@ -83,7 +83,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
-		Version: "0.1.0",
+		Version: "0.1.1",
 	}, nil)
 	mcpServerRef = server
 	if !disabled {
