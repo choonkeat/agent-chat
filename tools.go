@@ -174,7 +174,6 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		if result == "" {
 			result = "No new messages."
 		} else {
-			bus.LogUserMessage(result)
 			result = "User said: " + result + "\n\n(Reply to user in chat when done)"
 		}
 		return &mcp.CallToolResult{

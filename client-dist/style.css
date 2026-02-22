@@ -160,12 +160,20 @@ body {
 }
 
 .bubble a {
-  color: #60a5fa;
+  color: #93c5fd;
   text-decoration: underline;
 }
 
+.bubble.user a {
+  color: #fff;
+}
+
 [data-theme="light"] .bubble a {
-  color: #2563eb;
+  color: #1d4ed8;
+}
+
+[data-theme="light"] .bubble.user a {
+  color: #fff;
 }
 
 /* --- Tables --- */
