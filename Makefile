@@ -25,5 +25,5 @@ bump:
 		exit 1; \
 	fi
 	@echo "Bumping version to $(VERSION)..."
-	@sed -i 's/"version": "[^"]*"/"version": "$(VERSION)"/' package.json
+	@node -e 'var fs=require("fs"),p=JSON.parse(fs.readFileSync("package.json","utf8"));p.version="$(VERSION)";for(var k of Object.keys(p.optionalDependencies||{}))p.optionalDependencies[k]="$(VERSION)";fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
 	@echo "Version bumped to $(VERSION)"
