@@ -1,7 +1,6 @@
 .PHONY: build bundle-client publish publish-dry test bump
 
-build: bundle-client
-	go build -o dist/agent-chat .
+build: build-platforms
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
 
 bundle-client:

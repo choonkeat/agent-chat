@@ -27,6 +27,9 @@ var staticFS embed.FS
 
 var bus = NewEventBus()
 
+// themeCookieName is the cookie the browser reads for light/dark theme.
+var themeCookieName string
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -69,23 +72,27 @@ func ensureHTTPServer() error {
 
 func main() {
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
+	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
 	flag.Parse()
 
 	// Top-level context cancelled on shutdown — all goroutines should use this.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	disabled := os.Getenv("AGENT_CHAT_DISABLE") != ""
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
 		Version: "0.1.0",
 	}, nil)
 	mcpServerRef = server
-	registerTools(server, bus)
-	registerResources(server)
+	if !disabled {
+		registerTools(server, bus)
+		registerResources(server)
 
-	// Always start HTTP server eagerly
-	if err := ensureHTTPServer(); err != nil {
-		log.Fatalf("failed to start HTTP server: %v", err)
+		if err := ensureHTTPServer(); err != nil {
+			log.Fatalf("failed to start HTTP server: %v", err)
+		}
 	}
 
 	if !*noStdio {
@@ -121,6 +128,10 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpHandler)
 	mux.HandleFunc("/ws", handleWebSocket)
+	mux.HandleFunc("/config.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript")
+		fmt.Fprintf(w, "var THEME_COOKIE_NAME = %q;\n", themeCookieName)
+	})
 	mux.Handle("/", fileServer)
 
 	port := 0

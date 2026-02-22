@@ -3,6 +3,22 @@
 
 'use strict';
 
+// --- Theme detection ---
+
+function getCookie(name) {
+  var match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function applyTheme() {
+  var cookieName = (typeof THEME_COOKIE_NAME !== 'undefined') ? THEME_COOKIE_NAME : 'agent-chat-theme';
+  var theme = getCookie(cookieName) || 'dark';
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+applyTheme();
+setInterval(applyTheme, 2000);
+
 var messages = document.getElementById('messages');
 var chatInput = document.getElementById('chat-input');
 var sendBtn = document.getElementById('btn-send');
@@ -46,13 +62,100 @@ function clearMessages() {
   messages.innerHTML = '';
 }
 
+// --- Syntax highlighting ---
+
+function highlightCode(code, lang) {
+  var parts = [];
+  var idx = 0;
+  function save(cls, text) {
+    var id = idx++;
+    parts[id] = '<span class="hl-' + cls + '">' + text + '</span>';
+    return '\x00' + id + '\x01';
+  }
+
+  var useHash = /^(python|py|ruby|rb|bash|sh|shell|zsh|yaml|yml|toml|perl|r|makefile|dockerfile|coffee)$/i.test(lang);
+  var useDash = /^(sql|lua|haskell|hs|elm|ada)$/i.test(lang);
+
+  // 1. Protect strings
+  code = code.replace(/"(?:[^"\\]|\\.)*"/g, function(m) { return save('s', m); });
+  code = code.replace(/'(?:[^'\\]|\\.)*'/g, function(m) { return save('s', m); });
+
+  // 2. Protect comments
+  code = code.replace(/\/\/[^\n]*/g, function(m) { return save('c', m); });
+  code = code.replace(/\/\*[\s\S]*?\*\//g, function(m) { return save('c', m); });
+  if (useHash) {
+    code = code.replace(/#[^\n]*/g, function(m) { return save('c', m); });
+  }
+  if (useDash) {
+    code = code.replace(/--[^\n]*/g, function(m) { return save('c', m); });
+  }
+
+  // 3. Keywords
+  var kw = 'abstract|async|await|bool|break|case|catch|chan|char|class|const|continue|debugger|def|default|defer|delete|do|double|elif|else|enum|export|extends|extern|false|final|finally|float|fn|for|from|func|function|go|if|impl|implements|import|in|instanceof|int|interface|is|lambda|let|long|match|mod|mut|new|nil|none|not|null|of|or|package|pass|private|protected|pub|public|raise|range|return|select|self|short|signed|static|string|struct|super|switch|this|throw|trait|true|try|type|typeof|undefined|unless|unsigned|until|use|var|void|where|while|with|yield';
+  code = code.replace(new RegExp('\\b(' + kw + ')\\b', 'g'), function(m) { return save('k', m); });
+
+  // 4. Numbers
+  code = code.replace(/\b(\d+\.?\d*(?:e[+-]?\d+)?)\b/gi, function(m) { return save('n', m); });
+
+  // Restore placeholders
+  return code.replace(/\x00(\d+)\x01/g, function(_, id) { return parts[parseInt(id)]; });
+}
+
+// --- Table helpers ---
+
+function parseTableRow(row) {
+  return row.replace(/^\||\|$/g, '').split('|');
+}
+
+function parseTableAlign(sep) {
+  return sep.replace(/^\||\|$/g, '').split('|').map(function(c) {
+    c = c.trim();
+    if (c[0] === ':' && c[c.length - 1] === ':') return 'center';
+    if (c[c.length - 1] === ':') return 'right';
+    return '';
+  });
+}
+
+// --- Markdown rendering ---
+
 function renderMarkdown(text) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // Code blocks (```)
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  // Code blocks with syntax highlighting; use &#10; for newlines to prevent table regex matching inside
+  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+    var highlighted = lang ? highlightCode(code, lang) : code;
+    highlighted = highlighted.replace(/\n/g, '&#10;');
+    var cls = lang ? ' class="language-' + lang + '"' : '';
+    return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
+  });
   // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Tables
+  html = html.replace(/(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n?)+)/g, function(block) {
+    var lines = block.trim().split('\n');
+    if (lines.length < 3) return block;
+    if (!/^\|[-:| ]+\|$/.test(lines[1])) return block;
+    var headers = parseTableRow(lines[0]);
+    var aligns = parseTableAlign(lines[1]);
+    var out = '<table><thead><tr>';
+    headers.forEach(function(h, i) {
+      var a = aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '';
+      out += '<th' + a + '>' + h.trim() + '</th>';
+    });
+    out += '</tr></thead><tbody>';
+    for (var r = 2; r < lines.length; r++) {
+      if (!lines[r].trim()) continue;
+      var cells = parseTableRow(lines[r]);
+      out += '<tr>';
+      cells.forEach(function(c, i) {
+        var a = aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '';
+        out += '<td' + a + '>' + c.trim() + '</td>';
+      });
+      out += '</tr>';
+    }
+    out += '</tbody></table>';
+    return out;
+  });
   // Bold (**text** or __text__)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
@@ -334,7 +437,8 @@ function connect() {
   setStatus('connecting');
 
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  var wsUrl = proto + '//' + location.host + '/ws';
+  var basePath = location.pathname.replace(/\/+$/, '');
+  var wsUrl = proto + '//' + location.host + basePath + '/ws';
   var ws = new WebSocket(wsUrl);
   activeWs = ws;
 
