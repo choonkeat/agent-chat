@@ -26,5 +26,4 @@ bump:
 	fi
 	@echo "Bumping version to $(VERSION)..."
 	@sed -i 's/"version": "[^"]*"/"version": "$(VERSION)"/' package.json
-	@sed -i 's/Version: "[^"]*"/Version: "$(VERSION)"/' main.go
 	@echo "Version bumped to $(VERSION)"

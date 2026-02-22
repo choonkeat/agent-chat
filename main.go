@@ -27,6 +27,10 @@ var staticFS embed.FS
 
 var bus = NewEventBus()
 
+// version and commit are set at build time via -ldflags.
+var version = "dev"
+var commit = "unknown"
+
 // themeCookieName is the cookie the browser reads for light/dark theme.
 var themeCookieName string
 
@@ -71,9 +75,15 @@ func ensureHTTPServer() error {
 }
 
 func main() {
+	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("agent-chat %s (%s)\n", version, commit)
+		os.Exit(0)
+	}
 
 	// Top-level context cancelled on shutdown — all goroutines should use this.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -83,7 +93,7 @@ func main() {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
-		Version: "0.1.1",
+		Version: version,
 	}, nil)
 	mcpServerRef = server
 	if !disabled {

@@ -4,8 +4,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/npm-platforms"
 VERSION=$(node -p "require('$REPO_ROOT/package.json').version")
+COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
-echo "Building agent-chat v${VERSION}"
+echo "Building agent-chat v${VERSION} (${COMMIT})"
 
 # ── 1. Bundle the client UI (embedded into the Go binary) ────────────────
 echo "→ Bundling client UI…"
@@ -37,7 +38,7 @@ for target in "${TARGETS[@]}"; do
 
   echo "→ Compiling ${goos}/${goarch}…"
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-    go build -C "$REPO_ROOT" -trimpath -ldflags="-s -w" \
+    go build -C "$REPO_ROOT" -trimpath -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o "$bin_dir/$bin_name" .
 
   # Map goarch to npm cpu field
