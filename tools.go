@@ -14,6 +14,11 @@ type MessageParams struct {
 	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 }
 
+// VerbalReplyParams are the parameters for the send_verbal_reply tool.
+type VerbalReplyParams struct {
+	Text string `json:"text"`
+}
+
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
@@ -40,6 +45,45 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies})
+
+		msgs, err := bus.WaitForMessages(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+		}
+
+		text := "User responded: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
+		if uiURL != "" {
+			text += "\nChat UI: " + uiURL
+		}
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: text},
+			},
+		}, nil, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "send_verbal_reply",
+		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
+		if err := ensureHTTPServer(); err != nil {
+			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
+		}
+
+		httpMu.Lock()
+		shouldOpen := uiURL != "" && !browserOpened
+		if shouldOpen {
+			openBrowser(uiURL)
+			browserOpened = true
+		}
+		httpMu.Unlock()
+
+		if err := bus.WaitForSubscriber(ctx); err != nil {
+			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
+		}
+
+		bus.Publish(Event{Type: "verbalReply", Text: params.Text})
 
 		msgs, err := bus.WaitForMessages(ctx)
 		if err != nil {

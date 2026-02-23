@@ -127,6 +127,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Handle SIGHUP (and INT/TERM) so we exit gracefully in all modes.
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+		<-sig
+		cancel()
+	}()
+
 	disabled := os.Getenv("AGENT_CHAT_DISABLE") != ""
 
 	server := mcp.NewServer(&mcp.Implementation{
@@ -149,11 +157,9 @@ func main() {
 			log.Fatalf("mcp server error: %v", err)
 		}
 	} else {
-		// No stdio — block until signal
+		// No stdio — block until signal cancels context
 		fmt.Fprintf(os.Stderr, "Running in HTTP-only mode (no stdio MCP). Press Ctrl+C to stop.\n")
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
+		<-ctx.Done()
 	}
 }
 

@@ -316,6 +316,70 @@ body {
   flex-shrink: 0;
 }
 
+/* --- Voice button --- */
+
+#btn-voice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 0.2rem;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+
+#btn-voice:hover {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+#btn-voice.active {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3);
+  animation: voicePulse 2s ease-in-out infinite;
+}
+
+@keyframes voicePulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.3); }
+  50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15); }
+}
+
+/* --- Voice controls dropdown --- */
+
+#voice-controls {
+  display: none;
+  padding: 0 0 0.3rem;
+  flex-shrink: 0;
+}
+
+#voice-controls.visible {
+  display: flex;
+}
+
+#voice-select {
+  font-size: 0.75rem;
+  font-family: inherit;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  outline: none;
+  max-width: 250px;
+}
+
+#voice-select:focus {
+  border-color: var(--border-secondary);
+}
+
 /* --- Attach button --- */
 
 #btn-attach {

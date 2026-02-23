@@ -29,12 +29,23 @@ var filePicker = document.getElementById('file-picker');
 var inputContainer = document.getElementById('input-container');
 var fileStaging = document.getElementById('file-staging');
 
+var btnVoice = document.getElementById('btn-voice');
+var voiceControls = document.getElementById('voice-controls');
+var voiceSelect = document.getElementById('voice-select');
+
 var activeWs = null;
 var isUserScrolledUp = false;
 var pendingAckId = null;
 var pendingNotifyParent = false;
 var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
+
+// --- Voice mode state ---
+var voiceMode = false;
+var voiceRecognition = null;
+var selectedVoice = null;
+var isSpeaking = false;
+var isListening = false;
 
 // --- Scroll tracking ---
 
@@ -544,6 +555,206 @@ quickReplies.addEventListener('click', function (e) {
   showLoading();
 });
 
+// --- Voice mode ---
+
+function playBeep(freq, duration) {
+  var ctx = new (window.AudioContext || window.webkitAudioContext)();
+  var osc = ctx.createOscillator();
+  var gain = ctx.createGain();
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.frequency.value = freq;
+  gain.gain.value = 0.15;
+  osc.start();
+  osc.stop(ctx.currentTime + duration);
+}
+
+function populateVoices() {
+  var voices = speechSynthesis.getVoices();
+  voiceSelect.innerHTML = '';
+  for (var i = 0; i < voices.length; i++) {
+    var opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = voices[i].name + ' (' + voices[i].lang + ')';
+    voiceSelect.appendChild(opt);
+  }
+  if (voices.length > 0 && !selectedVoice) {
+    selectedVoice = voices[0];
+  }
+}
+
+if (typeof speechSynthesis !== 'undefined') {
+  speechSynthesis.onvoiceschanged = populateVoices;
+  populateVoices();
+}
+
+voiceSelect.addEventListener('change', function() {
+  var voices = speechSynthesis.getVoices();
+  var idx = parseInt(voiceSelect.value);
+  if (voices[idx]) {
+    selectedVoice = voices[idx];
+  }
+});
+
+function speakText(text, onDone) {
+  var utterance = new SpeechSynthesisUtterance(text);
+  if (selectedVoice) utterance.voice = selectedVoice;
+  utterance.rate = 1.0;
+  isSpeaking = true;
+  utterance.onend = function() {
+    isSpeaking = false;
+    if (onDone) onDone();
+  };
+  utterance.onerror = function() {
+    isSpeaking = false;
+    if (onDone) onDone();
+  };
+  speechSynthesis.speak(utterance);
+}
+
+function addSystemBubble(text) {
+  addBubble('[system] ' + text, 'system');
+}
+
+function setupSpeechRecognition() {
+  // Use webkitSpeechRecognition directly — matches working reference implementation
+  if (!('webkitSpeechRecognition' in window)) {
+    addSystemBubble('SpeechRecognition not supported in this browser');
+    return;
+  }
+  voiceRecognition = new webkitSpeechRecognition();
+  voiceRecognition.continuous = true;
+  voiceRecognition.interimResults = true;
+  voiceRecognition.lang = 'en-US';
+
+  voiceRecognition.onstart = function() {
+    isListening = true;
+    btnVoice.classList.add('active');
+    addSystemBubble('Listening...');
+  };
+
+  voiceRecognition.onaudiostart = function() {
+    console.log('[' + ts() + '] Voice: audio capture started');
+  };
+
+  voiceRecognition.onresult = function(e) {
+    // Build full transcript from all results (continuous mode accumulates)
+    var finalTranscript = '';
+    var interimTranscript = '';
+    for (var i = 0; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        finalTranscript += e.results[i][0].transcript;
+      } else {
+        interimTranscript += e.results[i][0].transcript;
+      }
+    }
+
+    // Only act on final results
+    if (!finalTranscript) return;
+
+    // Stop recognition so we don't keep accumulating while processing
+    stopListening();
+
+    var text = finalTranscript.trim();
+    if (!text) return;
+
+    // "stop stop stop" detection
+    if (text.toLowerCase().replace(/[^a-z ]/g, '').trim() === 'stop stop stop') {
+      disableVoiceMode();
+      return;
+    }
+
+    addUserMessage(text);
+    sendMessage('\ud83c\udfa4 ' + text);
+    showLoading();
+  };
+
+  voiceRecognition.onerror = function(e) {
+    console.error('[' + ts() + '] Voice recognition error:', e.error);
+    addSystemBubble('Voice error: ' + e.error);
+    isListening = false;
+    // Auto-retry if still in voice mode (e.g. no-speech timeout)
+    if (voiceMode && !isSpeaking) {
+      setTimeout(startListening, 500);
+    }
+  };
+
+  voiceRecognition.onend = function() {
+    isListening = false;
+    // Auto-restart if still in voice mode (matches reference repo pattern)
+    if (voiceMode && !isSpeaking) {
+      try {
+        voiceRecognition.start();
+      } catch(e) {
+        console.error('[' + ts() + '] Failed to restart recognition:', e);
+        addSystemBubble('Failed to restart mic: ' + e.message);
+      }
+    }
+  };
+}
+
+function startListening() {
+  if (!voiceRecognition) setupSpeechRecognition();
+  if (!voiceRecognition) return;
+  try {
+    isListening = true;
+    voiceRecognition.start();
+  } catch(e) {
+    console.error('[' + ts() + '] Failed to start recognition:', e);
+    addSystemBubble('Failed to start mic: ' + e.message);
+    isListening = false;
+  }
+}
+
+function stopListening() {
+  if (!voiceRecognition) return;
+  try { voiceRecognition.stop(); } catch(e) {}
+  isListening = false;
+}
+
+function enableVoiceMode() {
+  // Request mic permission explicitly (getUserMedia triggers browser prompt).
+  // This is required — without it, SpeechRecognition silently fails.
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+    // Stop the stream — we just needed the permission grant.
+    // SpeechRecognition manages its own audio capture.
+    stream.getTracks().forEach(function(t) { t.stop(); });
+    voiceMode = true;
+    btnVoice.classList.add('active');
+    voiceControls.classList.add('visible');
+    playBeep(880, 0.15);
+    // Re-create recognition instance each time voice mode is enabled
+    setupSpeechRecognition();
+    setTimeout(startListening, 200);
+  }).catch(function(err) {
+    console.error('Microphone permission denied:', err);
+    addSystemBubble('Mic permission denied: ' + err.message);
+  });
+}
+
+function disableVoiceMode() {
+  voiceMode = false;
+  btnVoice.classList.remove('active');
+  voiceControls.classList.remove('visible');
+  stopListening();
+  if (voiceRecognition) {
+    try { voiceRecognition.abort(); } catch(e) {}
+    voiceRecognition = null;
+  }
+  speechSynthesis.cancel();
+  isSpeaking = false;
+  isListening = false;
+  playBeep(440, 0.2);
+}
+
+btnVoice.addEventListener('click', function() {
+  if (voiceMode) {
+    disableVoiceMode();
+  } else {
+    enableVoiceMode();
+  }
+});
+
 // --- Connection status (no-op, status conveyed via input disabled state) ---
 
 function setStatus(state) {}
@@ -577,6 +788,11 @@ function replayHistory(history) {
       case 'draw':
         if (event.instructions) {
           addCanvasBubble(event.instructions, true, null);
+        }
+        break;
+      case 'verbalReply':
+        if (event.text) {
+          addBubble(event.text, 'agent');
         }
         break;
     }
@@ -665,6 +881,18 @@ function connect() {
         addCanvasBubble(data.instructions || [], false, function () {
           enableInput(data.quick_replies);
         });
+        break;
+
+      case 'verbalReply':
+        console.log('[' + ts() + '] Verbal reply received: "' + data.text + '"');
+        removeLoading();
+        addAgentMessage(data.text || '');
+        if (voiceMode) {
+          speakText(data.text || '', function() {
+            playBeep(880, 0.15);
+            setTimeout(startListening, 200);
+          });
+        }
         break;
 
       case 'messageQueued':
