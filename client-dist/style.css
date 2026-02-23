@@ -310,7 +310,7 @@ body {
 
 #input-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 0.5rem;
   padding: 0.5rem 0;
   flex-shrink: 0;
@@ -322,7 +322,7 @@ body {
   border-radius: 50%;
   background: var(--text-muted);
   flex-shrink: 0;
-  align-self: center;
+  margin-bottom: 0.65rem;
   transition: background 0.3s;
 }
 
@@ -338,26 +338,71 @@ body {
   background: #f44336;
 }
 
-#chat-input {
+/* --- Attach button --- */
+
+#btn-attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-bottom: 0.2rem;
+  transition: color 0.15s, background 0.15s;
+}
+
+#btn-attach:hover {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+#btn-attach:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* --- Input container (wraps textarea + staging) --- */
+
+#input-container {
   flex: 1;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.9rem;
-  font-family: inherit;
+  min-width: 0;
   border: 1px solid var(--border-primary);
   border-radius: 18px;
   background: var(--bg-secondary);
+  transition: border-color 0.2s;
+  overflow: hidden;
+}
+
+#input-container:focus-within {
+  border-color: var(--border-secondary);
+}
+
+#input-container.drag-over {
+  border-color: #2563eb;
+  border-style: dashed;
+  background: rgba(37, 99, 235, 0.05);
+}
+
+#chat-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  border: none;
+  background: transparent;
   color: var(--text-primary);
   outline: none;
-  transition: border-color 0.2s;
   resize: none;
   overflow-y: hidden;
   min-height: 0;
   max-height: 150px;
   line-height: 1.4;
-}
-
-#chat-input:focus {
-  border-color: var(--border-secondary);
 }
 
 #chat-input:disabled {
@@ -367,6 +412,75 @@ body {
 
 #chat-input::placeholder {
   color: var(--text-muted);
+}
+
+/* --- File staging area --- */
+
+#file-staging {
+  display: none;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem 0.5rem;
+}
+
+#file-staging.visible {
+  display: flex;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  max-width: 160px;
+}
+
+.file-chip img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.file-chip .file-icon {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+}
+
+.file-chip .file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-chip .file-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 0.15rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.file-chip .file-remove:hover {
+  color: var(--text-primary);
 }
 
 #btn-send {
@@ -380,6 +494,7 @@ body {
   cursor: pointer;
   transition: background 0.15s;
   flex-shrink: 0;
+  margin-bottom: 0.2rem;
 }
 
 #btn-send:hover {
@@ -407,4 +522,49 @@ body {
 @keyframes dotPulse {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
+}
+
+/* --- File attachments in bubbles --- */
+
+.file-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.file-thumb {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: 6px;
+  object-fit: cover;
+  cursor: pointer;
+}
+
+.file-thumb:hover {
+  opacity: 0.85;
+}
+
+.file-attachment-link {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.file-attachment-link:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+[data-theme="light"] .file-attachment-link {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .file-attachment-link:hover {
+  background: rgba(0, 0, 0, 0.08);
 }

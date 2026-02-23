@@ -24,12 +24,17 @@ var chatInput = document.getElementById('chat-input');
 var sendBtn = document.getElementById('btn-send');
 var statusDot = document.getElementById('status-dot');
 var quickReplies = document.getElementById('quick-replies');
+var btnAttach = document.getElementById('btn-attach');
+var filePicker = document.getElementById('file-picker');
+var inputContainer = document.getElementById('input-container');
+var fileStaging = document.getElementById('file-staging');
 
 var activeWs = null;
 var isUserScrolledUp = false;
 var pendingAckId = null;
 var pendingNotifyParent = false;
 var firstMessageSent = false;
+var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
 
 // --- Scroll tracking ---
 
@@ -171,10 +176,46 @@ function renderMarkdown(text) {
   return html;
 }
 
-function addBubble(text, role) {
+function renderFileAttachments(files) {
+  if (!files || files.length === 0) return null;
+  var container = document.createElement('div');
+  container.className = 'file-attachments';
+  for (var i = 0; i < files.length; i++) {
+    var f = files[i];
+    var isImage = f.type && f.type.indexOf('image/') === 0;
+    if (isImage) {
+      var img = document.createElement('img');
+      img.className = 'file-thumb';
+      img.src = f.url;
+      img.alt = f.name;
+      img.title = f.name;
+      img.addEventListener('click', (function(url) {
+        return function() { window.open(url, '_blank'); };
+      })(f.url));
+      container.appendChild(img);
+    } else {
+      var link = document.createElement('a');
+      link.className = 'file-attachment-link';
+      link.href = f.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = f.name;
+      container.appendChild(link);
+    }
+  }
+  return container;
+}
+
+function addBubble(text, role, files) {
   var div = document.createElement('div');
   div.className = 'bubble ' + role;
-  div.innerHTML = renderMarkdown(text);
+  if (text) {
+    div.innerHTML = renderMarkdown(text);
+  }
+  var attachments = renderFileAttachments(files);
+  if (attachments) {
+    div.appendChild(attachments);
+  }
   messages.appendChild(div);
   scrollToBottom(false);
 }
@@ -185,9 +226,9 @@ function addAgentMessage(text) {
   }
 }
 
-function addUserMessage(text) {
-  if (text) {
-    addBubble(text, 'user');
+function addUserMessage(text, files) {
+  if (text || (files && files.length > 0)) {
+    addBubble(text, 'user', files);
   }
 }
 
@@ -261,10 +302,113 @@ function setQuickReplies(replies) {
   scrollToBottom(false);
 }
 
+// --- File staging ---
+
+function addStagedFiles(fileList) {
+  for (var i = 0; i < fileList.length; i++) {
+    var file = fileList[i];
+    var isImage = file.type && file.type.indexOf('image/') === 0;
+    stagedFiles.push({
+      file: file,
+      name: file.name,
+      previewUrl: isImage ? URL.createObjectURL(file) : null
+    });
+  }
+  renderStaging();
+}
+
+function renderStaging() {
+  fileStaging.innerHTML = '';
+  if (stagedFiles.length === 0) {
+    fileStaging.classList.remove('visible');
+    return;
+  }
+  fileStaging.classList.add('visible');
+  for (var i = 0; i < stagedFiles.length; i++) {
+    var sf = stagedFiles[i];
+    var chip = document.createElement('div');
+    chip.className = 'file-chip';
+
+    if (sf.previewUrl) {
+      var img = document.createElement('img');
+      img.src = sf.previewUrl;
+      img.alt = sf.name;
+      chip.appendChild(img);
+    } else {
+      var icon = document.createElement('div');
+      icon.className = 'file-icon';
+      var ext = sf.name.split('.').pop().toUpperCase();
+      icon.textContent = ext.length <= 4 ? ext : 'FILE';
+      chip.appendChild(icon);
+    }
+
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'file-name';
+    nameSpan.textContent = sf.name;
+    nameSpan.title = sf.name;
+    chip.appendChild(nameSpan);
+
+    var removeBtn = document.createElement('button');
+    removeBtn.className = 'file-remove';
+    removeBtn.textContent = '\u00d7';
+    removeBtn.dataset.index = i;
+    removeBtn.addEventListener('click', function(e) {
+      var idx = parseInt(e.currentTarget.dataset.index);
+      if (stagedFiles[idx] && stagedFiles[idx].previewUrl) {
+        URL.revokeObjectURL(stagedFiles[idx].previewUrl);
+      }
+      stagedFiles.splice(idx, 1);
+      renderStaging();
+    });
+    chip.appendChild(removeBtn);
+
+    fileStaging.appendChild(chip);
+  }
+}
+
+// Paperclip button
+btnAttach.addEventListener('click', function() {
+  filePicker.click();
+});
+
+filePicker.addEventListener('change', function() {
+  if (filePicker.files.length > 0) {
+    addStagedFiles(filePicker.files);
+  }
+  filePicker.value = '';
+});
+
+// Drag and drop on input container
+inputContainer.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  inputContainer.classList.add('drag-over');
+});
+
+inputContainer.addEventListener('dragenter', function(e) {
+  e.preventDefault();
+  inputContainer.classList.add('drag-over');
+});
+
+inputContainer.addEventListener('dragleave', function(e) {
+  // Only remove if we've left the container entirely
+  if (!inputContainer.contains(e.relatedTarget)) {
+    inputContainer.classList.remove('drag-over');
+  }
+});
+
+inputContainer.addEventListener('drop', function(e) {
+  e.preventDefault();
+  inputContainer.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) {
+    addStagedFiles(e.dataTransfer.files);
+  }
+});
+
 function enableInput(replies) {
   setQuickReplies(replies);
   chatInput.disabled = false;
   sendBtn.disabled = false;
+  btnAttach.disabled = false;
   if (replies && replies.length > 0) {
     quickReplies.classList.add('visible');
   } else {
@@ -291,32 +435,67 @@ function removeLoading() {
 
 // --- Send ---
 
-function sendMessage(text) {
+function sendMessage(text, files) {
   if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
   if (pendingAckId) {
     activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: text }));
     pendingAckId = null;
   } else {
-    activeWs.send(JSON.stringify({ type: 'message', text: text }));
+    var msg = { type: 'message', text: text };
+    if (files && files.length > 0) {
+      msg.files = files;
+    }
+    activeWs.send(JSON.stringify(msg));
   }
+}
+
+function uploadFiles(fileEntries) {
+  var formData = new FormData();
+  for (var i = 0; i < fileEntries.length; i++) {
+    formData.append('files', fileEntries[i].file);
+  }
+  return fetch('/upload', { method: 'POST', body: formData })
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+      return resp.json();
+    });
 }
 
 function handleSend() {
   var text = chatInput.value.trim();
-  if (!text) return;
+  var filesToUpload = stagedFiles.slice();
+  if (!text && filesToUpload.length === 0) return;
 
-  addUserMessage(text);
+  // Show the user bubble immediately with local previews
+  var localFiles = filesToUpload.map(function(sf) {
+    return { name: sf.name, url: sf.previewUrl || '', type: sf.file.type, size: sf.file.size };
+  });
+  addUserMessage(text, localFiles);
   isUserScrolledUp = false;
-  // Send message to server first; postMessage to parent happens after
-  // server confirms the message is queued (see 'messageQueued' handler).
-  if (window.parent !== window) {
-    pendingNotifyParent = true;
-  }
-  sendMessage(text);
+
+  // Clear staging
+  stagedFiles = [];
+  renderStaging();
   chatInput.value = '';
   chatInput.style.height = 'auto';
   quickReplies.classList.remove('visible');
   showLoading();
+
+  if (window.parent !== window) {
+    pendingNotifyParent = true;
+  }
+
+  if (filesToUpload.length > 0) {
+    uploadFiles(filesToUpload).then(function(refs) {
+      sendMessage(text, refs);
+    }).catch(function(err) {
+      console.error('Upload error:', err);
+      // Send text-only on upload failure
+      if (text) sendMessage(text);
+    });
+  } else {
+    sendMessage(text);
+  }
 }
 
 // Auto-grow textarea
@@ -393,8 +572,8 @@ function replayHistory(history) {
         }
         break;
       case 'userMessage':
-        if (event.text) {
-          addBubble(event.text, 'user');
+        if (event.text || (event.files && event.files.length > 0)) {
+          addBubble(event.text, 'user', event.files);
         }
         break;
       case 'draw':

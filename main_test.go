@@ -1,7 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -225,5 +233,116 @@ func TestEventBusUnsubscribe(t *testing.T) {
 	case <-sub:
 		t.Fatal("unsubscribed channel should not receive events")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestUploadEndpoint(t *testing.T) {
+	// Set up a temp upload dir
+	dir := t.TempDir()
+	origDir := uploadDir
+	uploadDir = dir
+	t.Cleanup(func() { uploadDir = origDir })
+
+	// Create multipart body with a test file
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	part, err := writer.CreateFormFile("files", "test-photo.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("fake png content")
+	part.Write(content)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rr := httptest.NewRecorder()
+
+	handleUpload(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var refs []FileRef
+	if err := json.Unmarshal(rr.Body.Bytes(), &refs); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 file ref, got %d", len(refs))
+	}
+	ref := refs[0]
+	if ref.Name != "test-photo.png" {
+		t.Errorf("expected name 'test-photo.png', got %q", ref.Name)
+	}
+	if ref.Size != int64(len(content)) {
+		t.Errorf("expected size %d, got %d", len(content), ref.Size)
+	}
+
+	// Verify file was saved to disk
+	saved, err := os.ReadFile(ref.Path)
+	if err != nil {
+		t.Fatalf("failed to read saved file: %v", err)
+	}
+	if !bytes.Equal(saved, content) {
+		t.Error("saved file content does not match")
+	}
+}
+
+func TestUploadServesFiles(t *testing.T) {
+	dir := t.TempDir()
+	origDir := uploadDir
+	uploadDir = dir
+	t.Cleanup(func() { uploadDir = origDir })
+
+	// Write a file to the upload dir
+	testContent := []byte("hello world")
+	if err := os.WriteFile(filepath.Join(dir, "test-file.txt"), testContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := http.StripPrefix("/uploads/", http.FileServer(http.Dir(dir)))
+	req := httptest.NewRequest(http.MethodGet, "/uploads/test-file.txt", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	body, _ := io.ReadAll(rr.Body)
+	if !bytes.Equal(body, testContent) {
+		t.Error("served content does not match")
+	}
+}
+
+func TestUploadNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	origDir := uploadDir
+	uploadDir = dir
+	t.Cleanup(func() { uploadDir = origDir })
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/upload", &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rr := httptest.NewRecorder()
+
+	handleUpload(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUploadMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/upload", nil)
+	rr := httptest.NewRecorder()
+
+	handleUpload(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
 	}
 }

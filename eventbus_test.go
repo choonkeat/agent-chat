@@ -21,7 +21,7 @@ func TestEventBusWritesJSONL(t *testing.T) {
 	bus.Publish(Event{Type: "agentMessage", Text: "hello from agent"})
 
 	// Log a userMessage
-	bus.LogUserMessage("hello from user")
+	bus.LogUserMessage("hello from user", nil)
 
 	// Publish a draw event
 	bus.Publish(Event{
@@ -70,6 +70,6 @@ func TestEventBusWithoutLog(t *testing.T) {
 	bus := NewEventBus()
 	// Should work without panicking
 	bus.Publish(Event{Type: "agentMessage", Text: "test"})
-	bus.LogUserMessage("test")
+	bus.LogUserMessage("test", nil)
 	bus.Close() // no-op when no file
 }

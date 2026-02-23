@@ -6,18 +6,22 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,6 +37,9 @@ var commit = "unknown"
 
 // themeCookieName is the cookie the browser reads for light/dark theme.
 var themeCookieName string
+
+// uploadDir is the directory for uploaded files.
+var uploadDir string
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -78,11 +85,29 @@ func main() {
 	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
+	flag.StringVar(&uploadDir, "upload-dir", "", "directory for uploaded files (default: temp dir)")
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("agent-chat %s (%s)\n", version, commit)
 		os.Exit(0)
+	}
+
+	// Set up upload directory
+	if uploadDir == "" {
+		dir, err := os.MkdirTemp("", "agent-chat-uploads-*")
+		if err != nil {
+			log.Fatalf("failed to create temp upload dir: %v", err)
+		}
+		uploadDir = dir
+	} else {
+		if !filepath.IsAbs(uploadDir) {
+			wd, _ := os.Getwd()
+			uploadDir = filepath.Join(wd, uploadDir)
+		}
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			log.Fatalf("failed to create upload dir %s: %v", uploadDir, err)
+		}
 	}
 
 	// Initialize event bus, optionally with JSONL file logging.
@@ -151,6 +176,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpHandler)
 	mux.HandleFunc("/ws", handleWebSocket)
+	mux.HandleFunc("/upload", handleUpload)
+	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
 		fmt.Fprintf(w, "var THEME_COOKIE_NAME = %q;\n", themeCookieName)
@@ -195,6 +222,69 @@ func openBrowser(url string) {
 		cmd = exec.Command("cmd", "/c", "start", url)
 	}
 	cmd.Start() // fire and forget
+}
+
+func handleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Limit request body to 50MB
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
+		return
+	}
+
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		http.Error(w, "no files provided", http.StatusBadRequest)
+		return
+	}
+
+	var refs []FileRef
+	for _, fh := range files {
+		ref, err := saveUploadedFile(fh)
+		if err != nil {
+			http.Error(w, "failed to save file: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		refs = append(refs, ref)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(refs)
+}
+
+func saveUploadedFile(fh *multipart.FileHeader) (FileRef, error) {
+	src, err := fh.Open()
+	if err != nil {
+		return FileRef{}, err
+	}
+	defer src.Close()
+
+	prefix := uuid.New().String()[:8]
+	savedName := prefix + "-" + fh.Filename
+	destPath := filepath.Join(uploadDir, savedName)
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return FileRef{}, err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return FileRef{}, err
+	}
+
+	return FileRef{
+		Name: fh.Filename,
+		Path: destPath,
+		URL:  "/uploads/" + savedName,
+		Size: fh.Size,
+		Type: fh.Header.Get("Content-Type"),
+	}, nil
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -263,19 +353,20 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		var m struct {
-			Type    string `json:"type"`
-			Text    string `json:"text"`
-			ID      string `json:"id"`
-			Message string `json:"message"`
+			Type    string    `json:"type"`
+			Text    string    `json:"text"`
+			Files   []FileRef `json:"files"`
+			ID      string    `json:"id"`
+			Message string    `json:"message"`
 		}
 		if json.Unmarshal(msg, &m) != nil {
 			continue
 		}
 		switch m.Type {
 		case "message":
-			if m.Text != "" {
-				bus.PushMessage(m.Text)
-				bus.LogUserMessage(m.Text)
+			if m.Text != "" || len(m.Files) > 0 {
+				bus.PushMessage(m.Text, m.Files)
+				bus.LogUserMessage(m.Text, m.Files)
 				// Notify browser that message is queued — it waits for this
 				// before telling the parent frame to call check_messages.
 				select {
@@ -290,7 +381,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					result = "ack:" + m.Message
 				}
 				bus.ResolveAck(m.ID, result)
-				bus.LogUserMessage(m.Message)
+				bus.LogUserMessage(m.Message, nil)
 			}
 		}
 	}

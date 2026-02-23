@@ -41,12 +41,12 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies})
 
-		result, err := bus.WaitForMessages(ctx)
+		msgs, err := bus.WaitForMessages(ctx)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
-		text := "User responded: " + result + "\n\n(Reply to user in chat when done)"
+		text := "User responded: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -170,11 +170,12 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		Name:        "check_messages",
 		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
-		result := bus.DrainMessages()
-		if result == "" {
+		msgs := bus.DrainMessages()
+		var result string
+		if len(msgs) == 0 {
 			result = "No new messages."
 		} else {
-			result = "User said: " + result + "\n\n(Reply to user in chat when done)"
+			result = "User said: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{

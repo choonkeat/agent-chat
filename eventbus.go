@@ -12,13 +12,29 @@ import (
 	"github.com/google/uuid"
 )
 
+// FileRef describes an uploaded file.
+type FileRef struct {
+	Name string `json:"name"`           // original filename
+	Path string `json:"path"`           // absolute server path
+	URL  string `json:"url"`            // relative URL for browser to fetch thumbnail
+	Size int64  `json:"size"`           // bytes
+	Type string `json:"type,omitempty"` // MIME type
+}
+
+// UserMessage is a text message with optional file attachments from the browser.
+type UserMessage struct {
+	Text  string    `json:"text"`
+	Files []FileRef `json:"files,omitempty"`
+}
+
 // Event represents a chat event sent to browser clients.
 type Event struct {
-	Type         string   `json:"type"`                   // "agentMessage", "userMessage", "draw"
-	Text         string   `json:"text,omitempty"`
-	AckID        string   `json:"ack_id,omitempty"`
-	QuickReplies []string `json:"quick_replies,omitempty"`
-	Instructions []any    `json:"instructions,omitempty"` // draw instructions
+	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "draw"
+	Text         string    `json:"text,omitempty"`
+	AckID        string    `json:"ack_id,omitempty"`
+	QuickReplies []string  `json:"quick_replies,omitempty"`
+	Instructions []any     `json:"instructions,omitempty"` // draw instructions
+	Files        []FileRef `json:"files,omitempty"`
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.
@@ -37,7 +53,7 @@ type EventBus struct {
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
 
-	msgQueue chan string // queued user messages from browser
+	msgQueue chan UserMessage // queued user messages from browser
 
 	logFile *os.File   // optional JSONL event log on disk
 	logMu   sync.Mutex // guards logFile writes
@@ -48,7 +64,7 @@ func NewEventBus() *EventBus {
 	return &EventBus{
 		subscribers: make(map[chan Event]struct{}),
 		pending:     make(map[string]chan string),
-		msgQueue:    make(chan string, 256),
+		msgQueue:    make(chan UserMessage, 256),
 	}
 }
 
@@ -61,7 +77,7 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 	return &EventBus{
 		subscribers: make(map[chan Event]struct{}),
 		pending:     make(map[string]chan string),
-		msgQueue:    make(chan string, 256),
+		msgQueue:    make(chan UserMessage, 256),
 		logFile:     f,
 	}, nil
 }
@@ -94,42 +110,43 @@ func (eb *EventBus) Close() {
 }
 
 // PushMessage queues a user message from the browser.
-func (eb *EventBus) PushMessage(text string) {
+func (eb *EventBus) PushMessage(text string, files []FileRef) {
+	msg := UserMessage{Text: text, Files: files}
 	select {
-	case eb.msgQueue <- text:
+	case eb.msgQueue <- msg:
 	default:
 		// queue full, drop oldest
 		select {
 		case <-eb.msgQueue:
 		default:
 		}
-		eb.msgQueue <- text
+		eb.msgQueue <- msg
 	}
 }
 
-// DrainMessages returns all currently queued messages joined with "\n\n",
-// or empty string if none are queued. Non-blocking.
-func (eb *EventBus) DrainMessages() string {
-	var msgs []string
+// DrainMessages returns all currently queued messages, or nil if none are queued.
+// Non-blocking. Text from multiple messages is joined with "\n\n"; files are aggregated.
+func (eb *EventBus) DrainMessages() []UserMessage {
+	var msgs []UserMessage
 	for {
 		select {
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
-			return strings.Join(msgs, "\n\n")
+			return msgs
 		}
 	}
 }
 
 // WaitForMessages waits for at least one queued message, drains any additional,
-// and returns them joined with "\n\n".
-func (eb *EventBus) WaitForMessages(ctx context.Context) (string, error) {
-	var msgs []string
+// and returns them.
+func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) {
+	var msgs []UserMessage
 	select {
 	case msg := <-eb.msgQueue:
 		msgs = append(msgs, msg)
 	case <-ctx.Done():
-		return "", ctx.Err()
+		return nil, ctx.Err()
 	}
 	// drain any additional queued messages
 	for {
@@ -137,9 +154,41 @@ func (eb *EventBus) WaitForMessages(ctx context.Context) (string, error) {
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
-			return strings.Join(msgs, "\n\n"), nil
+			return msgs, nil
 		}
 	}
+}
+
+// FormatMessages joins user messages into a single string with file attachment info.
+func FormatMessages(msgs []UserMessage) string {
+	var texts []string
+	for _, m := range msgs {
+		texts = append(texts, m.Text)
+	}
+	result := strings.Join(texts, "\n\n")
+
+	// Collect all files
+	var allFiles []FileRef
+	for _, m := range msgs {
+		allFiles = append(allFiles, m.Files...)
+	}
+	if len(allFiles) > 0 {
+		result += "\n\nAttached files:"
+		for _, f := range allFiles {
+			sizeStr := fmt.Sprintf("%dB", f.Size)
+			if f.Size >= 1024*1024 {
+				sizeStr = fmt.Sprintf("%.1fMB", float64(f.Size)/1024/1024)
+			} else if f.Size >= 1024 {
+				sizeStr = fmt.Sprintf("%.0fKB", float64(f.Size)/1024)
+			}
+			mime := f.Type
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			result += fmt.Sprintf("\n  %s (%s, %s)", f.Path, mime, sizeStr)
+		}
+	}
+	return result
 }
 
 // Subscribe returns a buffered channel that receives all published events.
@@ -202,8 +251,8 @@ func (eb *EventBus) Publish(event Event) {
 }
 
 // LogUserMessage appends a user message event to the log for reconnect replay.
-func (eb *EventBus) LogUserMessage(text string) {
-	evt := Event{Type: "userMessage", Text: text}
+func (eb *EventBus) LogUserMessage(text string, files []FileRef) {
+	evt := Event{Type: "userMessage", Text: text, Files: files}
 	eb.mu.Lock()
 	eb.eventLog = append(eb.eventLog, evt)
 	eb.mu.Unlock()
