@@ -163,7 +163,11 @@ func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) 
 func FormatMessages(msgs []UserMessage) string {
 	var texts []string
 	for _, m := range msgs {
-		texts = append(texts, m.Text)
+		if strings.HasPrefix(m.Text, "\U0001f3a4 ") {
+			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 "))
+		} else {
+			texts = append(texts, m.Text)
+		}
 	}
 	result := strings.Join(texts, "\n\n")
 

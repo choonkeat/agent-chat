@@ -666,6 +666,9 @@ function setupSpeechRecognition() {
     }
 
     addUserMessage(text);
+    if (window.parent !== window) {
+      pendingNotifyParent = true;
+    }
     sendMessage('\ud83c\udfa4 ' + text);
     showLoading();
   };

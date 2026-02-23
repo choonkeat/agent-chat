@@ -3,9 +3,28 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// isVoiceMessage returns true if any message is a voice message (prefixed with 🎤).
+func isVoiceMessage(msgs []UserMessage) bool {
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Text, "\U0001f3a4 ") {
+			return true
+		}
+	}
+	return false
+}
+
+// voiceSuffix returns the appropriate reply instruction suffix.
+func voiceSuffix(msgs []UserMessage) string {
+	if isVoiceMessage(msgs) {
+		return "(Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown)"
+	}
+	return "(Reply to user in chat when done)"
+}
 
 // MessageParams are the parameters for the send_message tool.
 type MessageParams struct {
@@ -51,7 +70,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
-		text := "User responded: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
+		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -90,7 +109,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
-		text := "User responded: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
+		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -219,7 +238,7 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		if len(msgs) == 0 {
 			result = "No new messages."
 		} else {
-			result = "User said: " + FormatMessages(msgs) + "\n\n(Reply to user in chat when done)"
+			result = "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
