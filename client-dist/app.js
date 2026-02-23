@@ -22,7 +22,7 @@ setInterval(applyTheme, 2000);
 var messages = document.getElementById('messages');
 var chatInput = document.getElementById('chat-input');
 var sendBtn = document.getElementById('btn-send');
-var statusDot = document.getElementById('status-dot');
+var chatEl = document.getElementById('chat');
 var quickReplies = document.getElementById('quick-replies');
 var btnAttach = document.getElementById('btn-attach');
 var filePicker = document.getElementById('file-picker');
@@ -378,27 +378,27 @@ filePicker.addEventListener('change', function() {
   filePicker.value = '';
 });
 
-// Drag and drop on input container
-inputContainer.addEventListener('dragover', function(e) {
+// Drag and drop on entire chat area
+chatEl.addEventListener('dragover', function(e) {
   e.preventDefault();
-  inputContainer.classList.add('drag-over');
+  chatEl.classList.add('drag-over');
 });
 
-inputContainer.addEventListener('dragenter', function(e) {
+chatEl.addEventListener('dragenter', function(e) {
   e.preventDefault();
-  inputContainer.classList.add('drag-over');
+  chatEl.classList.add('drag-over');
 });
 
-inputContainer.addEventListener('dragleave', function(e) {
-  // Only remove if we've left the container entirely
-  if (!inputContainer.contains(e.relatedTarget)) {
-    inputContainer.classList.remove('drag-over');
+chatEl.addEventListener('dragleave', function(e) {
+  // Only remove if we've left the chat entirely
+  if (!chatEl.contains(e.relatedTarget)) {
+    chatEl.classList.remove('drag-over');
   }
 });
 
-inputContainer.addEventListener('drop', function(e) {
+chatEl.addEventListener('drop', function(e) {
   e.preventDefault();
-  inputContainer.classList.remove('drag-over');
+  chatEl.classList.remove('drag-over');
   if (e.dataTransfer.files.length > 0) {
     addStagedFiles(e.dataTransfer.files);
   }
@@ -544,11 +544,9 @@ quickReplies.addEventListener('click', function (e) {
   showLoading();
 });
 
-// --- Connection status ---
+// --- Connection status (no-op, status conveyed via input disabled state) ---
 
-function setStatus(state) {
-  statusDot.className = state;
-}
+function setStatus(state) {}
 
 // --- WebSocket connection with exponential backoff ---
 

@@ -316,28 +316,6 @@ body {
   flex-shrink: 0;
 }
 
-#status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-muted);
-  flex-shrink: 0;
-  margin-bottom: 0.65rem;
-  transition: background 0.3s;
-}
-
-#status-dot.connected {
-  background: #4caf50;
-}
-
-#status-dot.connecting {
-  background: #ff9800;
-}
-
-#status-dot.disconnected {
-  background: #f44336;
-}
-
 /* --- Attach button --- */
 
 #btn-attach {
@@ -383,7 +361,7 @@ body {
   border-color: var(--border-secondary);
 }
 
-#input-container.drag-over {
+#chat.drag-over #input-container {
   border-color: #2563eb;
   border-style: dashed;
   background: rgba(37, 99, 235, 0.05);
