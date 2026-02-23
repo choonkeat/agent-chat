@@ -28,6 +28,7 @@ var btnAttach = document.getElementById('btn-attach');
 var filePicker = document.getElementById('file-picker');
 var inputContainer = document.getElementById('input-container');
 var fileStaging = document.getElementById('file-staging');
+var dropZone = document.body;
 
 var btnVoice = document.getElementById('btn-voice');
 var voiceControls = document.getElementById('voice-controls');
@@ -389,25 +390,25 @@ filePicker.addEventListener('change', function() {
   filePicker.value = '';
 });
 
-// Drag and drop on entire chat area
-chatEl.addEventListener('dragover', function(e) {
+// Drag and drop on entire window
+dropZone.addEventListener('dragover', function(e) {
   e.preventDefault();
   chatEl.classList.add('drag-over');
 });
 
-chatEl.addEventListener('dragenter', function(e) {
+dropZone.addEventListener('dragenter', function(e) {
   e.preventDefault();
   chatEl.classList.add('drag-over');
 });
 
-chatEl.addEventListener('dragleave', function(e) {
-  // Only remove if we've left the chat entirely
-  if (!chatEl.contains(e.relatedTarget)) {
+dropZone.addEventListener('dragleave', function(e) {
+  // Only remove if we've left the drop zone entirely
+  if (!dropZone.contains(e.relatedTarget)) {
     chatEl.classList.remove('drag-over');
   }
 });
 
-chatEl.addEventListener('drop', function(e) {
+dropZone.addEventListener('drop', function(e) {
   e.preventDefault();
   chatEl.classList.remove('drag-over');
   if (e.dataTransfer.files.length > 0) {
