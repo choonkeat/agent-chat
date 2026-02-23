@@ -25,7 +25,7 @@ import (
 //go:embed client-dist
 var staticFS embed.FS
 
-var bus = NewEventBus()
+var bus *EventBus
 
 // version and commit are set at build time via -ldflags.
 var version = "dev"
@@ -84,6 +84,19 @@ func main() {
 		fmt.Printf("agent-chat %s (%s)\n", version, commit)
 		os.Exit(0)
 	}
+
+	// Initialize event bus, optionally with JSONL file logging.
+	if logPath := os.Getenv("AGENT_CHAT_EVENT_LOG"); logPath != "" {
+		var err error
+		bus, err = NewEventBusWithLog(logPath)
+		if err != nil {
+			log.Printf("Warning: failed to open event log %s: %v (falling back to in-memory only)", logPath, err)
+			bus = NewEventBus()
+		}
+	} else {
+		bus = NewEventBus()
+	}
+	defer bus.Close()
 
 	// Top-level context cancelled on shutdown — all goroutines should use this.
 	ctx, cancel := context.WithCancel(context.Background())

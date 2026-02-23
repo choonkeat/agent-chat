@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +38,9 @@ type EventBus struct {
 	pending map[string]chan string // ack_id -> channel
 
 	msgQueue chan string // queued user messages from browser
+
+	logFile *os.File   // optional JSONL event log on disk
+	logMu   sync.Mutex // guards logFile writes
 }
 
 // NewEventBus creates a new EventBus.
@@ -44,6 +49,47 @@ func NewEventBus() *EventBus {
 		subscribers: make(map[chan Event]struct{}),
 		pending:     make(map[string]chan string),
 		msgQueue:    make(chan string, 256),
+	}
+}
+
+// NewEventBusWithLog creates an EventBus that also appends events to a JSONL file.
+func NewEventBusWithLog(path string) (*EventBus, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, err
+	}
+	return &EventBus{
+		subscribers: make(map[chan Event]struct{}),
+		pending:     make(map[string]chan string),
+		msgQueue:    make(chan string, 256),
+		logFile:     f,
+	}, nil
+}
+
+// writeToLog marshals an event to JSON and appends it to the log file.
+func (eb *EventBus) writeToLog(event Event) {
+	eb.logMu.Lock()
+	defer eb.logMu.Unlock()
+	if eb.logFile == nil {
+		return
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
+	eb.logFile.Write(data)
+	eb.logFile.Sync()
+}
+
+// Close flushes and closes the log file.
+func (eb *EventBus) Close() {
+	eb.logMu.Lock()
+	defer eb.logMu.Unlock()
+	if eb.logFile != nil {
+		eb.logFile.Sync()
+		eb.logFile.Close()
+		eb.logFile = nil
 	}
 }
 
@@ -152,13 +198,16 @@ func (eb *EventBus) Publish(event Event) {
 		}
 	}
 	eb.mu.Unlock()
+	eb.writeToLog(event)
 }
 
 // LogUserMessage appends a user message event to the log for reconnect replay.
 func (eb *EventBus) LogUserMessage(text string) {
+	evt := Event{Type: "userMessage", Text: text}
 	eb.mu.Lock()
-	eb.eventLog = append(eb.eventLog, Event{Type: "userMessage", Text: text})
+	eb.eventLog = append(eb.eventLog, evt)
 	eb.mu.Unlock()
+	eb.writeToLog(evt)
 }
 
 // History returns a copy of the event log and the pending ack ID (if any).

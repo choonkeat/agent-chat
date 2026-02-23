@@ -570,4 +570,41 @@ document.getElementById('btn-download').addEventListener('click', function () {
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 });
 
-connect();
+// --- Playback mode ---
+
+function startPlaybackMode(url) {
+  // Hide interactive elements
+  document.getElementById('input-bar').style.display = 'none';
+  document.getElementById('quick-replies').style.display = 'none';
+  document.getElementById('btn-download').style.display = 'none';
+  setStatus('connected');
+
+  fetch(url)
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('Failed to load events: ' + resp.status);
+      return resp.text();
+    })
+    .then(function (text) {
+      var events = text.trim().split('\n').filter(Boolean).map(function (line) {
+        return JSON.parse(line);
+      });
+      replayHistory(events);
+    })
+    .catch(function (err) {
+      addBubble('Playback error: ' + err.message, 'agent');
+    });
+}
+
+// --- Startup ---
+// If AGENT_CHAT_DEFER_STARTUP is set, skip automatic connect/playback
+// (allows embedding pages to call startPlaybackMode() manually).
+
+if (typeof AGENT_CHAT_DEFER_STARTUP === 'undefined' || !AGENT_CHAT_DEFER_STARTUP) {
+  var params = new URLSearchParams(window.location.search);
+  var playbackUrl = params.get('playback');
+  if (playbackUrl) {
+    startPlaybackMode(playbackUrl);
+  } else {
+    connect();
+  }
+}
