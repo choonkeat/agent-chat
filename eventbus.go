@@ -35,6 +35,7 @@ type Event struct {
 	QuickReplies []string  `json:"quick_replies,omitempty"`
 	Instructions []any     `json:"instructions,omitempty"` // draw instructions
 	Files        []FileRef `json:"files,omitempty"`
+	Timestamp    int64     `json:"ts,omitempty"` // Unix milliseconds
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.
@@ -164,7 +165,7 @@ func FormatMessages(msgs []UserMessage) string {
 	var texts []string
 	for _, m := range msgs {
 		if strings.HasPrefix(m.Text, "\U0001f3a4 ") {
-			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 "))
+			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 ")+"\n\nIMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action.")
 		} else {
 			texts = append(texts, m.Text)
 		}
@@ -242,6 +243,9 @@ func (eb *EventBus) ResetLog() {
 
 // Publish sends an event to all subscribers and appends to the event log.
 func (eb *EventBus) Publish(event Event) {
+	if event.Timestamp == 0 {
+		event.Timestamp = time.Now().UnixMilli()
+	}
 	eb.mu.Lock()
 	eb.eventLog = append(eb.eventLog, event)
 	for ch := range eb.subscribers {
@@ -256,7 +260,7 @@ func (eb *EventBus) Publish(event Event) {
 
 // LogUserMessage appends a user message event to the log for reconnect replay.
 func (eb *EventBus) LogUserMessage(text string, files []FileRef) {
-	evt := Event{Type: "userMessage", Text: text, Files: files}
+	evt := Event{Type: "userMessage", Text: text, Files: files, Timestamp: time.Now().UnixMilli()}
 	eb.mu.Lock()
 	eb.eventLog = append(eb.eventLog, evt)
 	eb.mu.Unlock()
