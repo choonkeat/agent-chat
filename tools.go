@@ -21,7 +21,7 @@ func isVoiceMessage(msgs []UserMessage) bool {
 // voiceSuffix returns the appropriate reply instruction suffix.
 func voiceSuffix(msgs []UserMessage) string {
 	if isVoiceMessage(msgs) {
-		return "(Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown)"
+		return "(Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)"
 	}
 	return "(Reply to user in chat when done)"
 }
@@ -35,7 +35,9 @@ type MessageParams struct {
 
 // VerbalReplyParams are the parameters for the send_verbal_reply tool.
 type VerbalReplyParams struct {
-	Text string `json:"text"`
+	Text             string   `json:"text"`
+	QuickReply       string   `json:"quick_reply"`
+	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 }
 
 func registerTools(server *mcp.Server, bus *EventBus) {
@@ -84,7 +86,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_verbal_reply",
-		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.",
+		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -102,7 +104,8 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
 		}
 
-		bus.Publish(Event{Type: "verbalReply", Text: params.Text})
+		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
+		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies})
 
 		msgs, err := bus.WaitForMessages(ctx)
 		if err != nil {
@@ -223,6 +226,28 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: "Progress sent."},
+			},
+		}, nil, nil
+	})
+
+	// VerbalProgressParams are the parameters for the send_verbal_progress tool.
+	type VerbalProgressParams struct {
+		Text string `json:"text"`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "send_verbal_progress",
+		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalProgressParams) (*mcp.CallToolResult, any, error) {
+		if err := ensureHTTPServer(); err != nil {
+			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
+		}
+
+		bus.Publish(Event{Type: "verbalReply", Text: params.Text})
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "Verbal progress sent."},
 			},
 		}, nil, nil
 	})

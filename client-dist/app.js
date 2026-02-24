@@ -47,6 +47,9 @@ var voiceRecognition = null;
 var selectedVoice = null;
 var isSpeaking = false;
 var isListening = false;
+var micRetryCount = 0;
+var micRetryMax = 5;
+var micRetryBaseDelay = 500; // ms, doubles each retry
 
 // --- Scroll tracking ---
 
@@ -598,6 +601,17 @@ voiceSelect.addEventListener('change', function() {
 });
 
 function speakText(text, onDone) {
+  if (typeof speechSynthesis === 'undefined') {
+    addSystemBubble('TTS not supported in this browser');
+    if (onDone) onDone();
+    return;
+  }
+  var voices = speechSynthesis.getVoices();
+  if (voices.length === 0) {
+    addSystemBubble('TTS: no voices available — speech output disabled');
+    if (onDone) onDone();
+    return;
+  }
   var utterance = new SpeechSynthesisUtterance(text);
   if (selectedVoice) utterance.voice = selectedVoice;
   utterance.rate = 1.0;
@@ -606,7 +620,8 @@ function speakText(text, onDone) {
     isSpeaking = false;
     if (onDone) onDone();
   };
-  utterance.onerror = function() {
+  utterance.onerror = function(e) {
+    addSystemBubble('TTS error: ' + (e.error || 'unknown'));
     isSpeaking = false;
     if (onDone) onDone();
   };
@@ -630,6 +645,7 @@ function setupSpeechRecognition() {
 
   voiceRecognition.onstart = function() {
     isListening = true;
+    micRetryCount = 0; // reset backoff on successful start
     btnVoice.classList.add('active');
     addSystemBubble('Listening...');
   };
@@ -675,26 +691,49 @@ function setupSpeechRecognition() {
 
   voiceRecognition.onerror = function(e) {
     console.error('[' + ts() + '] Voice recognition error:', e.error);
-    addSystemBubble('Voice error: ' + e.error);
     isListening = false;
-    // Auto-retry if still in voice mode (e.g. no-speech timeout)
-    if (voiceMode && !isSpeaking) {
-      setTimeout(startListening, 500);
+
+    // Non-retryable errors — give up and disable voice mode
+    var fatal = ['not-allowed', 'service-not-allowed', 'language-not-supported'];
+    if (fatal.indexOf(e.error) !== -1) {
+      addSystemBubble('Voice error: ' + e.error + ' (cannot retry)');
+      disableVoiceMode();
+      return;
     }
+
+    // Retryable errors (no-speech, audio-capture, network, aborted, etc.)
+    addSystemBubble('Voice error: ' + e.error);
+    retryMic();
   };
 
   voiceRecognition.onend = function() {
     isListening = false;
-    // Auto-restart if still in voice mode (matches reference repo pattern)
+    // Auto-restart if still in voice mode
     if (voiceMode && !isSpeaking) {
-      try {
-        voiceRecognition.start();
-      } catch(e) {
-        console.error('[' + ts() + '] Failed to restart recognition:', e);
-        addSystemBubble('Failed to restart mic: ' + e.message);
-      }
+      retryMic();
     }
   };
+}
+
+function retryMic() {
+  if (!voiceMode) return;
+  if (micRetryCount >= micRetryMax) {
+    addSystemBubble('Mic failed after ' + micRetryMax + ' retries — disabling voice mode');
+    disableVoiceMode();
+    return;
+  }
+  var delay = micRetryBaseDelay * Math.pow(2, micRetryCount);
+  micRetryCount++;
+  console.log('[' + ts() + '] Mic retry ' + micRetryCount + '/' + micRetryMax + ' in ' + delay + 'ms');
+  // Recreate recognition instance to clear any bad state
+  if (voiceRecognition) {
+    try { voiceRecognition.abort(); } catch(e) {}
+    voiceRecognition = null;
+  }
+  setTimeout(function() {
+    if (!voiceMode) return;
+    startListening();
+  }, delay);
 }
 
 function startListening() {
@@ -707,6 +746,7 @@ function startListening() {
     console.error('[' + ts() + '] Failed to start recognition:', e);
     addSystemBubble('Failed to start mic: ' + e.message);
     isListening = false;
+    retryMic();
   }
 }
 
@@ -724,9 +764,22 @@ function enableVoiceMode() {
     // SpeechRecognition manages its own audio capture.
     stream.getTracks().forEach(function(t) { t.stop(); });
     voiceMode = true;
+    micRetryCount = 0;
     btnVoice.classList.add('active');
     voiceControls.classList.add('visible');
     playBeep(880, 0.15);
+    // Warm up speechSynthesis with a silent utterance inside this user gesture.
+    // iOS Safari requires the first speak() call to originate from a tap/click;
+    // without this, later speak() calls from WebSocket events are silently blocked.
+    if (typeof speechSynthesis !== 'undefined') {
+      var warmup = new SpeechSynthesisUtterance('');
+      warmup.volume = 0;
+      speechSynthesis.speak(warmup);
+    }
+    // Warn if TTS voices are unavailable
+    if (typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices().length === 0) {
+      addSystemBubble('Warning: no TTS voices found — agent replies will not be spoken aloud');
+    }
     // Re-create recognition instance each time voice mode is enabled
     setupSpeechRecognition();
     setTimeout(startListening, 200);
@@ -894,8 +947,11 @@ function connect() {
         if (voiceMode) {
           speakText(data.text || '', function() {
             playBeep(880, 0.15);
+            enableInput(data.quick_replies);
             setTimeout(startListening, 200);
           });
+        } else {
+          enableInput(data.quick_replies);
         }
         break;
 
@@ -997,6 +1053,10 @@ function startPlaybackMode(url) {
       var events = text.trim().split('\n').filter(Boolean).map(function (line) {
         return JSON.parse(line);
       });
+      if (events.length === 0) {
+        addBubble('Chat history is empty.', 'system');
+        return;
+      }
       replayHistory(events);
     })
     .catch(function (err) {
