@@ -550,19 +550,16 @@ function autoGrow() {
 
 chatInput.addEventListener('input', autoGrow);
 
-// Enter sends, Shift+Enter / Alt+Enter inserts newline
+// Desktop: Enter sends, Shift+Enter inserts newline
+// Mobile/touch: Enter inserts newline, send button only
+var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 768);
+
 chatInput.addEventListener('keydown', function (e) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
-    e.preventDefault();
-    handleSend();
-  } else if (e.key === 'Enter' && e.altKey) {
-    e.preventDefault();
-    var start = chatInput.selectionStart;
-    var end = chatInput.selectionEnd;
-    chatInput.value = chatInput.value.substring(0, start) + '\n' + chatInput.value.substring(end);
-    chatInput.selectionStart = chatInput.selectionEnd = start + 1;
-    autoGrow();
-  }
+  if (e.key !== 'Enter') return;
+  if (isMobile) return; // on mobile, Enter always inserts newline (default behavior)
+  if (e.shiftKey || e.altKey) return; // modifier+Enter inserts newline on desktop
+  e.preventDefault();
+  handleSend();
 });
 
 sendBtn.addEventListener('click', handleSend);
