@@ -106,6 +106,16 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		Name:        "send_message",
 		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
+		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
+		if bus.LastVoice() {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: "ERROR: The user is in voice mode. Use send_verbal_reply instead of send_message to respond."},
+				},
+				IsError: true,
+			}, nil, nil
+		}
+
 		// Lazily start HTTP server + open browser
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -134,6 +144,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
+		bus.SetLastVoice(isVoiceMessage(msgs))
 		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
@@ -175,6 +186,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
 
+		bus.SetLastVoice(isVoiceMessage(msgs))
 		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
@@ -330,6 +342,7 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		if len(msgs) == 0 {
 			result = "No new messages."
 		} else {
+			bus.SetLastVoice(isVoiceMessage(msgs))
 			result = "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 		}
 		return &mcp.CallToolResult{

@@ -54,7 +54,8 @@ type EventBus struct {
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
 
-	msgQueue chan UserMessage // queued user messages from browser
+	msgQueue  chan UserMessage // queued user messages from browser
+	lastVoice bool            // whether the last consumed user message was voice
 
 	logFile *os.File   // optional JSONL event log on disk
 	logMu   sync.Mutex // guards logFile writes
@@ -158,6 +159,20 @@ func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) 
 			return msgs, nil
 		}
 	}
+}
+
+// SetLastVoice records whether the last consumed user messages contained voice input.
+func (eb *EventBus) SetLastVoice(voice bool) {
+	eb.mu.Lock()
+	eb.lastVoice = voice
+	eb.mu.Unlock()
+}
+
+// LastVoice returns true if the last consumed user messages contained voice input.
+func (eb *EventBus) LastVoice() bool {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return eb.lastVoice
 }
 
 // FormatMessages joins user messages into a single string with file attachment info.
