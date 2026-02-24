@@ -51,6 +51,9 @@ var micRetryCount = 0;
 var micRetryMax = 5;
 var micRetryBaseDelay = 500; // ms, doubles each retry
 var micRetryTimer = null; // guards against concurrent retry scheduling
+var ttsUnlocked = false; // tracks whether the TTS warmup completed successfully
+var ttsSafetyTimer = null; // safety timeout for stuck TTS
+var ttsQueue = []; // queued verbal replies waiting to be spoken
 
 // --- Scroll tracking ---
 
@@ -81,6 +84,7 @@ var DPR = window.devicePixelRatio || 1;
 
 function clearMessages() {
   messages.innerHTML = '';
+  lastBubbleTs = 0;
 }
 
 // --- Syntax highlighting ---
@@ -222,9 +226,32 @@ function renderFileAttachments(files) {
   return container;
 }
 
-function addBubble(text, role, files) {
+var lastBubbleTs = 0;
+
+function formatElapsed(ms) {
+  if (ms < 1000) return ms + 'ms';
+  var secs = ms / 1000;
+  if (secs < 60) return secs.toFixed(1) + 's';
+  var mins = Math.floor(secs / 60);
+  var remSecs = Math.round(secs % 60);
+  return mins + 'm ' + remSecs + 's';
+}
+
+function addBubble(text, role, files, extraClass, timestamp) {
+  // Show elapsed time between messages
+  if (timestamp && lastBubbleTs) {
+    var delta = timestamp - lastBubbleTs;
+    if (delta > 0) {
+      var elapsed = document.createElement('div');
+      elapsed.className = 'elapsed-time';
+      elapsed.textContent = formatElapsed(delta);
+      messages.appendChild(elapsed);
+    }
+  }
+  if (timestamp) lastBubbleTs = timestamp;
+
   var div = document.createElement('div');
-  div.className = 'bubble ' + role;
+  div.className = 'bubble ' + role + (extraClass ? ' ' + extraClass : '');
   if (text) {
     div.innerHTML = renderMarkdown(text);
   }
@@ -236,15 +263,15 @@ function addBubble(text, role, files) {
   scrollToBottom(false);
 }
 
-function addAgentMessage(text) {
-  if (text) {
-    addBubble(text, 'agent');
+function addAgentMessage(text, files, extraClass, timestamp) {
+  if (text || (files && files.length > 0)) {
+    addBubble(text, 'agent', files, extraClass, timestamp);
   }
 }
 
-function addUserMessage(text, files) {
+function addUserMessage(text, files, extraClass, timestamp) {
   if (text || (files && files.length > 0)) {
-    addBubble(text, 'user', files);
+    addBubble(text, 'user', files, extraClass, timestamp);
   }
 }
 
@@ -486,7 +513,7 @@ function handleSend() {
   var localFiles = filesToUpload.map(function(sf) {
     return { name: sf.name, url: sf.previewUrl || '', type: sf.file.type, size: sf.file.size };
   });
-  addUserMessage(text, localFiles);
+  addUserMessage(text, localFiles, null, Date.now());
   isUserScrolledUp = false;
 
   // Clear staging
@@ -547,7 +574,7 @@ quickReplies.addEventListener('click', function (e) {
 
   var message = chip.dataset.message || '';
   if (!message) return;
-  addUserMessage(message);
+  addUserMessage(message, null, null, Date.now());
   isUserScrolledUp = false;
   // Send message to server first; postMessage to parent happens after
   // server confirms the message is queued (see 'messageQueued' handler).
@@ -613,37 +640,79 @@ function speakText(text, onDone) {
     if (onDone) onDone();
     return;
   }
-  // Cancel any stuck/pending utterances before speaking new one
+  // Cancel any stuck/pending utterances before speaking new one.
+  // Safari/WebKit bug: cancel() immediately followed by speak() causes the
+  // new utterance to be silently dropped (no onend/onerror fires). We must
+  // delay speak() to let the synthesis engine settle after cancel().
   speechSynthesis.cancel();
-  var utterance = new SpeechSynthesisUtterance(text);
-  if (selectedVoice) utterance.voice = selectedVoice;
-  utterance.rate = 1.0;
+  if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
   isSpeaking = true;
   addSystemBubble('Speaking...');
   var ttsStart = Date.now();
-  utterance.onend = function() {
+  var done = false;
+  function finish(reason) {
+    if (done) return;
+    done = true;
     isSpeaking = false;
-    // On iOS, if the device is in silent mode, onend fires almost instantly
-    // but no sound is actually played. Detect and warn the user.
-    var elapsed = Date.now() - ttsStart;
-    if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
-      addSystemBubble('TTS may be muted — check your device silent/mute switch');
-    }
-    console.log('[' + ts() + '] TTS onend after ' + elapsed + 'ms');
+    if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
+    console.log('[' + ts() + '] TTS finished (' + reason + ') after ' + (Date.now() - ttsStart) + 'ms');
     if (onDone) onDone();
-  };
-  utterance.onerror = function(e) {
-    console.error('[' + ts() + '] TTS onerror:', e.error);
-    addSystemBubble('TTS error: ' + (e.error || 'unknown'));
-    isSpeaking = false;
-    if (onDone) onDone();
-  };
-  speechSynthesis.speak(utterance);
-  console.log('[' + ts() + '] TTS speak() called, voice=' + (utterance.voice ? utterance.voice.name : 'default') + ', text length=' + text.length);
+  }
+  function doSpeak() {
+    var utterance = new SpeechSynthesisUtterance(text);
+    if (selectedVoice) utterance.voice = selectedVoice;
+    utterance.rate = 1.0;
+    utterance.onend = function() {
+      var elapsed = Date.now() - ttsStart;
+      if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
+        addSystemBubble('TTS may be muted — check your device silent/mute switch');
+      }
+      finish('onend');
+    };
+    utterance.onerror = function(e) {
+      console.error('[' + ts() + '] TTS onerror:', e.error);
+      addSystemBubble('TTS error: ' + (e.error || 'unknown'));
+      finish('onerror: ' + (e.error || 'unknown'));
+    };
+    speechSynthesis.speak(utterance);
+    console.log('[' + ts() + '] TTS speak() called, voice=' + (utterance.voice ? utterance.voice.name : 'default') + ', text length=' + text.length + ', ttsUnlocked=' + ttsUnlocked);
+    // Safety timeout: if neither onend nor onerror fires within 30s, recover.
+    ttsSafetyTimer = setTimeout(function() {
+      if (!done) {
+        console.warn('[' + ts() + '] TTS safety timeout — speak() may have failed silently');
+        addSystemBubble('TTS timed out — future replies will have a play button');
+        ttsUnlocked = false;
+        speechSynthesis.cancel();
+        finish('safety-timeout');
+      }
+    }, 30000);
+  }
+  // Delay speak() after cancel() to work around Safari WebKit bug
+  setTimeout(doSpeak, 100);
 }
 
 function addSystemBubble(text) {
   addBubble('[system] ' + text, 'system');
+}
+
+function addPlayButton(text, onDone) {
+  var btn = document.createElement('button');
+  btn.className = 'play-btn';
+  btn.textContent = '\u25B6 Tap to listen';
+  btn.addEventListener('click', function() {
+    btn.disabled = true;
+    btn.textContent = '\u25B6 Playing...';
+    // This speak() is inside a user gesture — unlocks iOS TTS
+    speakText(text, function() {
+      btn.textContent = '\u25B6 Tap to replay';
+      btn.disabled = false;
+      // Mark TTS as unlocked now that we've spoken from a gesture
+      ttsUnlocked = true;
+      if (onDone) { onDone(); onDone = null; }
+    });
+  });
+  messages.appendChild(btn);
+  scrollToBottom(false);
 }
 
 function setupSpeechRecognition() {
@@ -705,7 +774,7 @@ function setupSpeechRecognition() {
       return;
     }
 
-    addUserMessage(text);
+    addUserMessage(text, null, 'voice', Date.now());
     if (window.parent !== window) {
       pendingNotifyParent = true;
     }
@@ -773,7 +842,13 @@ function retryMic() {
 function startListening() {
   if (isListening) return; // already listening, avoid "already started" error
   if (isSpeaking) return; // don't start mic during TTS
-  if (!voiceRecognition) setupSpeechRecognition();
+  // Always recreate recognition instance — reusing a stopped instance can
+  // silently fail on mobile browsers (especially iOS Safari/Chrome).
+  if (voiceRecognition) {
+    try { voiceRecognition.abort(); } catch(e) {}
+    voiceRecognition = null;
+  }
+  setupSpeechRecognition();
   if (!voiceRecognition) return;
   try {
     isListening = true;
@@ -792,12 +867,43 @@ function stopListening() {
   if (micRetryTimer) { clearTimeout(micRetryTimer); micRetryTimer = null; }
   if (!voiceRecognition) return;
   intentionalStop = true;
-  try { voiceRecognition.stop(); } catch(e) {}
+  // Use abort() + destroy instead of stop() to immediately release the audio
+  // session. On iOS, stop() keeps the input session alive until onend fires,
+  // which blocks SpeechSynthesis from outputting audio.
+  try { voiceRecognition.abort(); } catch(e) {}
+  voiceRecognition = null;
   isListening = false;
   btnVoice.classList.remove('hearing');
 }
 
 function enableVoiceMode() {
+  // Warm up speechSynthesis SYNCHRONOUSLY in the click handler, BEFORE the
+  // async getUserMedia call. Some browsers lose user activation after the mic
+  // permission dialog, causing speak() inside .then() to be silently blocked.
+  // Doing it here guarantees we're in the direct user-gesture chain.
+  if (typeof speechSynthesis !== 'undefined') {
+    speechSynthesis.cancel(); // clear any stuck queue
+    var warmup = new SpeechSynthesisUtterance('Starting conversation mode. Say stop stop stop to stop.');
+    warmup.volume = 1.0;
+    if (selectedVoice) warmup.voice = selectedVoice;
+    warmup.onend = function() {
+      console.log('[' + ts() + '] TTS warmup completed');
+      ttsUnlocked = true;
+    };
+    warmup.onerror = function(e) {
+      console.error('[' + ts() + '] TTS warmup error:', e.error);
+    };
+    speechSynthesis.speak(warmup);
+    console.log('[' + ts() + '] TTS warmup speak() called (pre-getUserMedia)');
+    // If warmup doesn't complete within 3s, TTS is likely blocked (iframe/iOS restriction)
+    setTimeout(function() {
+      if (!ttsUnlocked) {
+        console.warn('[' + ts() + '] TTS warmup did not complete — TTS may be blocked');
+        addSystemBubble('TTS may not work — replies will have a play button');
+      }
+    }, 3000);
+  }
+
   // Request mic permission explicitly (getUserMedia triggers browser prompt).
   // This is required — without it, SpeechRecognition silently fails.
   navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
@@ -809,19 +915,24 @@ function enableVoiceMode() {
     btnVoice.classList.add('active');
     voiceControls.classList.add('visible');
     playBeep(880, 0.15);
-    // Warm up speechSynthesis with an audible utterance inside this user gesture.
-    // iOS Safari/Chrome require the first speak() call to originate from a tap/click;
-    // without this, later speak() calls from WebSocket events are silently blocked.
-    // volume:0 and whitespace-only strings don't properly unlock the audio session
-    // on some iOS versions — use a real word at near-zero volume instead.
-    if (typeof speechSynthesis !== 'undefined') {
-      speechSynthesis.cancel(); // clear any stuck queue
-      var warmup = new SpeechSynthesisUtterance('Ok');
-      warmup.volume = 0.01;
-      if (selectedVoice) warmup.voice = selectedVoice;
-      warmup.onend = function() { console.log('[' + ts() + '] TTS warmup completed'); };
-      warmup.onerror = function(e) { console.error('[' + ts() + '] TTS warmup error:', e.error); };
-      speechSynthesis.speak(warmup);
+    // If TTS warmup already succeeded (from the synchronous call above), skip.
+    // Otherwise try again inside .then() as a fallback (works when Promise.then
+    // preserves user activation, e.g. iOS Safari).
+    if (typeof speechSynthesis !== 'undefined' && !ttsUnlocked) {
+      speechSynthesis.cancel();
+      var fallbackWarmup = new SpeechSynthesisUtterance('Starting conversation mode. Say stop stop stop to stop.');
+      fallbackWarmup.volume = 1.0;
+      if (selectedVoice) fallbackWarmup.voice = selectedVoice;
+      fallbackWarmup.onend = function() {
+        console.log('[' + ts() + '] TTS fallback warmup completed');
+        ttsUnlocked = true;
+      };
+      fallbackWarmup.onerror = function(e) {
+        console.error('[' + ts() + '] TTS fallback warmup error:', e.error);
+        addSystemBubble('TTS warmup failed: ' + (e.error || 'unknown'));
+      };
+      speechSynthesis.speak(fallbackWarmup);
+      console.log('[' + ts() + '] TTS fallback warmup speak() called (post-getUserMedia)');
     }
     // Warn if TTS voices are unavailable
     if (typeof speechSynthesis !== 'undefined' && speechSynthesis.getVoices().length === 0) {
@@ -829,7 +940,7 @@ function enableVoiceMode() {
     }
     // Re-create recognition instance each time voice mode is enabled
     setupSpeechRecognition();
-    setTimeout(startListening, 200);
+    setTimeout(startListening, 300);
   }).catch(function(err) {
     console.error('Microphone permission denied:', err);
     addSystemBubble('Mic permission denied: ' + err.message);
@@ -841,6 +952,7 @@ function disableVoiceMode() {
   btnVoice.classList.remove('active');
   voiceControls.classList.remove('visible');
   if (micRetryTimer) { clearTimeout(micRetryTimer); micRetryTimer = null; }
+  if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
   stopListening();
   if (voiceRecognition) {
     try { voiceRecognition.abort(); } catch(e) {}
@@ -849,6 +961,8 @@ function disableVoiceMode() {
   speechSynthesis.cancel();
   isSpeaking = false;
   isListening = false;
+  ttsUnlocked = false;
+  ttsQueue = [];
   playBeep(440, 0.2);
 }
 
@@ -859,6 +973,40 @@ btnVoice.addEventListener('click', function() {
     enableVoiceMode();
   }
 });
+
+// --- TTS queue: speak verbal replies sequentially without interrupting ---
+
+function speakVerbalReply(text, quickReplies) {
+  // Stop mic before TTS to prevent conflict and runaway restart loop
+  stopListening();
+  var onDone = function() {
+    // Drain queue: if more replies arrived while speaking, play the next one
+    if (ttsQueue.length > 0) {
+      var next = ttsQueue.shift();
+      console.log('[' + ts() + '] TTS queue: playing next (' + ttsQueue.length + ' remaining)');
+      speakVerbalReply(next.text, next.quickReplies);
+      return;
+    }
+    // Queue empty — resume listening
+    // Guard: voice mode may have been toggled off while TTS was playing
+    if (!voiceMode) {
+      enableInput(quickReplies);
+      return;
+    }
+    playBeep(880, 0.15);
+    enableInput(quickReplies);
+    micRetryCount = 0; // reset retry count for fresh listening
+    setTimeout(startListening, 200);
+  };
+  if (ttsUnlocked) {
+    // TTS warmup succeeded — auto-play
+    speakText(text, onDone);
+  } else {
+    // TTS warmup did not succeed (likely iframe restriction on iOS).
+    // Show a "tap to play" button so user gesture unlocks TTS.
+    addPlayButton(text, onDone);
+  }
+}
 
 // --- Connection status (no-op, status conveyed via input disabled state) ---
 
@@ -881,13 +1029,15 @@ function replayHistory(history) {
     var event = history[i];
     switch (event.type) {
       case 'agentMessage':
-        if (event.text) {
-          addBubble(event.text, 'agent');
+        if (event.text || (event.files && event.files.length > 0)) {
+          addBubble(event.text, 'agent', event.files, null, event.ts);
         }
         break;
       case 'userMessage':
         if (event.text || (event.files && event.files.length > 0)) {
-          addBubble(event.text, 'user', event.files);
+          var isVoiceMsg = event.text && event.text.indexOf('\ud83c\udfa4') === 0;
+          var displayText = isVoiceMsg ? event.text.replace('\ud83c\udfa4 ', '') : event.text;
+          addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts);
         }
         break;
       case 'draw':
@@ -896,8 +1046,8 @@ function replayHistory(history) {
         }
         break;
       case 'verbalReply':
-        if (event.text) {
-          addBubble(event.text, 'agent');
+        if (event.text || (event.files && event.files.length > 0)) {
+          addBubble(event.text, 'agent', event.files, 'voice', event.ts);
         }
         break;
     }
@@ -966,7 +1116,7 @@ function connect() {
       case 'agentMessage':
         console.log('[' + ts() + '] Agent message received: "' + data.text + '"');
         removeLoading();
-        addAgentMessage(data.text || '');
+        addAgentMessage(data.text || '', data.files, null, data.ts);
         enableInput(data.quick_replies);
         // Progress updates (no quick_replies) mean agent is still working — show thinking indicator
         if (!data.quick_replies || data.quick_replies.length === 0) {
@@ -989,23 +1139,17 @@ function connect() {
         break;
 
       case 'verbalReply':
-        console.log('[' + ts() + '] Verbal reply received: "' + data.text + '"');
+        console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
         removeLoading();
-        addAgentMessage(data.text || '');
+        addAgentMessage(data.text || '', data.files, 'voice', data.ts);
         if (voiceMode) {
-          // Stop mic before TTS to prevent conflict and runaway restart loop
-          stopListening();
-          speakText(data.text || '', function() {
-            // Guard: voice mode may have been toggled off while TTS was playing
-            if (!voiceMode) {
-              enableInput(data.quick_replies);
-              return;
-            }
-            playBeep(880, 0.15);
-            enableInput(data.quick_replies);
-            micRetryCount = 0; // reset retry count for fresh listening
-            setTimeout(startListening, 200);
-          });
+          // If TTS is currently speaking, queue this reply instead of interrupting
+          if (isSpeaking) {
+            console.log('[' + ts() + '] TTS busy — queuing reply');
+            ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
+          } else {
+            speakVerbalReply(data.text || '', data.quick_replies);
+          }
         } else {
           enableInput(data.quick_replies);
         }
@@ -1045,12 +1189,20 @@ function connect() {
 // --- Export / Download ---
 
 document.getElementById('btn-download').addEventListener('click', function () {
-  var bubbles = messages.querySelectorAll('.bubble');
+  var children = messages.children;
   var items = [];
 
-  for (var i = 0; i < bubbles.length; i++) {
-    var b = bubbles[i];
+  for (var i = 0; i < children.length; i++) {
+    var b = children[i];
     if (b.id === 'loading-bubble') continue;
+
+    // Elapsed time labels
+    if (b.classList.contains('elapsed-time')) {
+      items.push('<div class="elapsed-time">' + b.textContent + '</div>');
+      continue;
+    }
+
+    if (!b.classList.contains('bubble')) continue;
 
     if (b.classList.contains('canvas-bubble')) {
       var img = b.querySelector('img');
@@ -1059,22 +1211,33 @@ document.getElementById('btn-download').addEventListener('click', function () {
       }
     } else {
       var role = b.classList.contains('user') ? 'user' : b.classList.contains('system') ? 'system' : 'agent';
-      items.push('<div class="bubble ' + role + '">' + b.innerHTML + '</div>');
+      var voice = b.classList.contains('voice') ? ' voice' : '';
+      items.push('<div class="bubble ' + role + voice + '">' + b.innerHTML + '</div>');
     }
   }
 
-  var html = '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8"><title>Chat Export</title><style>'
+  var html = '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chat Export</title><style>'
     + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:2rem;display:flex;justify-content:center;}'
     + '.chat{max-width:800px;width:100%;display:flex;flex-direction:column;gap:0.4rem;}'
     + '.bubble{max-width:80%;padding:0.5rem 0.75rem;border-radius:12px;font-size:0.9rem;line-height:1.45;word-wrap:break-word;}'
-    + '.bubble.agent{align-self:flex-start;background:#16213e;color:#ccc;border-bottom-left-radius:3px;}'
+    + '.bubble.agent{align-self:flex-start;background:#16213e;color:#e0e0e0;border-bottom-left-radius:3px;}'
     + '.bubble.user{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px;}'
+    + '.bubble.user.voice{background:#7c3aed;}'
+    + '.bubble.agent.voice{background:#1e293b;border-left:3px solid #7c3aed;}'
     + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;}'
     + '.bubble.canvas-bubble{padding:0;background:#0d1525;overflow:hidden;max-width:90%;}'
     + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
     + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
     + '.bubble pre code{background:none;padding:0;}'
-    + '.bubble a{color:#60a5fa;text-decoration:underline;}'
+    + '.bubble a{color:#93c5fd;text-decoration:underline;}'
+    + '.bubble.user a{color:#fff;}'
+    + '.bubble table{border-collapse:collapse;margin:0.3rem 0;font-size:0.85em;}'
+    + '.bubble th,.bubble td{border:1px solid rgba(255,255,255,0.15);padding:0.25rem 0.5rem;}'
+    + '.bubble th{background:rgba(255,255,255,0.08);font-weight:600;}'
+    + '.elapsed-time{align-self:center;color:#666;font-size:0.65rem;padding:0.15rem 0.5rem;opacity:0.6;}'
+    + '.file-thumb{max-width:300px;max-height:200px;border-radius:6px;cursor:pointer;margin-top:0.3rem;}'
+    + '.file-attachment-link{color:#93c5fd;text-decoration:underline;display:inline-block;margin-top:0.3rem;}'
+    + '.hl-k{color:#c792ea;}.hl-s{color:#c3e88d;}.hl-c{color:#6a737d;font-style:italic;}.hl-n{color:#f78c6c;}'
     + '</style></head><body><div class="chat">'
     + items.join('\n')
     + '</div></body></html>';

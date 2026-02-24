@@ -123,12 +123,52 @@ body {
   border-bottom-right-radius: 3px;
 }
 
+.bubble.user.voice {
+  background: #7c3aed;
+}
+
+.bubble.agent.voice {
+  background: var(--bg-tertiary);
+}
+
+[data-theme="light"] .bubble.user.voice {
+  background: #7c3aed;
+}
+
+[data-theme="light"] .bubble.agent.voice {
+  background: #f5f3ff;
+}
+
 .bubble.system {
   align-self: center;
   background: transparent;
   color: var(--text-muted);
   font-size: 0.75rem;
   padding: 0.2rem 0;
+}
+
+.elapsed-time {
+  align-self: center;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  padding: 0.15rem 0.5rem;
+  opacity: 0.6;
+}
+
+.play-btn {
+  align-self: flex-start;
+  background: #7c3aed;
+  color: #fff;
+  border: none;
+  border-radius: 1rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin: 0.3rem 0.5rem;
+}
+.play-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .bubble code {
@@ -444,7 +484,7 @@ body {
 #chat-input {
   width: 100%;
   padding: 0.5rem 0.75rem;
-  font-size: 0.9rem;
+  font-size: 16px; /* >=16px prevents iOS Safari auto-zoom on focus */
   font-family: inherit;
   border: none;
   background: transparent;
