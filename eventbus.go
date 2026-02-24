@@ -165,7 +165,7 @@ func FormatMessages(msgs []UserMessage) string {
 	var texts []string
 	for _, m := range msgs {
 		if strings.HasPrefix(m.Text, "\U0001f3a4 ") {
-			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 ")+"\n\nIMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action.")
+			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 ")+"\n\nIMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.")
 		} else {
 			texts = append(texts, m.Text)
 		}
