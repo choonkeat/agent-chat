@@ -453,6 +453,7 @@ function enableInput(replies) {
   sendBtn.disabled = false;
   btnAttach.disabled = false;
   if (replies && replies.length > 0) {
+    removeLoading(); // loading and quick replies are mutually exclusive
     quickReplies.classList.add('visible');
   } else {
     quickReplies.classList.remove('visible');
@@ -463,6 +464,7 @@ function enableInput(replies) {
 
 function showLoading() {
   removeLoading();
+  quickReplies.classList.remove('visible'); // loading and quick replies are mutually exclusive
   var div = document.createElement('div');
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
@@ -521,8 +523,7 @@ function handleSend() {
   renderStaging();
   chatInput.value = '';
   chatInput.style.height = 'auto';
-  quickReplies.classList.remove('visible');
-  showLoading();
+  showLoading(); // hides quick replies via mutual exclusivity
 
   if (window.parent !== window) {
     pendingNotifyParent = true;
@@ -580,8 +581,7 @@ quickReplies.addEventListener('click', function (e) {
   }
   sendMessage(message);
   chatInput.value = '';
-  quickReplies.classList.remove('visible');
-  showLoading();
+  showLoading(); // hides quick replies via mutual exclusivity
 });
 
 // --- Voice mode ---
@@ -1112,18 +1112,16 @@ function connect() {
 
       case 'agentMessage':
         console.log('[' + ts() + '] Agent message received: "' + data.text + '"');
-        removeLoading();
         addAgentMessage(data.text || '', data.files, null, data.ts);
-        enableInput(data.quick_replies);
-        // Progress updates (no quick_replies) mean agent is still working — show thinking indicator
-        if (!data.quick_replies || data.quick_replies.length === 0) {
-          showLoading();
+        // With quick_replies: agent is waiting for input — show replies, hide loading
+        // Without quick_replies: progress update — loading stays visible
+        if (data.quick_replies && data.quick_replies.length > 0) {
+          enableInput(data.quick_replies);
         }
         break;
 
       case 'draw':
         console.log('[' + ts() + '] Draw event received (' + (data.instructions || []).length + ' instructions)');
-        removeLoading();
 
         // Store ack_id so quick-reply/send resolves the draw ack
         if (data.ack_id) {
@@ -1131,24 +1129,26 @@ function connect() {
         }
 
         addCanvasBubble(data.instructions || [], false, function () {
-          enableInput(data.quick_replies);
+          enableInput(data.quick_replies); // removes loading via mutual exclusivity
         });
         break;
 
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
-        removeLoading();
         addAgentMessage(data.text || '', data.files, 'voice', data.ts);
-        if (voiceMode) {
-          // If TTS is currently speaking, queue this reply instead of interrupting
-          if (isSpeaking) {
-            console.log('[' + ts() + '] TTS busy — queuing reply');
-            ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
+        // With quick_replies: agent is waiting for input — show replies, hide loading
+        // Without quick_replies: verbal progress — loading stays visible
+        if (data.quick_replies && data.quick_replies.length > 0) {
+          if (voiceMode) {
+            if (isSpeaking) {
+              console.log('[' + ts() + '] TTS busy — queuing reply');
+              ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
+            } else {
+              speakVerbalReply(data.text || '', data.quick_replies);
+            }
           } else {
-            speakVerbalReply(data.text || '', data.quick_replies);
+            enableInput(data.quick_replies);
           }
-        } else {
-          enableInput(data.quick_replies);
         }
         break;
 
