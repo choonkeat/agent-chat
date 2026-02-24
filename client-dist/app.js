@@ -50,6 +50,7 @@ var isListening = false;
 var micRetryCount = 0;
 var micRetryMax = 5;
 var micRetryBaseDelay = 500; // ms, doubles each retry
+var micRetryTimer = null; // guards against concurrent retry scheduling
 
 // --- Scroll tracking ---
 
@@ -612,20 +613,33 @@ function speakText(text, onDone) {
     if (onDone) onDone();
     return;
   }
+  // Cancel any stuck/pending utterances before speaking new one
+  speechSynthesis.cancel();
   var utterance = new SpeechSynthesisUtterance(text);
   if (selectedVoice) utterance.voice = selectedVoice;
   utterance.rate = 1.0;
   isSpeaking = true;
+  addSystemBubble('Speaking...');
+  var ttsStart = Date.now();
   utterance.onend = function() {
     isSpeaking = false;
+    // On iOS, if the device is in silent mode, onend fires almost instantly
+    // but no sound is actually played. Detect and warn the user.
+    var elapsed = Date.now() - ttsStart;
+    if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
+      addSystemBubble('TTS may be muted — check your device silent/mute switch');
+    }
+    console.log('[' + ts() + '] TTS onend after ' + elapsed + 'ms');
     if (onDone) onDone();
   };
   utterance.onerror = function(e) {
+    console.error('[' + ts() + '] TTS onerror:', e.error);
     addSystemBubble('TTS error: ' + (e.error || 'unknown'));
     isSpeaking = false;
     if (onDone) onDone();
   };
   speechSynthesis.speak(utterance);
+  console.log('[' + ts() + '] TTS speak() called, voice=' + (utterance.voice ? utterance.voice.name : 'default') + ', text length=' + text.length);
 }
 
 function addSystemBubble(text) {
@@ -652,6 +666,16 @@ function setupSpeechRecognition() {
 
   voiceRecognition.onaudiostart = function() {
     console.log('[' + ts() + '] Voice: audio capture started');
+  };
+
+  voiceRecognition.onspeechstart = function() {
+    console.log('[' + ts() + '] Voice: speech detected');
+    btnVoice.classList.add('hearing');
+  };
+
+  voiceRecognition.onspeechend = function() {
+    console.log('[' + ts() + '] Voice: speech ended');
+    btnVoice.classList.remove('hearing');
   };
 
   voiceRecognition.onresult = function(e) {
@@ -702,12 +726,19 @@ function setupSpeechRecognition() {
     }
 
     // Retryable errors (no-speech, audio-capture, network, aborted, etc.)
+    // Suppress "aborted" when we intentionally stopped recognition (e.g., for TTS playback)
+    if (e.error === 'aborted' && intentionalStop) {
+      intentionalStop = false;
+      return;
+    }
+    intentionalStop = false;
     addSystemBubble('Voice error: ' + e.error);
     retryMic();
   };
 
   voiceRecognition.onend = function() {
     isListening = false;
+    intentionalStop = false; // reset flag
     // Auto-restart if still in voice mode
     if (voiceMode && !isSpeaking) {
       retryMic();
@@ -717,6 +748,8 @@ function setupSpeechRecognition() {
 
 function retryMic() {
   if (!voiceMode) return;
+  if (isSpeaking) return; // don't restart mic during TTS playback
+  if (micRetryTimer) return; // a retry is already scheduled
   if (micRetryCount >= micRetryMax) {
     addSystemBubble('Mic failed after ' + micRetryMax + ' retries — disabling voice mode');
     disableVoiceMode();
@@ -730,13 +763,16 @@ function retryMic() {
     try { voiceRecognition.abort(); } catch(e) {}
     voiceRecognition = null;
   }
-  setTimeout(function() {
-    if (!voiceMode) return;
+  micRetryTimer = setTimeout(function() {
+    micRetryTimer = null;
+    if (!voiceMode || isSpeaking) return;
     startListening();
   }, delay);
 }
 
 function startListening() {
+  if (isListening) return; // already listening, avoid "already started" error
+  if (isSpeaking) return; // don't start mic during TTS
   if (!voiceRecognition) setupSpeechRecognition();
   if (!voiceRecognition) return;
   try {
@@ -750,10 +786,15 @@ function startListening() {
   }
 }
 
+var intentionalStop = false; // suppress "aborted" error when we stop recognition for TTS
+
 function stopListening() {
+  if (micRetryTimer) { clearTimeout(micRetryTimer); micRetryTimer = null; }
   if (!voiceRecognition) return;
+  intentionalStop = true;
   try { voiceRecognition.stop(); } catch(e) {}
   isListening = false;
+  btnVoice.classList.remove('hearing');
 }
 
 function enableVoiceMode() {
@@ -768,12 +809,18 @@ function enableVoiceMode() {
     btnVoice.classList.add('active');
     voiceControls.classList.add('visible');
     playBeep(880, 0.15);
-    // Warm up speechSynthesis with a silent utterance inside this user gesture.
-    // iOS Safari requires the first speak() call to originate from a tap/click;
+    // Warm up speechSynthesis with an audible utterance inside this user gesture.
+    // iOS Safari/Chrome require the first speak() call to originate from a tap/click;
     // without this, later speak() calls from WebSocket events are silently blocked.
+    // volume:0 and whitespace-only strings don't properly unlock the audio session
+    // on some iOS versions — use a real word at near-zero volume instead.
     if (typeof speechSynthesis !== 'undefined') {
-      var warmup = new SpeechSynthesisUtterance('');
-      warmup.volume = 0;
+      speechSynthesis.cancel(); // clear any stuck queue
+      var warmup = new SpeechSynthesisUtterance('Ok');
+      warmup.volume = 0.01;
+      if (selectedVoice) warmup.voice = selectedVoice;
+      warmup.onend = function() { console.log('[' + ts() + '] TTS warmup completed'); };
+      warmup.onerror = function(e) { console.error('[' + ts() + '] TTS warmup error:', e.error); };
       speechSynthesis.speak(warmup);
     }
     // Warn if TTS voices are unavailable
@@ -793,6 +840,7 @@ function disableVoiceMode() {
   voiceMode = false;
   btnVoice.classList.remove('active');
   voiceControls.classList.remove('visible');
+  if (micRetryTimer) { clearTimeout(micRetryTimer); micRetryTimer = null; }
   stopListening();
   if (voiceRecognition) {
     try { voiceRecognition.abort(); } catch(e) {}
@@ -945,9 +993,17 @@ function connect() {
         removeLoading();
         addAgentMessage(data.text || '');
         if (voiceMode) {
+          // Stop mic before TTS to prevent conflict and runaway restart loop
+          stopListening();
           speakText(data.text || '', function() {
+            // Guard: voice mode may have been toggled off while TTS was playing
+            if (!voiceMode) {
+              enableInput(data.quick_replies);
+              return;
+            }
             playBeep(880, 0.15);
             enableInput(data.quick_replies);
+            micRetryCount = 0; // reset retry count for fresh listening
             setTimeout(startListening, 200);
           });
         } else {
