@@ -578,15 +578,11 @@ quickReplies.addEventListener('click', function (e) {
 
   var message = chip.dataset.message || '';
   if (!message) return;
-  addUserMessage(message, null, null, Date.now());
-  isUserScrolledUp = false;
-  // Send message to server first; postMessage to parent happens after
-  // server confirms the message is queued (see 'messageQueued' handler).
+  // Don't display bubble — wait for server broadcast (same as handleSend).
   if (window.parent !== window) {
     pendingNotifyParent = true;
   }
   sendMessage(message);
-  chatInput.value = '';
   showLoading(); // hides quick replies via mutual exclusivity
 });
 
