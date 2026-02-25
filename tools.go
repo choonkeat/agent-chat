@@ -25,11 +25,11 @@ func isVoiceMessage(msgs []UserMessage) bool {
 
 // voiceSuffix returns the appropriate reply instruction suffix.
 func voiceSuffix(msgs []UserMessage) string {
-	const checkMsg = "\nIMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI."
+	const checkMsg = "\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
 	if isVoiceMessage(msgs) {
-		return "(Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)" + checkMsg
+		return "(Ask any question or Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)" + checkMsg
 	}
-	return "(Reply to user in chat when done)" + checkMsg
+	return "(Ask any question or Reply to user in chat when done)" + checkMsg
 }
 
 // MessageParams are the parameters for the send_message tool.
