@@ -469,7 +469,8 @@ function showLoading() {
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
   div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  messages.appendChild(div);
+  var lc = document.getElementById('loading-container');
+  lc.appendChild(div);
   scrollToBottom(false);
 }
 

@@ -64,6 +64,7 @@ body {
 #chat-header {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   padding: 0.25rem 0;
   flex-shrink: 0;
 }
@@ -308,6 +309,17 @@ body {
   40% { opacity: 1; transform: scale(1.1); }
 }
 
+/* --- Loading container (below messages) --- */
+
+#loading-container:empty {
+  display: none;
+}
+
+#loading-container {
+  flex-shrink: 0;
+  padding: 0.2rem 0;
+}
+
 /* --- Quick-reply chips --- */
 
 #quick-replies {
@@ -406,8 +418,7 @@ body {
 
 #voice-controls {
   display: none;
-  padding: 0 0 0.3rem;
-  flex-shrink: 0;
+  margin-right: auto;
 }
 
 #voice-controls.visible {
