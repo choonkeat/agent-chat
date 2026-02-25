@@ -301,20 +301,41 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Send connected handshake with history for reconnect replay
-	history, pendingAckID := bus.History()
-	connectMsg := map[string]any{"type": "connected"}
-	if len(history) > 0 {
-		connectMsg["history"] = history
+	// Read cursor from query param — client sends last seen seq number.
+	cursor := int64(0)
+	if s := r.URL.Query().Get("cursor"); s != "" {
+		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+			cursor = v
+		}
 	}
-	if pendingAckID != "" {
+
+	// Send connected handshake (no history array — we stream events after).
+	connectMsg := map[string]any{"type": "connected"}
+	if pendingAckID := bus.PendingAckID(); pendingAckID != "" {
 		connectMsg["pendingAckId"] = pendingAckID
 	}
 	conn.WriteJSON(connectMsg)
 
-	// Subscribe to event bus
+	// Subscribe to event bus BEFORE streaming history to avoid gaps.
 	sub := bus.Subscribe()
 	defer bus.Unsubscribe(sub)
+
+	// Stream missed events (seq > cursor) to the client individually.
+	missed := bus.EventsSince(cursor)
+	for _, event := range missed {
+		data, err := json.Marshal(event)
+		if err != nil {
+			continue
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			return
+		}
+	}
+	// Track the highest seq we've sent so the subscriber loop can skip duplicates.
+	highSeq := cursor
+	if len(missed) > 0 {
+		highSeq = missed[len(missed)-1].Seq
+	}
 
 	// writeCh allows the read loop to send messages back to the client.
 	// Only the writer goroutine writes to the WebSocket connection.
@@ -329,6 +350,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			case event, ok := <-sub:
 				if !ok {
 					return
+				}
+				// Skip events already sent via the history stream.
+				if event.Seq <= highSeq {
+					continue
 				}
 				data, err := json.Marshal(event)
 				if err != nil {
@@ -372,7 +397,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case "message":
 			if m.Text != "" || len(m.Files) > 0 {
 				bus.PushMessage(m.Text, m.Files)
-				bus.LogUserMessage(m.Text, m.Files)
+				// Broadcast userMessage to all connected browsers (including sender)
+				// so every tab shows the bubble. Also appends to event log for reconnect replay.
+				bus.Publish(Event{Type: "userMessage", Text: m.Text, Files: m.Files})
 				// Notify browser that message is queued — it waits for this
 				// before telling the parent frame to call check_messages.
 				select {
@@ -387,7 +414,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					result = "ack:" + m.Message
 				}
 				bus.ResolveAck(m.ID, result)
-				bus.LogUserMessage(m.Message, nil)
+				// Broadcast ack reply as a userMessage to all browsers.
+				bus.Publish(Event{Type: "userMessage", Text: m.Message})
 			}
 		}
 	}

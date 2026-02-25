@@ -33,7 +33,6 @@
 
 html, body {
   height: 100%;
-  overflow: hidden;
 }
 
 body {
@@ -49,7 +48,7 @@ body {
   width: 100%;
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 100%;
 }
 
 /* --- Chat area --- */
@@ -58,7 +57,6 @@ body {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
 }
 
 #chat-header {
@@ -66,7 +64,6 @@ body {
   justify-content: flex-end;
   align-items: center;
   padding: 0.25rem 0;
-  flex-shrink: 0;
 }
 
 #btn-download {
@@ -89,13 +86,10 @@ body {
 
 #messages {
   flex: 1;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
   padding: 0.5rem 0;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-primary) transparent;
 }
 
 /* --- Bubbles --- */
@@ -309,15 +303,13 @@ body {
   40% { opacity: 1; transform: scale(1.1); }
 }
 
-/* --- Loading container (below messages) --- */
+/* --- Sticky footer (quick-replies + input bar) --- */
 
-#loading-container:empty {
-  display: none;
-}
-
-#loading-container {
-  flex-shrink: 0;
-  padding: 0.2rem 0;
+#chat-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 10;
 }
 
 /* --- Quick-reply chips --- */
@@ -365,7 +357,6 @@ body {
   align-items: flex-end;
   gap: 0.5rem;
   padding: 0.5rem 0;
-  flex-shrink: 0;
 }
 
 /* --- Voice button --- */
@@ -609,13 +600,15 @@ body {
   cursor: not-allowed;
 }
 
-#btn-send.loading {
+#btn-send.loading,
+#btn-send.sending {
   opacity: 1;
   font-size: 0;
   pointer-events: none;
 }
 
-#btn-send.loading::after {
+#btn-send.loading::after,
+#btn-send.sending::after {
   content: '···';
   font-size: 0.85rem;
   letter-spacing: 2px;

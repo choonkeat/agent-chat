@@ -30,6 +30,7 @@ type UserMessage struct {
 // Event represents a chat event sent to browser clients.
 type Event struct {
 	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "draw"
+	Seq          int64     `json:"seq"`                    // monotonic sequence number
 	Text         string    `json:"text,omitempty"`
 	AckID        string    `json:"ack_id,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
@@ -50,6 +51,7 @@ type EventBus struct {
 	mu          sync.RWMutex
 	subscribers map[chan Event]struct{}
 	eventLog    []Event // session event log for reconnect replay
+	nextSeq     int64   // next sequence number (guarded by mu)
 
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
@@ -262,6 +264,8 @@ func (eb *EventBus) Publish(event Event) {
 		event.Timestamp = time.Now().UnixMilli()
 	}
 	eb.mu.Lock()
+	eb.nextSeq++
+	event.Seq = eb.nextSeq
 	eb.eventLog = append(eb.eventLog, event)
 	for ch := range eb.subscribers {
 		select {
@@ -282,6 +286,40 @@ func (eb *EventBus) LogUserMessage(text string, files []FileRef) {
 	eb.writeToLog(evt)
 }
 
+// EventsSince returns all events with Seq > cursor.
+func (eb *EventBus) EventsSince(cursor int64) []Event {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	// Find the first event with Seq > cursor using the fact that seqs are monotonic.
+	start := 0
+	for i, e := range eb.eventLog {
+		if e.Seq > cursor {
+			start = i
+			break
+		}
+		// If we reach the end without finding, start = len (returns empty).
+		if i == len(eb.eventLog)-1 {
+			start = len(eb.eventLog)
+		}
+	}
+	if len(eb.eventLog) == 0 {
+		return nil
+	}
+	result := make([]Event, len(eb.eventLog)-start)
+	copy(result, eb.eventLog[start:])
+	return result
+}
+
+// PendingAckID returns the first pending ack ID, if any.
+func (eb *EventBus) PendingAckID() string {
+	eb.ackMu.Lock()
+	defer eb.ackMu.Unlock()
+	for id := range eb.pending {
+		return id
+	}
+	return ""
+}
+
 // History returns a copy of the event log and the pending ack ID (if any).
 func (eb *EventBus) History() ([]Event, string) {
 	eb.mu.RLock()
@@ -289,15 +327,7 @@ func (eb *EventBus) History() ([]Event, string) {
 	copy(log, eb.eventLog)
 	eb.mu.RUnlock()
 
-	eb.ackMu.Lock()
-	var pendingID string
-	for id := range eb.pending {
-		pendingID = id
-		break
-	}
-	eb.ackMu.Unlock()
-
-	return log, pendingID
+	return log, eb.PendingAckID()
 }
 
 // CreateAck creates a pending acknowledgment. The caller waits on Ch until

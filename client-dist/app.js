@@ -40,6 +40,7 @@ var pendingAckId = null;
 var pendingNotifyParent = false;
 var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
+var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 
 // --- Voice mode state ---
 var voiceMode = false;
@@ -57,15 +58,15 @@ var ttsQueue = []; // queued verbal replies waiting to be spoken
 
 // --- Scroll tracking ---
 
-messages.addEventListener('scroll', function () {
+window.addEventListener('scroll', function () {
   var threshold = 40;
-  var distFromBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight;
+  var distFromBottom = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
   isUserScrolledUp = distFromBottom > threshold;
 });
 
 function scrollToBottom(force) {
   if (!force && isUserScrolledUp) return;
-  messages.scrollTop = messages.scrollHeight;
+  window.scrollTo(0, document.documentElement.scrollHeight);
 }
 
 // --- Timestamp helper ---
@@ -245,7 +246,7 @@ function addBubble(text, role, files, extraClass, timestamp) {
       var elapsed = document.createElement('div');
       elapsed.className = 'elapsed-time';
       elapsed.textContent = formatElapsed(delta);
-      messages.appendChild(elapsed);
+      appendMessage(elapsed);
     }
   }
   if (timestamp) lastBubbleTs = timestamp;
@@ -259,7 +260,7 @@ function addBubble(text, role, files, extraClass, timestamp) {
   if (attachments) {
     div.appendChild(attachments);
   }
-  messages.appendChild(div);
+  appendMessage(div);
   scrollToBottom(false);
 }
 
@@ -294,7 +295,7 @@ function addCanvasBubble(instructions, skipAnimation, onDone) {
   canvas.height = CANVAS_H * DPR;
   div.appendChild(canvas);
 
-  messages.appendChild(div);
+  appendMessage(div);
   scrollToBottom(false);
 
   var finalize = function () {
@@ -462,6 +463,16 @@ function enableInput(replies) {
   setTimeout(function () { scrollToBottom(true); }, 100);
 }
 
+// Insert element into messages, always before the loading bubble so it stays last.
+function appendMessage(el) {
+  var loader = document.getElementById('loading-bubble');
+  if (loader) {
+    messages.insertBefore(el, loader);
+  } else {
+    messages.appendChild(el);
+  }
+}
+
 function showLoading() {
   removeLoading();
   quickReplies.classList.remove('visible'); // loading and quick replies are mutually exclusive
@@ -469,8 +480,7 @@ function showLoading() {
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
   div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  var lc = document.getElementById('loading-container');
-  lc.appendChild(div);
+  messages.appendChild(div);
   scrollToBottom(false);
 }
 
@@ -512,18 +522,13 @@ function handleSend() {
   var filesToUpload = stagedFiles.slice();
   if (!text && filesToUpload.length === 0) return;
 
-  // Show the user bubble immediately with local previews
-  var localFiles = filesToUpload.map(function(sf) {
-    return { name: sf.name, url: sf.previewUrl || '', type: sf.file.type, size: sf.file.size };
-  });
-  addUserMessage(text, localFiles, null, Date.now());
-  isUserScrolledUp = false;
-
-  // Clear staging
+  // Don't display the bubble yet — wait for the server to broadcast it back.
+  // Disable input and show loading on send button while waiting.
+  chatInput.disabled = true;
+  sendBtn.disabled = true;
+  sendBtn.classList.add('sending');
   stagedFiles = [];
   renderStaging();
-  chatInput.value = '';
-  chatInput.style.height = 'auto';
   showLoading(); // hides quick replies via mutual exclusivity
 
   if (window.parent !== window) {
@@ -769,7 +774,7 @@ function addPlayButton(text, onDone) {
       if (onDone) { onDone(); onDone = null; }
     });
   });
-  messages.appendChild(btn);
+  appendMessage(btn);
   scrollToBottom(false);
 }
 
@@ -832,7 +837,7 @@ function setupSpeechRecognition() {
       return;
     }
 
-    addUserMessage(text, null, 'voice', Date.now());
+    // Don't display bubble yet — wait for server broadcast.
     if (window.parent !== window) {
       pendingNotifyParent = true;
     }
@@ -1037,6 +1042,7 @@ btnVoice.addEventListener('click', function() {
 function speakVerbalReply(text, quickReplies) {
   // Stop mic before TTS to prevent conflict and runaway restart loop
   stopListening();
+  var hasQuickReplies = quickReplies && quickReplies.length > 0;
   var onDone = function() {
     // Drain queue: if more replies arrived while speaking, play the next one
     if (ttsQueue.length > 0) {
@@ -1045,16 +1051,13 @@ function speakVerbalReply(text, quickReplies) {
       speakVerbalReply(next.text, next.quickReplies);
       return;
     }
-    // Queue empty — resume listening
-    // Guard: voice mode may have been toggled off while TTS was playing
-    if (!voiceMode) {
-      enableInput(quickReplies);
-      return;
+    if (hasQuickReplies) enableInput(quickReplies);
+    // Resume listening if voice mode is on
+    if (voiceMode) {
+      playBeep(880, 0.15);
+      micRetryCount = 0;
+      setTimeout(startListening, 200);
     }
-    playBeep(880, 0.15);
-    enableInput(quickReplies);
-    micRetryCount = 0; // reset retry count for fresh listening
-    setTimeout(startListening, 200);
   };
   if (ttsUnlocked) {
     // TTS warmup succeeded — auto-play
@@ -1144,7 +1147,7 @@ function connect() {
 
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var basePath = location.pathname.replace(/\/+$/, '');
-  var wsUrl = proto + '//' + location.host + basePath + '/ws';
+  var wsUrl = proto + '//' + location.host + basePath + '/ws?cursor=' + lastSeq;
   var ws = new WebSocket(wsUrl);
   activeWs = ws;
 
@@ -1158,13 +1161,16 @@ function connect() {
     if (ws !== activeWs) return;
     var data = JSON.parse(event.data);
 
+    // Track cursor for reconnect — events carry a seq number.
+    if (data.seq) {
+      lastSeq = data.seq;
+    }
+
     switch (data.type) {
       case 'connected':
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
-        if (data.history && Array.isArray(data.history) && data.history.length > 0) {
-          replayHistory(data.history);
-        }
+        // History is now streamed as individual events after connect — no replay needed.
         if (data.pendingAckId) {
           pendingAckId = data.pendingAckId;
         }
@@ -1197,20 +1203,28 @@ function connect() {
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
         addAgentMessage(data.text || '', data.files, 'voice', data.ts);
-        // With quick_replies: agent is waiting for input — show replies, hide loading
-        // Without quick_replies: verbal progress — loading stays visible
-        if (data.quick_replies && data.quick_replies.length > 0) {
-          if (voiceMode) {
-            if (isSpeaking) {
-              console.log('[' + ts() + '] TTS busy — queuing reply');
-              ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
-            } else {
-              speakVerbalReply(data.text || '', data.quick_replies);
-            }
-          } else {
-            enableInput(data.quick_replies);
-          }
+        if (isSpeaking) {
+          console.log('[' + ts() + '] TTS busy — queuing reply');
+          ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
+        } else {
+          speakVerbalReply(data.text || '', data.quick_replies);
         }
+        break;
+
+      case 'userMessage':
+        // Server broadcast of a user message — display the bubble now.
+        if (data.text || (data.files && data.files.length > 0)) {
+          var isVoiceMsg = data.text && data.text.indexOf('\ud83c\udfa4') === 0;
+          var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
+          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts);
+          isUserScrolledUp = false;
+        }
+        // Re-enable input and clear the text now that the message is confirmed
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+        chatInput.disabled = false;
+        sendBtn.disabled = false;
+        sendBtn.classList.remove('sending');
         break;
 
       case 'messageQueued':

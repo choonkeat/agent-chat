@@ -73,3 +73,34 @@ func TestEventBusWithoutLog(t *testing.T) {
 	bus.LogUserMessage("test", nil)
 	bus.Close() // no-op when no file
 }
+
+func TestEventsSince(t *testing.T) {
+	bus := NewEventBus()
+	bus.Publish(Event{Type: "agentMessage", Text: "one"})
+	bus.Publish(Event{Type: "userMessage", Text: "two"})
+	bus.Publish(Event{Type: "agentMessage", Text: "three"})
+
+	// All events (cursor=0)
+	all := bus.EventsSince(0)
+	if len(all) != 3 {
+		t.Fatalf("EventsSince(0): expected 3, got %d", len(all))
+	}
+	if all[0].Seq != 1 || all[1].Seq != 2 || all[2].Seq != 3 {
+		t.Errorf("unexpected seq numbers: %d, %d, %d", all[0].Seq, all[1].Seq, all[2].Seq)
+	}
+
+	// Events after seq 1
+	after1 := bus.EventsSince(1)
+	if len(after1) != 2 {
+		t.Fatalf("EventsSince(1): expected 2, got %d", len(after1))
+	}
+	if after1[0].Text != "two" || after1[1].Text != "three" {
+		t.Errorf("unexpected texts: %q, %q", after1[0].Text, after1[1].Text)
+	}
+
+	// Events after the latest seq
+	none := bus.EventsSince(3)
+	if len(none) != 0 {
+		t.Fatalf("EventsSince(3): expected 0, got %d", len(none))
+	}
+}
