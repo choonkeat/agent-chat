@@ -586,7 +586,7 @@ quickReplies.addEventListener('click', function (e) {
 
 // --- Voice mode ---
 
-function playBeep(freq, duration) {
+function playBeep(freq, duration, onDone) {
   var ctx = new (window.AudioContext || window.webkitAudioContext)();
   var osc = ctx.createOscillator();
   var gain = ctx.createGain();
@@ -594,6 +594,7 @@ function playBeep(freq, duration) {
   gain.connect(ctx.destination);
   osc.frequency.value = freq;
   gain.gain.value = 0.15;
+  osc.onended = onDone;
   osc.start();
   osc.stop(ctx.currentTime + duration);
 }
@@ -880,7 +881,7 @@ function enableVoiceMode() {
   // Doing it here guarantees we're in the direct user-gesture chain.
   if (typeof speechSynthesis !== 'undefined') {
     speechSynthesis.cancel(); // clear any stuck queue
-    var warmup = new SpeechSynthesisUtterance('Starting conversation mode. Say stop stop stop to stop.');
+    var warmup = new SpeechSynthesisUtterance('Ready');
     warmup.volume = 1.0;
     if (selectedVoice) warmup.voice = selectedVoice;
     warmup.onend = function() {
@@ -917,7 +918,7 @@ function enableVoiceMode() {
     // preserves user activation, e.g. iOS Safari).
     if (typeof speechSynthesis !== 'undefined' && !ttsUnlocked) {
       speechSynthesis.cancel();
-      var fallbackWarmup = new SpeechSynthesisUtterance('Starting conversation mode. Say stop stop stop to stop.');
+      var fallbackWarmup = new SpeechSynthesisUtterance('Ready');
       fallbackWarmup.volume = 1.0;
       if (selectedVoice) fallbackWarmup.voice = selectedVoice;
       fallbackWarmup.onend = function() {
