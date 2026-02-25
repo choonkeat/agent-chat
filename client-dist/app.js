@@ -627,6 +627,51 @@ voiceSelect.addEventListener('change', function() {
   }
 });
 
+// Split text into sentence-sized chunks for TTS.
+// Keeps each chunk short enough to avoid the iOS/WebKit ~15-second truncation bug.
+function splitIntoChunks(text) {
+  // Split on sentence boundaries: period, exclamation, question mark followed by space or end.
+  // Also split on semicolons and colons followed by space, and em-dashes.
+  var sentences = text.match(/[^.!?;]+[.!?;]+[\s]?|[^.!?;]+$/g);
+  if (!sentences) return [text];
+
+  // Merge very short sentences together; split very long ones.
+  var chunks = [];
+  var current = '';
+  var MAX_CHARS = 200; // ~10-12 seconds of speech at normal rate
+
+  for (var i = 0; i < sentences.length; i++) {
+    var s = sentences[i].trim();
+    if (!s) continue;
+
+    if (current.length + s.length + 1 <= MAX_CHARS) {
+      current = current ? current + ' ' + s : s;
+    } else {
+      if (current) chunks.push(current);
+      // If a single sentence exceeds MAX_CHARS, split on commas
+      if (s.length > MAX_CHARS) {
+        var parts = s.match(/[^,]+,?\s?/g) || [s];
+        var sub = '';
+        for (var j = 0; j < parts.length; j++) {
+          var p = parts[j].trim();
+          if (sub.length + p.length + 1 <= MAX_CHARS) {
+            sub = sub ? sub + ' ' + p : p;
+          } else {
+            if (sub) chunks.push(sub);
+            sub = p;
+          }
+        }
+        if (sub) chunks.push(sub);
+        current = '';
+      } else {
+        current = s;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [text];
+}
+
 function speakText(text, onDone) {
   if (typeof speechSynthesis === 'undefined') {
     addSystemBubble('TTS not supported in this browser');
@@ -657,37 +702,51 @@ function speakText(text, onDone) {
     console.log('[' + ts() + '] TTS finished (' + reason + ') after ' + (Date.now() - ttsStart) + 'ms');
     if (onDone) onDone();
   }
-  function doSpeak() {
-    var utterance = new SpeechSynthesisUtterance(text);
+
+  var chunks = splitIntoChunks(text);
+  console.log('[' + ts() + '] TTS splitting into ' + chunks.length + ' chunks');
+
+  function speakChunk(index) {
+    if (done) return;
+    if (index >= chunks.length) {
+      finish('all-chunks-done');
+      return;
+    }
+    var chunk = chunks[index];
+    var utterance = new SpeechSynthesisUtterance(chunk);
     if (selectedVoice) utterance.voice = selectedVoice;
     utterance.rate = 1.0;
     utterance.onend = function() {
-      var elapsed = Date.now() - ttsStart;
-      if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
-        addSystemBubble('TTS may be muted — check your device silent/mute switch');
+      if (index === 0) {
+        var elapsed = Date.now() - ttsStart;
+        if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
+          addSystemBubble('TTS may be muted — check your device silent/mute switch');
+        }
       }
-      finish('onend');
+      if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
+      speakChunk(index + 1);
     };
     utterance.onerror = function(e) {
-      console.error('[' + ts() + '] TTS onerror:', e.error);
+      console.error('[' + ts() + '] TTS onerror on chunk ' + index + ':', e.error);
       addSystemBubble('TTS error: ' + (e.error || 'unknown'));
       finish('onerror: ' + (e.error || 'unknown'));
     };
     speechSynthesis.speak(utterance);
-    console.log('[' + ts() + '] TTS speak() called, voice=' + (utterance.voice ? utterance.voice.name : 'default') + ', text length=' + text.length + ', ttsUnlocked=' + ttsUnlocked);
-    // Safety timeout: if neither onend nor onerror fires within 30s, recover.
+    console.log('[' + ts() + '] TTS speak() chunk ' + (index + 1) + '/' + chunks.length + ', length=' + chunk.length + ', voice=' + (utterance.voice ? utterance.voice.name : 'default'));
+    // Safety timeout per chunk: 15s per chunk should be plenty
     ttsSafetyTimer = setTimeout(function() {
       if (!done) {
-        console.warn('[' + ts() + '] TTS safety timeout — speak() may have failed silently');
+        console.warn('[' + ts() + '] TTS safety timeout on chunk ' + index + ' — speak() may have failed silently');
         addSystemBubble('TTS timed out — future replies will have a play button');
         ttsUnlocked = false;
         speechSynthesis.cancel();
         finish('safety-timeout');
       }
-    }, 30000);
+    }, 15000);
   }
+
   // Delay speak() after cancel() to work around Safari WebKit bug
-  setTimeout(doSpeak, 100);
+  setTimeout(function() { speakChunk(0); }, 100);
 }
 
 function addSystemBubble(text) {
