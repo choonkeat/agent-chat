@@ -484,6 +484,8 @@ dropZone.addEventListener('drop', function(e) {
 function enableInput(replies) {
   setQuickReplies(replies);
   chatInput.disabled = false;
+  chatInput.readOnly = false;
+  chatInput.classList.remove('sending');
   sendBtn.disabled = false;
   btnAttach.disabled = false;
   if (replies && replies.length > 0) {
@@ -556,9 +558,10 @@ function handleSend() {
   if (!text && filesToUpload.length === 0) return;
 
   // Don't display the bubble yet — wait for the server to broadcast it back.
-  // Focus first (keeps mobile keyboard up), then disable input.
+  // Use readOnly instead of disabled to preserve focus and keep mobile keyboard up.
   chatInput.focus();
-  chatInput.disabled = true;
+  chatInput.readOnly = true;
+  chatInput.classList.add('sending');
   sendBtn.disabled = true;
   sendBtn.classList.add('sending');
   stagedFiles = [];
@@ -1252,7 +1255,8 @@ function connect() {
         // Re-enable input and clear the text now that the message is confirmed
         chatInput.value = '';
         chatInput.style.height = 'auto';
-        chatInput.disabled = false;
+        chatInput.readOnly = false;
+        chatInput.classList.remove('sending');
         sendBtn.disabled = false;
         sendBtn.classList.remove('sending');
         break;

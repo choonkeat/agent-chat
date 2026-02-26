@@ -549,6 +549,11 @@ body {
   cursor: not-allowed;
 }
 
+#chat-input.sending {
+  opacity: 0.4;
+  caret-color: transparent;
+}
+
 #chat-input::placeholder {
   color: var(--text-muted);
 }
