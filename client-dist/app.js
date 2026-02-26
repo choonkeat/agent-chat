@@ -96,7 +96,7 @@ function highlightCode(code, lang) {
   function save(cls, text) {
     var id = idx++;
     parts[id] = '<span class="hl-' + cls + '">' + text + '</span>';
-    return '\x00' + id + '\x01';
+    return '\x00P' + id + '\x01';
   }
 
   var useHash = /^(python|py|ruby|rb|bash|sh|shell|zsh|yaml|yml|toml|perl|r|makefile|dockerfile|coffee)$/i.test(lang);
@@ -124,7 +124,7 @@ function highlightCode(code, lang) {
   code = code.replace(/\b(\d+\.?\d*(?:e[+-]?\d+)?)\b/gi, function(m) { return save('n', m); });
 
   // Restore placeholders
-  return code.replace(/\x00(\d+)\x01/g, function(_, id) { return parts[parseInt(id)]; });
+  return code.replace(/\x00P(\d+)\x01/g, function(_, id) { return parts[parseInt(id)]; });
 }
 
 // --- Table helpers ---
@@ -154,8 +154,8 @@ function renderMarkdown(text) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
     return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
   });
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Inline code (same line only to prevent dangling backtick eating content)
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
   // Tables
   html = html.replace(/(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n?)+)/g, function(block) {
     var lines = block.trim().split('\n');
@@ -213,6 +213,9 @@ function renderMarkdown(text) {
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   // Bare URLs
   html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // Clean up newlines adjacent to block-level elements to avoid double spacing
+  html = html.replace(/\n*(<\/?(h[1-6]|hr|ul|ol|li|pre|table|thead|tbody|tr|th|td|blockquote)[\s>])/g, '$1');
+  html = html.replace(/(<\/(h[1-6]|hr|ul|ol|li|pre|table|thead|tbody|tr|th|td|blockquote)>)\n*/g, '$1');
   // Newlines
   html = html.replace(/\n/g, '<br>');
   return html;
