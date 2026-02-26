@@ -66,6 +66,45 @@ func TestEventBusWritesJSONL(t *testing.T) {
 	}
 }
 
+func TestEventBusReloadsLogOnStart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	// First session: publish some events.
+	bus1, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 1): %v", err)
+	}
+	bus1.Publish(Event{Type: "agentMessage", Text: "hello"})
+	bus1.LogUserMessage("world", nil)
+	bus1.Close()
+
+	// Second session: open the same log file — events should be loaded.
+	bus2, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 2): %v", err)
+	}
+	defer bus2.Close()
+
+	events := bus2.EventsSince(0)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 reloaded events, got %d", len(events))
+	}
+	if events[0].Text != "hello" || events[1].Text != "world" {
+		t.Errorf("unexpected texts: %q, %q", events[0].Text, events[1].Text)
+	}
+
+	// New events should get sequence numbers after the reloaded ones.
+	bus2.Publish(Event{Type: "agentMessage", Text: "new"})
+	all := bus2.EventsSince(0)
+	if len(all) != 3 {
+		t.Fatalf("expected 3 total events, got %d", len(all))
+	}
+	if all[2].Seq <= all[1].Seq {
+		t.Errorf("new event seq %d should be > reloaded seq %d", all[2].Seq, all[1].Seq)
+	}
+}
+
 func TestEventBusWithoutLog(t *testing.T) {
 	bus := NewEventBus()
 	// Should work without panicking

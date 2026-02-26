@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -73,7 +74,12 @@ func NewEventBus() *EventBus {
 }
 
 // NewEventBusWithLog creates an EventBus that also appends events to a JSONL file.
+// If the file already exists, its events are loaded into memory so browsers get
+// full history across server restarts.
 func NewEventBusWithLog(path string) (*EventBus, error) {
+	// Load existing events from the log file.
+	events, maxSeq := loadEventLog(path)
+
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
@@ -83,7 +89,35 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 		pending:     make(map[string]chan string),
 		msgQueue:    make(chan UserMessage, 256),
 		logFile:     f,
+		eventLog:    events,
+		nextSeq:     maxSeq,
 	}, nil
+}
+
+// loadEventLog reads a JSONL event log file and returns the parsed events
+// and the highest sequence number found.
+func loadEventLog(path string) ([]Event, int64) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, 0
+	}
+	defer f.Close()
+
+	var events []Event
+	var maxSeq int64
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var ev Event
+		if err := json.Unmarshal(scanner.Bytes(), &ev); err != nil {
+			continue // skip malformed lines
+		}
+		events = append(events, ev)
+		if ev.Seq > maxSeq {
+			maxSeq = ev.Seq
+		}
+	}
+	return events, maxSeq
 }
 
 // writeToLog marshals an event to JSON and appends it to the log file.
