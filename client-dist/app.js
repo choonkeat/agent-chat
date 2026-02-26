@@ -203,6 +203,15 @@ function renderMarkdown(text) {
     }).join('');
     return '<ol>' + items + '</ol>';
   });
+  // Blockquotes (consecutive lines starting with > , supports nesting with >> )
+  function parseBlockquotes(text) {
+    return text.replace(/(^&gt;[ &].+(?:\n&gt;[ &].+)*)/gm, function(block) {
+      var inner = block.replace(/^&gt; ?/gm, '');
+      inner = parseBlockquotes(inner);
+      return '<blockquote>' + inner + '</blockquote>';
+    });
+  }
+  html = parseBlockquotes(html);
   // Bold (**text** or __text__)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');

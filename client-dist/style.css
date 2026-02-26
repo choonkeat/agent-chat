@@ -228,6 +228,17 @@ body {
   margin: 0.1rem 0;
 }
 
+.bubble blockquote {
+  border-left: 3px solid var(--border-secondary);
+  margin: 0.3rem 0;
+  padding: 0.2rem 0 0.2rem 0.6rem;
+  color: var(--text-secondary);
+}
+
+.bubble blockquote blockquote {
+  margin: 0.2rem 0;
+}
+
 .bubble a {
   color: #93c5fd;
   text-decoration: underline;
