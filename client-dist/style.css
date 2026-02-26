@@ -96,6 +96,12 @@ body {
   padding: 0.5rem 0;
 }
 
+/* Invisible spacer pushes messages to the bottom when few are present. */
+#messages::before {
+  content: '';
+  flex: 1;
+}
+
 /* --- Bubbles --- */
 
 .bubble {
