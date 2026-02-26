@@ -182,6 +182,27 @@ function renderMarkdown(text) {
     out += '</tbody></table>';
     return out;
   });
+  // Headings (# through ######)
+  html = html.replace(/^(#{1,6}) (.+)$/gm, function(_, hashes, text) {
+    var level = hashes.length;
+    return '<h' + level + '>' + text + '</h' + level + '>';
+  });
+  // Horizontal rules (---, ***, ___ on their own line)
+  html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
+  // Unordered lists (consecutive lines starting with - or * )
+  html = html.replace(/(^[-*] .+(?:\n[-*] .+)*)/gm, function(block) {
+    var items = block.split('\n').map(function(line) {
+      return '<li>' + line.replace(/^[-*] /, '') + '</li>';
+    }).join('');
+    return '<ul>' + items + '</ul>';
+  });
+  // Ordered lists (consecutive lines starting with 1. 2. etc.)
+  html = html.replace(/(^\d+\. .+(?:\n\d+\. .+)*)/gm, function(block) {
+    var items = block.split('\n').map(function(line) {
+      return '<li>' + line.replace(/^\d+\. /, '') + '</li>';
+    }).join('');
+    return '<ol>' + items + '</ol>';
+  });
   // Bold (**text** or __text__)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
@@ -239,8 +260,8 @@ function formatElapsed(ms) {
 }
 
 function addBubble(text, role, files, extraClass, timestamp) {
-  // Show elapsed time between messages
-  if (timestamp && lastBubbleTs) {
+  // Show elapsed time before agent messages (how long the agent took to reply)
+  if (role !== 'user' && timestamp && lastBubbleTs) {
     var delta = timestamp - lastBubbleTs;
     if (delta > 0) {
       var elapsed = document.createElement('div');
@@ -523,7 +544,8 @@ function handleSend() {
   if (!text && filesToUpload.length === 0) return;
 
   // Don't display the bubble yet — wait for the server to broadcast it back.
-  // Disable input and show loading on send button while waiting.
+  // Focus first (keeps mobile keyboard up), then disable input.
+  chatInput.focus();
   chatInput.disabled = true;
   sendBtn.disabled = true;
   sendBtn.classList.add('sending');
@@ -1296,7 +1318,11 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + '.bubble.canvas-bubble{padding:0;background:#0d1525;overflow:hidden;max-width:90%;}'
     + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
     + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
-    + '.bubble pre code{background:none;padding:0;}'
+    + '.bubble pre code{background:none;padding:0;font-size:inherit;}'
+    + '.bubble h1,.bubble h2,.bubble h3,.bubble h4,.bubble h5,.bubble h6{margin:0.4rem 0 0.2rem;line-height:1.3;}'
+    + '.bubble h1{font-size:1.3em;}.bubble h2{font-size:1.15em;}.bubble h3{font-size:1.05em;}.bubble h4,.bubble h5,.bubble h6{font-size:0.95em;}'
+    + '.bubble hr{border:none;border-top:1px solid rgba(255,255,255,0.15);margin:0.4rem 0;}'
+    + '.bubble ul,.bubble ol{margin:0.2rem 0;padding-left:1.2em;}.bubble li{margin:0.1rem 0;}'
     + '.bubble a{color:#93c5fd;text-decoration:underline;}'
     + '.bubble.user a{color:#fff;}'
     + '.bubble table{border-collapse:collapse;margin:0.3rem 0;font-size:0.85em;}'
