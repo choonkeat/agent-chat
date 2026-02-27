@@ -1253,11 +1253,12 @@ function connect() {
 
       case 'userMessage':
         // Server broadcast of a user message — display the bubble now.
+        // Reset scroll flag before addBubble so scrollToBottom succeeds.
+        isUserScrolledUp = false;
         if (data.text || (data.files && data.files.length > 0)) {
           var isVoiceMsg = data.text && data.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
           addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts);
-          isUserScrolledUp = false;
         }
         // Re-enable input and clear the text now that the message is confirmed
         chatInput.value = '';
@@ -1269,6 +1270,7 @@ function connect() {
         // Show loading — agent is now processing the user's message.
         // Also ensures correct state after replay for new/reconnecting browsers.
         showLoading();
+        scrollToBottom(true);
         break;
 
       case 'messageQueued':
