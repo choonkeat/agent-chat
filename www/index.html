@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Chat — Rich chat UI for AI agents</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --border: #30363d;
+    --surface: #161b22;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    line-height: 1.6;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+  header {
+    padding: 64px 0 32px;
+    text-align: center;
+  }
+  h1 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    margin-bottom: 16px;
+  }
+  .tagline {
+    font-size: 1.25rem;
+    color: var(--muted);
+    max-width: 600px;
+    margin: 0 auto 24px;
+  }
+  .cta {
+    display: inline-block;
+    background: var(--accent);
+    color: var(--bg);
+    padding: 10px 24px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1rem;
+  }
+  .cta:hover { opacity: 0.9; }
+
+  .hero-screenshots {
+    position: relative;
+    max-width: 720px;
+    margin: 48px auto;
+    height: 560px;
+  }
+  .hero-screenshots figure {
+    position: absolute;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    transition: transform 0.3s ease;
+  }
+  .hero-screenshots img {
+    display: block;
+    width: 100%;
+  }
+  .hero-screenshots figcaption {
+    padding: 10px 14px;
+    font-size: 0.875rem;
+    color: var(--fg);
+  }
+  .hero-screenshots figcaption span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.75rem;
+    margin-top: 2px;
+  }
+  .shot-terminal {
+    width: 55%;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    opacity: 0.7;
+    transform: scale(0.95);
+  }
+  .shot-terminal:hover { transform: scale(1); opacity: 1; z-index: 3; }
+  .shot-chat {
+    width: 65%;
+    top: 40px;
+    right: 0;
+    z-index: 2;
+  }
+  .shot-chat:hover { transform: scale(1.02); }
+
+  .features {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 48px 0;
+  }
+  .feature {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+  .feature strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+  .feature p {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  .how-it-works {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    margin: 48px 0;
+  }
+  .how-it-works h2 {
+    font-size: 1.5rem;
+    margin-bottom: 16px;
+  }
+  pre {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    overflow-x: auto;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+  code { font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; }
+
+  .tools {
+    margin: 48px 0;
+  }
+  .tools h2 { font-size: 1.5rem; margin-bottom: 16px; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 600; font-size: 0.875rem; }
+  td code {
+    background: var(--surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.875rem;
+  }
+
+  .install {
+    margin: 48px 0;
+    text-align: center;
+  }
+  .install pre {
+    display: inline-block;
+    text-align: left;
+    font-size: 1rem;
+    padding: 16px 32px;
+  }
+
+  footer {
+    text-align: center;
+    padding: 48px 0;
+    color: var(--muted);
+    font-size: 0.875rem;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  @media (max-width: 640px) {
+    .hero-screenshots {
+      height: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .hero-screenshots figure {
+      position: static;
+      width: 100% !important;
+      opacity: 1 !important;
+      transform: none !important;
+    }
+    .features { grid-template-columns: 1fr; }
+    h1 { font-size: 1.75rem; }
+    .tagline { font-size: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Agent Chat</h1>
+    <p class="tagline">An MCP server that gives your AI agent a rich chat interface. Markdown, code blocks, canvas diagrams, quick replies, and voice &mdash; all in the browser.</p>
+    <a href="https://swe-swe.netlify.app/" class="cta">See it in swe-swe</a>
+  </header>
+
+  <div class="hero-screenshots">
+    <figure class="shot-terminal">
+      <img src="screenshot-terminal.png" alt="Agent Terminal — raw MCP tool calls and code diffs">
+      <figcaption>Agent Terminal<span>The agent works in the background</span></figcaption>
+    </figure>
+    <figure class="shot-chat">
+      <img src="screenshot-chat.png" alt="Agent Chat — rich rendered conversation with quick replies">
+      <figcaption>Agent Chat<span>A friendly UI to chat with your agent</span></figcaption>
+    </figure>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <strong>Rich markdown</strong>
+      <p>Messages render with full markdown, syntax-highlighted code blocks, and blockquotes.</p>
+    </div>
+    <div class="feature">
+      <strong>File drag &amp; drop</strong>
+      <p>Drop files into the chat to share them with the agent.</p>
+    </div>
+    <div class="feature">
+      <strong>Images in messages</strong>
+      <p>Agents can include screenshots and images inline in their messages.</p>
+    </div>
+    <div class="feature">
+      <strong>Canvas drawing</strong>
+      <p>Agents can draw diagrams and visualizations on an interactive canvas.</p>
+    </div>
+    <div class="feature">
+      <strong>Voice conversation</strong>
+      <p>Speak to your agent and hear responses via text-to-speech.</p>
+    </div>
+    <div class="feature">
+      <strong>Quick replies</strong>
+      <p>Agents can offer clickable response buttons for common actions.</p>
+    </div>
+  </div>
+
+  <div class="how-it-works">
+    <h2>How it works</h2>
+    <p style="margin-bottom: 16px; color: var(--muted);">Agent Chat runs as an MCP server alongside your AI agent. The agent calls tools to communicate with users through a browser-based chat UI.</p>
+    <pre><code>Agent (Claude, etc.)
+  │
+  ├─ send_message("Here's what I found...")  →  Chat UI shows rich message
+  ├─ draw([...instructions...])              →  Chat UI renders canvas diagram
+  ├─ send_progress("Working on it...")       →  Chat UI shows progress indicator
+  └─ check_messages()                        ←  Chat UI returns user's reply</code></pre>
+  </div>
+
+  <div class="tools">
+    <h2>MCP Tools</h2>
+    <table>
+      <tr><th>Tool</th><th>Description</th></tr>
+      <tr><td><code>send_message</code></td><td>Send a message and wait for user response. Supports quick reply buttons.</td></tr>
+      <tr><td><code>send_verbal_reply</code></td><td>Send a spoken reply in voice mode (text-to-speech).</td></tr>
+      <tr><td><code>draw</code></td><td>Draw a canvas diagram and wait for user response.</td></tr>
+      <tr><td><code>send_progress</code></td><td>Send a non-blocking progress update.</td></tr>
+      <tr><td><code>send_verbal_progress</code></td><td>Send a non-blocking spoken progress update.</td></tr>
+      <tr><td><code>check_messages</code></td><td>Non-blocking check for queued user messages.</td></tr>
+    </table>
+  </div>
+
+  <div class="install">
+    <h2>Install</h2>
+    <p style="color: var(--muted); margin-bottom: 12px;">Add as an MCP server to Claude Code:</p>
+    <pre><code>claude mcp add agent-chat -- npx -y @choonkeat/agent-chat</code></pre>
+  </div>
+
+  <footer>
+    <p>Powers the Agent Chat tab in <a href="https://swe-swe.netlify.app/">swe-swe</a></p>
+  </footer>
+</div>
+
+</body>
+</html>
