@@ -137,6 +137,27 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		files := resolveImageFiles(params.ImageURLs)
+
+		// If user already sent messages, strip quick_replies and return
+		// queued messages immediately — the replies would be stale.
+		if bus.HasQueuedMessages() {
+			bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files})
+			msgs, err := bus.WaitForMessages(ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+			}
+			bus.SetLastVoice(isVoiceMessage(msgs))
+			text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+			if uiURL != "" {
+				text += "\nChat UI: " + uiURL
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: text},
+				},
+			}, nil, nil
+		}
+
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies, Files: files})
 
 		msgs, err := bus.WaitForMessages(ctx)
@@ -179,6 +200,27 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		files := resolveImageFiles(params.ImageURLs)
+
+		// If user already sent messages, strip quick_replies and return
+		// queued messages immediately — the replies would be stale.
+		if bus.HasQueuedMessages() {
+			bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files})
+			msgs, err := bus.WaitForMessages(ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+			}
+			bus.SetLastVoice(isVoiceMessage(msgs))
+			text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+			if uiURL != "" {
+				text += "\nChat UI: " + uiURL
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: text},
+				},
+			}, nil, nil
+		}
+
 		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies, Files: files})
 
 		msgs, err := bus.WaitForMessages(ctx)
@@ -249,6 +291,24 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 		// Publish text as a chat bubble before the canvas
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text})
+
+		// If user already sent messages, show the draw without quick_replies
+		// and return immediately — the replies would be stale.
+		if bus.HasQueuedMessages() {
+			bus.Publish(Event{
+				Type:         "draw",
+				Instructions: params.Instructions,
+			})
+			text := "Draw displayed. User has pending messages — call check_messages."
+			if uiURL != "" {
+				text += "\nChat UI: " + uiURL
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: text},
+				},
+			}, nil, nil
+		}
 
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		ack := bus.CreateAck()

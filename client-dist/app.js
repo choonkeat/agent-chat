@@ -1207,7 +1207,14 @@ function connect() {
         if (data.pendingAckId) {
           pendingAckId = data.pendingAckId;
         }
-        enableInput();
+        // Use server's quick replies state if available. Replay events may
+        // override this, but it provides the correct initial state when there
+        // are no missed events to replay.
+        if (data.quickReplies && data.quickReplies.length > 0) {
+          enableInput(data.quickReplies);
+        } else {
+          enableInput();
+        }
         break;
 
       case 'agentMessage':
@@ -1259,6 +1266,9 @@ function connect() {
         chatInput.classList.remove('sending');
         sendBtn.disabled = false;
         sendBtn.classList.remove('sending');
+        // Show loading — agent is now processing the user's message.
+        // Also ensures correct state after replay for new/reconnecting browsers.
+        showLoading();
         break;
 
       case 'messageQueued':

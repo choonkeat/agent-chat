@@ -314,6 +314,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if pendingAckID := bus.PendingAckID(); pendingAckID != "" {
 		connectMsg["pendingAckId"] = pendingAckID
 	}
+	if qr := bus.LastQuickReplies(); len(qr) > 0 {
+		connectMsg["quickReplies"] = qr
+	}
 	conn.WriteJSON(connectMsg)
 
 	// Subscribe to event bus BEFORE streaming history to avoid gaps.

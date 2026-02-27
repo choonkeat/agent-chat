@@ -49,10 +49,11 @@ type AckHandle struct {
 // EventBus fans out events to WebSocket subscribers, tracks pending acks,
 // and maintains an in-memory event log for browser reconnect.
 type EventBus struct {
-	mu          sync.RWMutex
-	subscribers map[chan Event]struct{}
-	eventLog    []Event // session event log for reconnect replay
-	nextSeq     int64   // next sequence number (guarded by mu)
+	mu              sync.RWMutex
+	subscribers     map[chan Event]struct{}
+	eventLog        []Event  // session event log for reconnect replay
+	nextSeq         int64    // next sequence number (guarded by mu)
+	lastQuickReplies []string // last quick_replies sent to browser (nil = agent working)
 
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
@@ -78,33 +79,35 @@ func NewEventBus() *EventBus {
 // full history across server restarts.
 func NewEventBusWithLog(path string) (*EventBus, error) {
 	// Load existing events from the log file.
-	events, maxSeq := loadEventLog(path)
+	events, maxSeq, lastQR := loadEventLog(path)
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
 	}
 	return &EventBus{
-		subscribers: make(map[chan Event]struct{}),
-		pending:     make(map[string]chan string),
-		msgQueue:    make(chan UserMessage, 256),
-		logFile:     f,
-		eventLog:    events,
-		nextSeq:     maxSeq,
+		subscribers:      make(map[chan Event]struct{}),
+		pending:          make(map[string]chan string),
+		msgQueue:         make(chan UserMessage, 256),
+		logFile:          f,
+		eventLog:         events,
+		nextSeq:          maxSeq,
+		lastQuickReplies: lastQR,
 	}, nil
 }
 
-// loadEventLog reads a JSONL event log file and returns the parsed events
-// and the highest sequence number found.
-func loadEventLog(path string) ([]Event, int64) {
+// loadEventLog reads a JSONL event log file and returns the parsed events,
+// the highest sequence number found, and the reconstructed lastQuickReplies.
+func loadEventLog(path string) ([]Event, int64, []string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, 0
+		return nil, 0, nil
 	}
 	defer f.Close()
 
 	var events []Event
 	var maxSeq int64
+	var lastQR []string
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
@@ -116,8 +119,15 @@ func loadEventLog(path string) ([]Event, int64) {
 		if ev.Seq > maxSeq {
 			maxSeq = ev.Seq
 		}
+		// Reconstruct lastQuickReplies state.
+		if len(ev.QuickReplies) > 0 {
+			lastQR = ev.QuickReplies
+		}
+		if ev.Type == "userMessage" {
+			lastQR = nil
+		}
 	}
-	return events, maxSeq
+	return events, maxSeq, lastQR
 }
 
 // writeToLog marshals an event to JSON and appends it to the log file.
@@ -211,6 +221,19 @@ func (eb *EventBus) LastVoice() bool {
 	return eb.lastVoice
 }
 
+// LastQuickReplies returns the last quick_replies sent to the browser, or nil
+// if the agent is currently working (no pending quick replies).
+func (eb *EventBus) LastQuickReplies() []string {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return eb.lastQuickReplies
+}
+
+// HasQueuedMessages returns true if there are user messages waiting in the queue.
+func (eb *EventBus) HasQueuedMessages() bool {
+	return len(eb.msgQueue) > 0
+}
+
 // FormatMessages joins user messages into a single string with file attachment info.
 func FormatMessages(msgs []UserMessage) string {
 	var texts []string
@@ -301,6 +324,15 @@ func (eb *EventBus) Publish(event Event) {
 	eb.nextSeq++
 	event.Seq = eb.nextSeq
 	eb.eventLog = append(eb.eventLog, event)
+
+	// Track lastQuickReplies for new browser state.
+	if len(event.QuickReplies) > 0 {
+		eb.lastQuickReplies = event.QuickReplies
+	}
+	if event.Type == "userMessage" {
+		eb.lastQuickReplies = nil
+	}
+
 	for ch := range eb.subscribers {
 		select {
 		case ch <- event:
