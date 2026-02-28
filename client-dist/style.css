@@ -354,7 +354,7 @@ body {
   40% { opacity: 1; transform: scale(1.1); }
 }
 
-/* --- Sticky footer (quick-replies + input bar) --- */
+/* --- Sticky footer (input bar) --- */
 
 #chat-footer {
   position: sticky;

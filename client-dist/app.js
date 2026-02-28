@@ -504,7 +504,8 @@ function appendMessage(el) {
   if (loader) {
     messages.insertBefore(el, loader);
   } else {
-    messages.appendChild(el);
+    // quick-replies is always the last child of #messages; insert before it
+    messages.insertBefore(el, quickReplies);
   }
 }
 
@@ -515,7 +516,7 @@ function showLoading() {
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
   div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  messages.appendChild(div);
+  messages.insertBefore(div, quickReplies);
   scrollToBottom(false);
 }
 
