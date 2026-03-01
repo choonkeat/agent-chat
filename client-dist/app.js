@@ -1113,6 +1113,7 @@ var BACKOFF_INITIAL = 1000;
 var BACKOFF_MAX = 30000;
 var backoffDelay = BACKOFF_INITIAL;
 var reconnectTimer = null;
+var hasConnectedBefore = false;
 
 // --- History replay for browser reconnect ---
 
@@ -1189,6 +1190,8 @@ function connect() {
     console.log('[' + ts() + '] WebSocket onopen');
     setStatus('connected');
     backoffDelay = BACKOFF_INITIAL;
+    addSystemBubble(hasConnectedBefore ? 'Reconnected' : 'Connected');
+    hasConnectedBefore = true;
   };
 
   ws.onmessage = function (event) {
@@ -1294,6 +1297,7 @@ function connect() {
   ws.onclose = function () {
     if (ws !== activeWs) return;
     console.log('[' + ts() + '] WebSocket closed, reconnecting...');
+    addSystemBubble('Disconnected');
     teardown();
     setStatus('connecting');
     scheduleReconnect();
