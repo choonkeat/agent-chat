@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+// Common expected substrings for reply instructions (shared across tests).
+const (
+	replyInstructionsBody = "Before taking any action\n" +
+		"- present a brief summary of your understanding of the intent and task\n" +
+		"- present a brief summary of your intended actions and why\n" +
+		"- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)\n" +
+		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
+		"- send_progress before proceeding\n" +
+		"\nWhen doing tasks\n" +
+		"- call check_messages between steps.\n" +
+		"\nUser cannot see TUI, send_message to wait for further instructions. send_progress for non-blocking updates."
+
+	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n\n" +
+		"Before taking any action\n" +
+		"- present a brief summary of your understanding of the intent and task\n" +
+		"- present a brief summary of your intended actions and why\n" +
+		"- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)\n" +
+		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
+		"- send_verbal_progress before proceeding\n" +
+		"\nWhen doing tasks\n" +
+		"- call check_messages between steps.\n" +
+		"\nUser cannot see TUI, send_verbal_reply to wait for further instructions. send_verbal_progress for non-blocking updates."
+)
+
 func TestFormatMessagesPlainText(t *testing.T) {
 	msgs := []UserMessage{{Text: "hello world"}}
 	got := FormatMessages(msgs)
@@ -17,7 +41,8 @@ func TestFormatMessagesPlainText(t *testing.T) {
 func TestFormatMessagesVoice(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red"}}
 	got := FormatMessages(msgs)
-	want := "Decoded user's speech to text (may be inaccurate): turn the box red\n\nIMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding."
+	want := "Decoded user's speech to text (may be inaccurate): turn the box red\n\n" +
+		"IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding."
 	if got != want {
 		t.Errorf("FormatMessages voice:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -89,20 +114,16 @@ func TestFormatMessagesMultiple(t *testing.T) {
 func TestVoiceSuffixTextMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "hello"}}
 	got := voiceSuffix(msgs)
-	want := "(Ask any question or Reply to user in chat when done)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
-	if got != want {
-		t.Errorf("voiceSuffix text:\ngot:  %q\nwant: %q", got, want)
+	if got != replyInstructionsBody {
+		t.Errorf("voiceSuffix text:\ngot:  %q\nwant: %q", got, replyInstructionsBody)
 	}
 }
 
 func TestVoiceSuffixVoiceMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 do something"}}
 	got := voiceSuffix(msgs)
-	want := "(Ask any question or Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
-	if got != want {
-		t.Errorf("voiceSuffix voice:\ngot:  %q\nwant: %q", got, want)
+	if got != replyInstructionsVoiceBody {
+		t.Errorf("voiceSuffix voice:\ngot:  %q\nwant: %q", got, replyInstructionsVoiceBody)
 	}
 }
 
@@ -129,12 +150,9 @@ func TestIsVoiceMessage(t *testing.T) {
 }
 
 func TestComposedResultSendMessage(t *testing.T) {
-	// Lock down the full "User responded: ..." pattern used in send_message/send_verbal_reply
 	msgs := []UserMessage{{Text: "looks good"}}
 	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
-	want := "User responded: looks good\n\n" +
-		"(Ask any question or Reply to user in chat when done)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
+	want := "User responded: looks good\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (text):\ngot:  %q\nwant: %q", got, want)
 	}
@@ -144,21 +162,17 @@ func TestComposedResultVoiceMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 make it blue"}}
 	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 	want := "User responded: Decoded user's speech to text (may be inaccurate): make it blue\n\n" +
-		"IMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.\n\n" +
-		"(Ask any question or Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
+		"IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.\n\n" +
+		replyInstructionsVoiceBody
 	if got != want {
 		t.Errorf("composed result (voice):\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
 func TestComposedResultCheckMessages(t *testing.T) {
-	// Lock down the "User said: ..." pattern used in check_messages
 	msgs := []UserMessage{{Text: "update please"}}
 	got := "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
-	want := "User said: update please\n\n" +
-		"(Ask any question or Reply to user in chat when done)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
+	want := "User said: update please\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (check_messages):\ngot:  %q\nwant: %q", got, want)
 	}
@@ -173,10 +187,8 @@ func TestComposedResultWithFiles(t *testing.T) {
 	}}
 	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 	want := "User responded: review this\n\nAttached files:\n  /tmp/main.go (text/x-go, 4KB)\n\n" +
-		"(Ask any question or Reply to user in chat when done)" +
-		"\nIMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI."
+		replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (files):\ngot:  %q\nwant: %q", got, want)
 	}
 }
-

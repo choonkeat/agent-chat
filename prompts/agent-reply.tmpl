@@ -6,7 +6,7 @@
 {{- if $m.IsVoice -}}
 Decoded user's speech to text (may be inaccurate): {{$m.Text}}
 
-IMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.
+IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.
 {{- else -}}
 {{- $m.Text -}}
 {{- end -}}
@@ -23,9 +23,18 @@ Attached files:
 
 {{- define "reply-instructions" -}}
 {{- if .IsVoice -}}
-(Ask any question or Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)
-{{- else -}}
-(Ask any question or Reply to user in chat when done)
-{{- end}}
-IMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI.
+User can only hear you now; keep it conversational, no markdown.
+
+{{end -}}
+Before taking any action
+- present a brief summary of your understanding of the intent and task
+- present a brief summary of your intended actions and why
+- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)
+- once you are confident user understands, ask user to explicitly confirm yes to proceed
+- {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} before proceeding
+
+When doing tasks
+- call check_messages between steps.
+
+User cannot see TUI, {{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }} to wait for further instructions. {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} for non-blocking updates.
 {{- end}}
