@@ -1190,8 +1190,6 @@ function connect() {
     console.log('[' + ts() + '] WebSocket onopen');
     setStatus('connected');
     backoffDelay = BACKOFF_INITIAL;
-    addSystemBubble(hasConnectedBefore ? 'Reconnected' : 'Connected');
-    hasConnectedBefore = true;
   };
 
   ws.onmessage = function (event) {
@@ -1207,6 +1205,10 @@ function connect() {
       case 'connected':
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
+        var label = hasConnectedBefore ? 'Reconnected' : 'Connected';
+        if (data.version) label += ' \u00b7 v' + data.version;
+        addSystemBubble(label);
+        hasConnectedBefore = true;
         // History is now streamed as individual events after connect — no replay needed.
         if (data.pendingAckId) {
           pendingAckId = data.pendingAckId;

@@ -310,7 +310,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send connected handshake (no history array — we stream events after).
-	connectMsg := map[string]any{"type": "connected"}
+	connectMsg := map[string]any{"type": "connected", "version": version + " (" + commit + ")"}
 	if pendingAckID := bus.PendingAckID(); pendingAckID != "" {
 		connectMsg["pendingAckId"] = pendingAckID
 	}
