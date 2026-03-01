@@ -10,19 +10,19 @@ const (
 	replyInstructionsBody = "Before taking any action\n" +
 		"- present a brief summary of your understanding of the intent and task\n" +
 		"- present a brief summary of your intended actions and why\n" +
-		"- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)\n" +
+		"- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)\n" +
 		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
 		"- send_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
 		"\nUser cannot see TUI — never ask questions there. send_message to wait for further instructions. send_progress for non-blocking updates."
 
-	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n\n" +
+	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
+		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
 		"Before taking any action\n" +
 		"- present a brief summary of your understanding of the intent and task\n" +
 		"- present a brief summary of your intended actions and why\n" +
-		"- ask only ONE question at a time; wait for the user's response before asking the next question\n" +
-		"- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)\n" +
+		"- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)\n" +
 		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
 		"- send_verbal_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +

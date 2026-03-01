@@ -24,13 +24,13 @@ Attached files:
 {{- define "reply-instructions" -}}
 {{- if .IsVoice -}}
 User can only hear you now; keep it conversational, no markdown.
+IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.
 
 {{end -}}
 Before taking any action
 - present a brief summary of your understanding of the intent and task
 - present a brief summary of your intended actions and why
-{{ if .IsVoice -}}- ask only ONE question at a time; wait for the user's response before asking the next question
-{{ end -}}- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)
+- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)
 - once you are confident user understands, ask user to explicitly confirm yes to proceed
 - {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} before proceeding
 
