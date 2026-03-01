@@ -28,7 +28,7 @@ document.addEventListener("click", function (e) {
 });
 
 // Load docs statically instead of via WebSocket
-var pkg = "/packages/choonkeat/agent-chat/__VERSION__";
+var pkg = "/packages/choonkeat/agent-chat/0.1.6";
 Promise.all([
   fetch(pkg + "/README.md").then(function (r) { return r.text(); }),
   fetch(pkg + "/elm.json").then(function (r) { return r.json(); }),
@@ -41,19 +41,19 @@ Promise.all([
   app.ports.onReadme.send({
     author: "choonkeat",
     project: "agent-chat",
-    version: "__VERSION__",
+    version: "0.1.6",
     readme: readme
   });
   app.ports.onManifest.send({
     author: "choonkeat",
     project: "agent-chat",
-    version: "__VERSION__",
+    version: "0.1.6",
     manifest: manifest
   });
   app.ports.onDocs.send({
     author: "choonkeat",
     project: "agent-chat",
-    version: "__VERSION__",
+    version: "0.1.6",
     docs: docs
   });
 

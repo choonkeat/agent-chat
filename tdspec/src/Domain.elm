@@ -1,7 +1,7 @@
 module Domain exposing
     ( FileRef, UserMessage
     , Seq(..), AckId(..), Timestamp(..), Version(..)
-    , EventType(..), Event
+    , Event(..), ChatMessageData, UserMessageData, DrawEventData
     , QuickReplies
     , Json(..)
     )
@@ -15,7 +15,7 @@ Source of truth: eventbus.go (types), tools.go (params), main.go (protocol)
 
 @docs FileRef, UserMessage
 @docs Seq, AckId, Timestamp, Version
-@docs EventType, Event
+@docs Event, ChatMessageData, UserMessageData, DrawEventData
 @docs QuickReplies
 @docs Json
 
@@ -89,38 +89,11 @@ type alias QuickReplies =
     List String
 
 
-{-| The type field of an Event. Each variant maps to a JSON `type` string.
-
-Source: eventbus.go `Event.Type` field, tools.go `Publish` calls.
-
--}
-type EventType
-    = AgentMessage
-      {- "agentMessage" -- text from the agent, displayed as chat bubble.
-         May include quick_replies and ack_id (for blocking tools).
-         May include files (images from agent).
-      -}
-    | VerbalReply
-      {- "verbalReply" -- spoken text from the agent (voice mode).
-         Browser uses text-to-speech. Same fields as AgentMessage.
-      -}
-    | UserMessageEvent
-      {- "userMessage" -- broadcast of user's reply to all browsers.
-         Also appended to event log for reconnect replay.
-      -}
-    | DrawEvent
-
-
-
-{- "draw" -- canvas drawing instructions.
-   Rendered as inline canvas bubble in chat history.
-   May include quick_replies and ack_id.
--}
-
-
 {-| A chat event published through the event bus.
 
-Source: eventbus.go `Event` struct.
+Source: eventbus.go `Event` struct. The Go struct is flat (all fields
+optional), but each event type uses a specific subset of fields.
+The ADT makes these constraints explicit.
 
     type Event struct {
         Type         string    `json:"type"`
@@ -134,15 +107,61 @@ Source: eventbus.go `Event` struct.
     }
 
 -}
-type alias Event =
-    { eventType : EventType
-    , seq : Seq
+type Event
+    = AgentMessage ChatMessageData
+      {- "agentMessage" -- text from the agent, displayed as chat bubble.
+         May include quick_replies and ack_id (for blocking tools).
+         May include files (images from agent).
+      -}
+    | VerbalReply ChatMessageData
+      {- "verbalReply" -- spoken text from the agent (voice mode).
+         Browser uses text-to-speech. Same payload as AgentMessage.
+      -}
+    | UserMessageEvent UserMessageData
+      {- "userMessage" -- broadcast of user's reply to all browsers.
+         Also appended to event log for reconnect replay.
+      -}
+    | DrawEvent DrawEventData
+
+
+
+{- "draw" -- canvas drawing instructions.
+   Rendered as inline canvas bubble in chat history.
+   May include quick_replies and ack_id.
+-}
+
+
+{-| Payload for AgentMessage and VerbalReply events.
+-}
+type alias ChatMessageData =
+    { seq : Seq
+    , timestamp : Timestamp
     , text : String
     , ackId : Maybe AckId
     , quickReplies : QuickReplies
-    , instructions : List Json
     , files : List FileRef
+    }
+
+
+{-| Payload for UserMessageEvent.
+-}
+type alias UserMessageData =
+    { seq : Seq
     , timestamp : Timestamp
+    , text : String
+    , files : List FileRef
+    }
+
+
+{-| Payload for DrawEvent.
+-}
+type alias DrawEventData =
+    { seq : Seq
+    , timestamp : Timestamp
+    , text : String
+    , instructions : List Json
+    , ackId : Maybe AckId
+    , quickReplies : QuickReplies
     }
 
 

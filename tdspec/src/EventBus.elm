@@ -31,7 +31,7 @@ Responsibilities:
 
 -}
 
-import Domain exposing (AckId(..), Event, FileRef, QuickReplies, Seq(..), UserMessage)
+import Domain exposing (AckId(..), Event(..), FileRef, QuickReplies, Seq(..), UserMessage)
 
 
 
@@ -78,7 +78,7 @@ publish : Event -> ()
 publish event =
     let
         _ =
-            event.seq
+            event
     in
     ()
 

@@ -17,7 +17,7 @@ Server streams missed events (seq > cursor) then fans out live events.
 
 -}
 
-import Domain exposing (AckId(..), Event, FileRef, QuickReplies, Seq(..), Version(..))
+import Domain exposing (AckId(..), Event(..), FileRef, QuickReplies, Seq(..), Version(..))
 
 
 

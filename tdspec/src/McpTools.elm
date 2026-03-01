@@ -2,7 +2,7 @@ module McpTools exposing
     ( McpTool(..), McpResource(..)
     , MessageParams, VerbalReplyParams, DrawParams, ProgressParams
     , ToolResult(..)
-    , allTools, allResources
+    , allResources
     )
 
 {-| MCP tools and resources exposed by the agent-chat server.
@@ -22,7 +22,7 @@ Message flow:
 @docs McpTool, McpResource
 @docs MessageParams, VerbalReplyParams, DrawParams, ProgressParams
 @docs ToolResult
-@docs allTools, allResources
+@docs allResources
 
 -}
 
@@ -37,34 +37,37 @@ import Domain exposing (FileRef, Json, QuickReplies, UserMessage)
 
 Source: tools.go `registerTools` function.
 
+Each variant carries the tool's input parameters.
+
 -}
 type McpTool
-    = SendMessage
+    = SendMessage MessageParams
       {- Blocking. Send text to chat UI, wait for user reply.
          Rejects with error if user is in voice mode (must use SendVerbalReply).
          Lazily starts HTTP server and opens browser on first call.
          Waits for at least one browser subscriber before publishing.
          If user has queued messages, returns them immediately (stale quick_replies dropped).
       -}
-    | SendVerbalReply
+    | SendVerbalReply VerbalReplyParams
       {- Blocking. Send spoken text to user in voice mode, wait for reply.
          Browser uses text-to-speech to speak the text.
          After speaking, browser automatically listens for next voice input.
          Same blocking/queued-message behavior as SendMessage.
       -}
-    | Draw
+    | Draw DrawParams
       {- Blocking. Draw a diagram slide as inline canvas bubble in chat.
          Publishes text as agentMessage bubble first, then draw event.
          Blocks until viewer clicks ack button (resolves via ack protocol).
          If user has queued messages, shows draw without ack and returns immediately.
       -}
-    | SendProgress
+    | SendProgress ProgressParams
       {- Non-blocking. Publish agentMessage event and return immediately.
          Does not wait for subscriber. Does not block.
       -}
-    | SendVerbalProgress
+    | SendVerbalProgress ProgressParams
       {- Non-blocking. Publish verbalReply event and return immediately.
          Browser speaks the text via text-to-speech.
+         Same params as SendProgress (Go: VerbalProgressParams is identical to ProgressParams).
       -}
     | CheckMessages
 
@@ -73,6 +76,7 @@ type McpTool
 {- Non-blocking. Drain message queue, return any queued messages.
    Returns "No new messages." if queue is empty.
    Returns "User said: {formatted}" if messages exist.
+   Takes no parameters (Go: EmptyParams struct).
 -}
 
 
@@ -142,16 +146,6 @@ type ToolResult
     | ProgressSent -- "Progress sent." or "Verbal progress sent."
     | NoNewMessages -- "No new messages."
     | VoiceModeError -- "ERROR: The user is in voice mode. Use send_verbal_reply..."
-
-
-{-| All registered tools.
-
-    allTools == [ SendMessage, SendVerbalReply, Draw, SendProgress, SendVerbalProgress, CheckMessages ]
-
--}
-allTools : List McpTool
-allTools =
-    [ SendMessage, SendVerbalReply, Draw, SendProgress, SendVerbalProgress, CheckMessages ]
 
 
 
