@@ -7,11 +7,10 @@ import (
 
 // Common expected substrings for reply instructions (shared across tests).
 const (
-	replyInstructionsBody = "Before taking any action\n" +
-		"- present a brief summary of your understanding of the intent and task\n" +
-		"- present a brief summary of your intended actions and why\n" +
-		"- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)\n" +
-		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
+	replyInstructionsBody = "Before taking any action, ensure mutual understanding:\n" +
+		"- You and the user must agree on what will be done and what effect it will have.\n" +
+		"- Confirm your understanding. Verify the user understands the impact.\n" +
+		"- Get explicit \"yes\" before proceeding.\n" +
 		"- send_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
@@ -19,11 +18,10 @@ const (
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
-		"Before taking any action\n" +
-		"- present a brief summary of your understanding of the intent and task\n" +
-		"- present a brief summary of your intended actions and why\n" +
-		"- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)\n" +
-		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
+		"Before taking any action, ensure mutual understanding:\n" +
+		"- You and the user must agree on what will be done and what effect it will have.\n" +
+		"- Confirm your understanding. Verify the user understands the impact.\n" +
+		"- Get explicit \"yes\" before proceeding.\n" +
 		"- send_verbal_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +

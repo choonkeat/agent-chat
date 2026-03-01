@@ -27,11 +27,10 @@ User can only hear you now; keep it conversational, no markdown.
 IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.
 
 {{end -}}
-Before taking any action
-- present a brief summary of your understanding of the intent and task
-- present a brief summary of your intended actions and why
-- ask user questions to verify they understand the impact of the actions you're about to take (include a tricky question)
-- once you are confident user understands, ask user to explicitly confirm yes to proceed
+Before taking any action, ensure mutual understanding:
+- You and the user must agree on what will be done and what effect it will have.
+- Confirm your understanding. Verify the user understands the impact.
+- Get explicit "yes" before proceeding.
 - {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} before proceeding
 
 When doing tasks
