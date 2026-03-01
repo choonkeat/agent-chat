@@ -42,6 +42,7 @@ var pendingInterrupt = false;
 var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
+var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
 
 // --- Voice mode state ---
 var voiceMode = false;
@@ -608,6 +609,11 @@ function handleSend() {
 
   if (window.parent !== window) {
     pendingNotifyParent = true;
+    // Detect interrupt phrases for typed messages (exact match only)
+    var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+    if (interruptPhrases.indexOf(lowerText) !== -1) {
+      pendingInterrupt = true;
+    }
   }
 
   if (filesToUpload.length > 0) {
@@ -911,7 +917,6 @@ function setupSpeechRecognition() {
 
     // Detect interrupt phrases (stop, wait, cancel, hold on, etc.)
     var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
-    var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
     var isInterrupt = interruptPhrases.some(function(phrase) {
       return lowerText === phrase || lowerText.indexOf(phrase + ' ') === 0;
     });
@@ -1160,6 +1165,7 @@ var BACKOFF_MAX = 30000;
 var backoffDelay = BACKOFF_INITIAL;
 var reconnectTimer = null;
 var hasConnectedBefore = false;
+var connectQuickReplies = null; // deferred until historyEnd
 
 // --- History replay for browser reconnect ---
 
@@ -1285,14 +1291,24 @@ function connect() {
         if (data.pendingAckId) {
           pendingAckId = data.pendingAckId;
         }
-        // Use server's quick replies state if available. Replay events may
-        // override this, but it provides the correct initial state when there
-        // are no missed events to replay.
-        if (data.quickReplies && data.quickReplies.length > 0) {
-          enableInput(data.quickReplies);
-        } else {
-          enableInput();
+        // Defer quick replies until historyEnd — showing them now would
+        // cause freezeCurrentReplies to freeze the wrong replies when
+        // history events stream in.
+        connectQuickReplies = data.quickReplies || null;
+        enableInput();
+        break;
+
+      case 'historyEnd':
+        // History replay complete — show deferred quick replies if the
+        // event stream didn't already set them (e.g. reconnect with no
+        // missed events, or last event was an agentMessage with replies).
+        if (connectQuickReplies && connectQuickReplies.length > 0) {
+          var existing = quickReplies.querySelectorAll('.chip');
+          if (existing.length === 0) {
+            enableInput(connectQuickReplies);
+          }
         }
+        connectQuickReplies = null;
         break;
 
       case 'agentMessage':
