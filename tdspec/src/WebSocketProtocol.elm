@@ -1,6 +1,7 @@
 module WebSocketProtocol exposing
     ( ServerToClient(..), ClientToServer(..)
     , ConnectedHandshake, HttpEndpoint(..)
+    , CliFlag(..), EnvVar(..)
     , allHttpEndpoints
     )
 
@@ -13,6 +14,7 @@ Server streams missed events (seq > cursor) then fans out live events.
 
 @docs ServerToClient, ClientToServer
 @docs ConnectedHandshake, HttpEndpoint
+@docs CliFlag, EnvVar
 @docs allHttpEndpoints
 
 -}
@@ -54,7 +56,7 @@ type ServerToClient
 
 {-| The connected handshake sent on WebSocket open.
 
-Source: main.go lines 313-321.
+Source: main.go `handleWebSocket` function.
 
     { "type": "connected",
       "version": "0.1.6 (bcaedff)",
@@ -76,14 +78,24 @@ type alias ConnectedHandshake =
 
 {-| Messages sent from browser to server over WebSocket.
 
-Source: main.go `handleWebSocket` read loop (lines 400-424).
+Source: main.go `handleWebSocket` read loop.
+
+The Go read struct is:
+
+    struct {
+        Type    string    `json:"type"`
+        Text    string    `json:"text"`
+        Files   []FileRef `json:"files"`
+        ID      string    `json:"id"`
+        Message string    `json:"message"`
+    }
 
 -}
 type ClientToServer
     = Message { text : String, files : List FileRef }
       {- User typed a message and hit send (or spoke via voice).
          Server pushes to message queue, publishes userMessage event
-         to all browsers, and sends messageQueued back to sender.
+         to all browsers, and sends MessageQueued back to sender.
 
          Wire: { "type": "message", "text": "...", "files": [...] }
       -}
@@ -98,6 +110,8 @@ type ClientToServer
    If message is empty, ack result is "ack".
    If message is non-empty, ack result is "ack:{message}".
 
+   Note: the wire field for ack ID is "id" (not "ack_id" as in Event).
+
    Wire: { "type": "ack", "id": "uuid", "message": "..." }
 -}
 -- -- HTTP endpoints -----------------------------------------------
@@ -105,7 +119,7 @@ type ClientToServer
 
 {-| HTTP endpoints served by the Go server.
 
-Source: main.go `startHTTPServer` function (lines 182-192).
+Source: main.go `startHTTPServer` function.
 
 -}
 type HttpEndpoint
@@ -120,7 +134,7 @@ type HttpEndpoint
       -}
     | Upload
       {- POST /upload
-         Multipart file upload. Max 50MB.
+         Multipart file upload. Max 50MB. Form field name: "files".
          Returns JSON array of FileRef.
       -}
     | UploadedFiles
@@ -150,3 +164,56 @@ type HttpEndpoint
 allHttpEndpoints : List HttpEndpoint
 allHttpEndpoints =
     [ WebSocket, McpStreamableHttp, Upload, UploadedFiles, ConfigJs, StaticAssets ]
+
+
+
+-- -- CLI flags and environment variables --------------------------
+
+
+{-| Command-line flags accepted by the server.
+
+Source: main.go `main` function, flag.Parse().
+
+-}
+type CliFlag
+    = VersionFlag {- -v: print version and exit. -}
+    | NoStdioMcp
+      {- -no-stdio-mcp: disable stdio MCP transport.
+         HTTP MCP (POST /mcp) is always available.
+      -}
+    | ThemeCookie String
+      {- -theme-cookie: cookie name for light/dark theme toggle.
+         Default: "agent-chat-theme".
+      -}
+    | UploadDirFlag String
+
+
+
+{- -upload-dir: directory for uploaded files.
+   Default: temp directory (os.MkdirTemp).
+-}
+
+
+{-| Environment variables read by the server.
+
+Source: main.go `main` and `startHTTPServer` functions.
+
+-}
+type EnvVar
+    = AgentChatPort
+      {- AGENT_CHAT_PORT: TCP port to listen on.
+         Falls back to PORT if AGENT_CHAT_PORT is not set.
+         Default: 0 (OS-assigned random port).
+      -}
+    | AgentChatDisable
+      {- AGENT_CHAT_DISABLE: when non-empty, disables tool and
+         resource registration. Server starts but does nothing.
+      -}
+    | AgentChatEventLog
+
+
+
+{- AGENT_CHAT_EVENT_LOG: path for JSONL event log file.
+   Enables persistence across server restarts.
+   Events are loaded on startup and appended during operation.
+-}

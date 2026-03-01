@@ -1,9 +1,13 @@
 module EventBus exposing
     ( AckHandle, AckResult(..)
+    , Subscription
     , publish, createAck, resolveAck
-    , subscribe, waitForSubscriber
-    , pushMessage, drainMessages, waitForMessages
-    , eventsSince, pendingAckId, lastQuickReplies
+    , subscribe, unsubscribe, waitForSubscriber
+    , pushMessage, drainMessages, waitForMessages, hasQueuedMessages
+    , eventsSince, pendingAckId, lastQuickReplies, history
+    , setLastVoice, lastVoice
+    , resetLog, logUserMessage, close
+    , formatMessages
     )
 
 {-| Event bus -- pub/sub with blocking ack and message queue.
@@ -22,12 +26,17 @@ Responsibilities:
   - Event log: in-memory log for browser reconnect replay
   - Message queue: buffered channel (256) for browser -> agent messages
   - JSONL persistence: optional disk log for history across server restarts
+  - Voice mode tracking: lastVoice state determines send\_message rejection
 
 @docs AckHandle, AckResult
+@docs Subscription
 @docs publish, createAck, resolveAck
-@docs subscribe, waitForSubscriber
-@docs pushMessage, drainMessages, waitForMessages
-@docs eventsSince, pendingAckId, lastQuickReplies
+@docs subscribe, unsubscribe, waitForSubscriber
+@docs pushMessage, drainMessages, waitForMessages, hasQueuedMessages
+@docs eventsSince, pendingAckId, lastQuickReplies, history
+@docs setLastVoice, lastVoice
+@docs resetLog, logUserMessage, close
+@docs formatMessages
 
 -}
 
@@ -62,6 +71,20 @@ type AckResult
 
 
 
+-- -- Subscriptions ------------------------------------------------
+
+
+{-| An event bus subscription. Wraps a buffered channel (capacity 64)
+that receives all published events.
+
+Source: eventbus.go `Subscribe()` returns `chan Event`.
+
+-}
+type Subscription
+    = Subscription
+
+
+
 -- -- Publishing ---------------------------------------------------
 
 
@@ -70,6 +93,9 @@ type AckResult
 Sets timestamp to now if zero. Assigns next monotonic seq number.
 Tracks lastQuickReplies: set when event has quick\_replies,
 cleared when event is userMessage.
+Fan-out is non-blocking: if a subscriber channel is full, the event
+is dropped for that subscriber.
+Also writes to JSONL log file if configured.
 
 Source: eventbus.go `Publish` method.
 
@@ -97,9 +123,12 @@ createAck () =
 
 
 {-| Resolve a pending ack by id. Sends the result string through
-the channel, unblocking the waiting tool.
+the channel, unblocking the waiting tool. Returns True if the ack
+existed and was resolved.
 
 Source: eventbus.go `ResolveAck` method.
+Note: Go takes raw strings ("ack" or "ack:message"), not AckResult.
+The AckResult ADT models the parsed form.
 
 -}
 resolveAck : { id : AckId, result : AckResult } -> Bool
@@ -111,19 +140,30 @@ resolveAck args =
     True
 
 
-
--- -- Subscriptions ------------------------------------------------
-
-
 {-| Subscribe to receive all published events.
-Returns a buffered channel (capacity 64). Non-blocking fan-out --
-if channel is full, event is dropped for that subscriber.
+Returns a Subscription (buffered channel, capacity 64). Non-blocking
+fan-out -- if channel is full, event is dropped for that subscriber.
+Call unsubscribe when done.
 
 Source: eventbus.go `Subscribe` method.
 
 -}
-subscribe : () -> ()
+subscribe : () -> Subscription
 subscribe () =
+    Subscription
+
+
+{-| Remove a subscriber channel, stopping event delivery.
+
+Source: eventbus.go `Unsubscribe` method.
+
+-}
+unsubscribe : Subscription -> ()
+unsubscribe sub =
+    let
+        _ =
+            sub
+    in
     ()
 
 
@@ -185,6 +225,54 @@ waitForMessages () =
     Ok []
 
 
+{-| Returns True if there are user messages waiting in the queue.
+
+Used by blocking tools (send\_message, send\_verbal\_reply, draw)
+to short-circuit: if messages are already queued, skip quick\_replies
+and return immediately since the replies would be stale.
+
+Source: eventbus.go `HasQueuedMessages` method.
+
+-}
+hasQueuedMessages : () -> Bool
+hasQueuedMessages () =
+    False
+
+
+
+-- -- Voice mode tracking -----------------------------------------
+
+
+{-| Record whether the last consumed user messages contained voice input.
+
+Voice messages are identified by a microphone emoji prefix on the text.
+This state is checked by send\_message to reject calls when user is in
+voice mode (must use send\_verbal\_reply instead).
+
+Source: eventbus.go `SetLastVoice` method.
+
+-}
+setLastVoice : Bool -> ()
+setLastVoice voice =
+    let
+        _ =
+            voice
+    in
+    ()
+
+
+{-| Returns True if the last consumed user messages contained voice input.
+
+Used by send\_message tool to reject with VoiceModeError.
+
+Source: eventbus.go `LastVoice` method.
+
+-}
+lastVoice : () -> Bool
+lastVoice () =
+    False
+
+
 
 -- -- History and state --------------------------------------------
 
@@ -226,3 +314,78 @@ Source: eventbus.go `LastQuickReplies` method.
 lastQuickReplies : () -> QuickReplies
 lastQuickReplies () =
     []
+
+
+{-| Return a copy of the full event log and the pending ack ID (if any).
+
+Source: eventbus.go `History` method.
+
+-}
+history : () -> { events : List Event, pendingAckId : Maybe AckId }
+history () =
+    { events = [], pendingAckId = Nothing }
+
+
+{-| Clear the in-memory event log.
+
+Source: eventbus.go `ResetLog` method.
+
+-}
+resetLog : () -> ()
+resetLog () =
+    ()
+
+
+{-| Append a userMessage event to the log for reconnect replay WITHOUT
+assigning a sequence number or fanning out to subscribers.
+
+These log-only events have Seq == 0 and are not broadcast.
+
+Note: this method is defined in eventbus.go but is not currently called
+from main.go -- the WebSocket handler uses Publish instead. May be
+dead code or reserved for future use.
+
+Source: eventbus.go `LogUserMessage` method.
+
+-}
+logUserMessage : { text : String, files : List FileRef } -> ()
+logUserMessage msg =
+    let
+        _ =
+            msg.text
+    in
+    ()
+
+
+{-| Flush and close the JSONL log file.
+
+Source: eventbus.go `Close` method.
+
+-}
+close : () -> ()
+close () =
+    ()
+
+
+
+-- -- Message formatting -------------------------------------------
+
+
+{-| Format user messages into a single string for tool results.
+
+Joins multiple messages, strips voice emoji prefix, includes file
+attachment info (path, MIME type, size). Uses the "format-messages"
+Go template.
+
+Free function (not a method on EventBus), defined in eventbus.go.
+
+Source: eventbus.go `FormatMessages` function.
+
+-}
+formatMessages : List UserMessage -> String
+formatMessages msgs =
+    let
+        _ =
+            msgs
+    in
+    ""

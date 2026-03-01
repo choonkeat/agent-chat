@@ -40,7 +40,7 @@ type alias FileRef =
     , path : String -- absolute server path
     , url : String -- relative URL for browser (e.g., "/uploads/abc-photo.png")
     , size : Int -- bytes
-    , mimeType : String -- e.g., "image/png"; defaults to "application/octet-stream"
+    , contentType : Maybe String -- MIME type, e.g., "image/png". JSON wire name: "type" (omitempty)
     }
 
 
@@ -128,6 +128,8 @@ type Event
 {- "draw" -- canvas drawing instructions.
    Rendered as inline canvas bubble in chat history.
    May include quick_replies and ack_id.
+   Note: draw events do NOT carry text -- the text goes in a
+   separate AgentMessage event published immediately before the draw.
 -}
 
 
@@ -154,11 +156,14 @@ type alias UserMessageData =
 
 
 {-| Payload for DrawEvent.
+
+Note: does NOT include a text field. The caption text is published
+as a separate AgentMessage event before the draw (see tools.go draw handler).
+
 -}
 type alias DrawEventData =
     { seq : Seq
     , timestamp : Timestamp
-    , text : String
     , instructions : List Json
     , ackId : Maybe AckId
     , quickReplies : QuickReplies
