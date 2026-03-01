@@ -187,6 +187,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/config.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
 		fmt.Fprintf(w, "var THEME_COOKIE_NAME = %q;\n", themeCookieName)
+		fmt.Fprintf(w, "var SERVER_VERSION = %q;\n", version+" ("+commit+")")
 	})
 	mux.Handle("/", fileServer)
 

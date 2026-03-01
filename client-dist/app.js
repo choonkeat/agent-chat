@@ -1206,7 +1206,14 @@ function connect() {
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
         var label = hasConnectedBefore ? 'Reconnected' : 'Connected';
-        if (data.version) label += ' \u00b7 v' + data.version;
+        if (data.version) {
+          var pageVersion = typeof SERVER_VERSION !== 'undefined' ? SERVER_VERSION : '';
+          if (pageVersion && pageVersion !== data.version) {
+            label += ' \u00b7 server v' + data.version + ' \u00b7 page v' + pageVersion;
+          } else {
+            label += ' \u00b7 v' + data.version;
+          }
+        }
         addSystemBubble(label);
         hasConnectedBefore = true;
         // History is now streamed as individual events after connect — no replay needed.
