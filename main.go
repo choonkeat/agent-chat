@@ -360,6 +360,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Signal end of history replay so the client can finalize UI state.
+	conn.WriteJSON(map[string]any{"type": "historyEnd"})
+
 	// Track the highest seq we've sent so the subscriber loop can skip duplicates.
 	highSeq := cursor
 	if len(missed) > 0 {
