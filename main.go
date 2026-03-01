@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -199,12 +200,21 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/upload", handleUpload)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
-	mux.HandleFunc("/config.js", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript")
-		fmt.Fprintf(w, "var THEME_COOKIE_NAME = %q;\n", themeCookieName)
-		fmt.Fprintf(w, "var SERVER_VERSION = %q;\n", version+" ("+commit+")")
+	// Serve index.html with inlined config (replaces the old /config.js endpoint).
+	// This avoids relative-path resolution failures when the page is served
+	// behind a reverse proxy at a non-root path (e.g. /session/UUID).
+	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
+	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q;</script>",
+		themeCookieName, version+" ("+commit+")")
+	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, indexPage)
+			return
+		}
+		fileServer.ServeHTTP(w, r)
 	})
-	mux.Handle("/", fileServer)
 
 	port := 0
 	if s := os.Getenv("AGENT_CHAT_PORT"); s != "" {
