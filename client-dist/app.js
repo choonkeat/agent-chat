@@ -192,16 +192,16 @@ function renderMarkdown(text) {
   });
   // Horizontal rules (---, ***, ___ on their own line)
   html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
-  // Unordered lists (consecutive lines starting with - or * )
-  html = html.replace(/(^[-*] .+(?:\n[-*] .+)*)/gm, function(block) {
-    var items = block.split('\n').map(function(line) {
+  // Unordered lists (consecutive lines starting with - or * , allowing blank lines between items)
+  html = html.replace(/(^[-*] .+(?:\n\n?[-*] .+)*)/gm, function(block) {
+    var items = block.split(/\n\n?(?=[-*] )/).map(function(line) {
       return '<li>' + line.replace(/^[-*] /, '') + '</li>';
     }).join('');
     return '<ul>' + items + '</ul>';
   });
-  // Ordered lists (consecutive lines starting with 1. 2. etc.)
-  html = html.replace(/(^\d+\. .+(?:\n\d+\. .+)*)/gm, function(block) {
-    var items = block.split('\n').map(function(line) {
+  // Ordered lists (consecutive lines starting with 1. 2. etc., allowing blank lines between items)
+  html = html.replace(/(^\d+\. .+(?:\n\n?\d+\. .+)*)/gm, function(block) {
+    var items = block.split(/\n\n?(?=\d+\. )/).map(function(line) {
       return '<li>' + line.replace(/^\d+\. /, '') + '</li>';
     }).join('');
     return '<ol>' + items + '</ol>';
