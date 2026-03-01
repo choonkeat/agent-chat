@@ -21,6 +21,7 @@ const (
 		"Before taking any action\n" +
 		"- present a brief summary of your understanding of the intent and task\n" +
 		"- present a brief summary of your intended actions and why\n" +
+		"- ask only ONE question at a time; wait for the user's response before asking the next question\n" +
 		"- ask user some questions to verify user is lucid and understands the impact of the actions you're about to take (include a tricky question)\n" +
 		"- once you are confident user understands, ask user to explicitly confirm yes to proceed\n" +
 		"- send_verbal_progress before proceeding\n" +
