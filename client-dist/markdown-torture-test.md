@@ -31,15 +31,39 @@ Nested quotes:
 
 ## Lists
 
-Unordered:
+Unordered (tight):
 - First item with **bold**
 - Second item with `code`
 - Third item with a [link](https://example.com)
 
-Ordered:
+Ordered (tight):
 1. Step one
 2. Step two
 3. Step three with *emphasis*
+
+Unordered (loose — blank lines between items):
+
+- Alpha item
+
+- Beta item
+
+- Gamma item
+
+Ordered (loose):
+
+1. First loose
+
+2. Second loose
+
+3. Third loose
+
+Loose list with inline formatting:
+
+- **Bold item** with extra text
+
+- Item with `inline code` and *italic*
+
+- Item with a [link](https://example.com) mid-sentence
 
 ## Code Blocks
 
