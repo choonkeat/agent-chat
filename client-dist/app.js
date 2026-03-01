@@ -86,6 +86,7 @@ var DPR = window.devicePixelRatio || 1;
 
 function clearMessages() {
   messages.innerHTML = '';
+  messages.appendChild(quickReplies); // keep as last child for appendMessage
   lastBubbleTs = 0;
 }
 
@@ -380,6 +381,40 @@ function setQuickReplies(replies) {
   scrollToBottom(false);
 }
 
+// Freeze active quick-reply chips into the message log as inert elements.
+// chosenText is excluded (it becomes the user bubble). Idempotent — no-op if
+// there are no active chips.
+function freezeCurrentReplies(chosenText) {
+  var chips = quickReplies.querySelectorAll('.chip');
+  if (chips.length === 0) return;
+
+  var remaining = [];
+  for (var i = 0; i < chips.length; i++) {
+    var text = chips[i].dataset.message || chips[i].textContent;
+    if (text !== chosenText) {
+      remaining.push(text);
+    }
+  }
+  // Clear active quick replies so they won't be frozen again
+  quickReplies.innerHTML = '';
+
+  if (remaining.length === 0) return;
+  appendFrozenReplies(remaining);
+}
+
+// Render an array of reply texts as inert chip elements in the message flow.
+function appendFrozenReplies(replies) {
+  var div = document.createElement('div');
+  div.className = 'frozen-replies';
+  for (var i = 0; i < replies.length; i++) {
+    var span = document.createElement('span');
+    span.className = 'chip frozen';
+    span.textContent = replies[i];
+    div.appendChild(span);
+  }
+  appendMessage(div);
+}
+
 // --- File staging ---
 
 function addStagedFiles(fileList) {
@@ -568,6 +603,7 @@ function handleSend() {
   sendBtn.classList.add('sending');
   stagedFiles = [];
   renderStaging();
+  freezeCurrentReplies(text);
   showLoading(); // hides quick replies via mutual exclusivity
 
   if (window.parent !== window) {
@@ -621,6 +657,7 @@ quickReplies.addEventListener('click', function (e) {
   if (window.parent !== window) {
     pendingNotifyParent = true;
   }
+  freezeCurrentReplies(message);
   sendMessage(message);
   showLoading(); // hides quick replies via mutual exclusivity
 });
@@ -1130,6 +1167,8 @@ function replayHistory(history) {
   console.log('[' + ts() + '] Replaying ' + history.length + ' history events');
   clearMessages();
 
+  var pendingReplies = null; // quick_replies from the most recent agent/verbal/draw event
+
   for (var i = 0; i < history.length; i++) {
     var event = history[i];
     switch (event.type) {
@@ -1137,8 +1176,23 @@ function replayHistory(history) {
         if (event.text || (event.files && event.files.length > 0)) {
           addBubble(event.text, 'agent', event.files, null, event.ts);
         }
+        pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
       case 'userMessage':
+        // Freeze unchosen quick replies from the preceding agent message
+        if (pendingReplies) {
+          var chosenText = event.text || '';
+          var remaining = [];
+          for (var j = 0; j < pendingReplies.length; j++) {
+            if (pendingReplies[j] !== chosenText) {
+              remaining.push(pendingReplies[j]);
+            }
+          }
+          if (remaining.length > 0) {
+            appendFrozenReplies(remaining);
+          }
+          pendingReplies = null;
+        }
         if (event.text || (event.files && event.files.length > 0)) {
           var isVoiceMsg = event.text && event.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? event.text.replace('\ud83c\udfa4 ', '') : event.text;
@@ -1149,11 +1203,13 @@ function replayHistory(history) {
         if (event.instructions) {
           addCanvasBubble(event.instructions, true, null);
         }
+        pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
       case 'verbalReply':
         if (event.text || (event.files && event.files.length > 0)) {
           addBubble(event.text, 'agent', event.files, 'voice', event.ts);
         }
+        pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
     }
   }
@@ -1275,6 +1331,8 @@ function connect() {
 
       case 'userMessage':
         // Server broadcast of a user message — display the bubble now.
+        // Freeze any active quick replies (unchosen ones stay in log).
+        freezeCurrentReplies(data.text);
         // Reset scroll flag before addBubble so scrollToBottom succeeds.
         isUserScrolledUp = false;
         if (data.text || (data.files && data.files.length > 0)) {
@@ -1350,6 +1408,12 @@ document.getElementById('btn-download').addEventListener('click', function () {
       continue;
     }
 
+    // Frozen quick-reply chips
+    if (b.classList.contains('frozen-replies')) {
+      items.push('<div class="frozen-replies">' + b.innerHTML + '</div>');
+      continue;
+    }
+
     if (!b.classList.contains('bubble')) continue;
 
     if (b.classList.contains('canvas-bubble')) {
@@ -1390,6 +1454,8 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + '.file-thumb{max-width:300px;max-height:200px;border-radius:6px;cursor:pointer;margin-top:0.3rem;}'
     + '.file-attachment-link{color:#93c5fd;text-decoration:underline;display:inline-block;margin-top:0.3rem;}'
     + '.hl-k{color:#c792ea;}.hl-s{color:#c3e88d;}.hl-c{color:#6a737d;font-style:italic;}.hl-n{color:#f78c6c;}'
+    + '.frozen-replies{display:flex;flex-direction:row;justify-content:flex-end;gap:0.5rem;padding:0.2rem 0;flex-wrap:wrap;}'
+    + '.frozen-replies .chip{padding:0.35rem 0.9rem;font-size:0.8rem;font-weight:500;border:1px solid rgba(255,255,255,0.15);border-radius:16px;background:transparent;color:#999;cursor:default;}'
     + '</style></head><body><div class="chat">'
     + items.join('\n')
     + '</div></body></html>';

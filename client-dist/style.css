@@ -401,6 +401,22 @@ body {
   cursor: not-allowed;
 }
 
+/* --- Frozen (historical) quick-reply chips --- */
+
+.frozen-replies {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  flex-wrap: wrap;
+}
+
+.frozen-replies .chip {
+  cursor: default;
+  pointer-events: none;
+}
+
 /* --- Input bar --- */
 
 #input-bar {
