@@ -418,8 +418,8 @@ func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "push_message",
-		Description: "Push a message into the agent's chat queue, as if a user sent it from the browser.",
+		Name:        "send_chat_message",
+		Description: "Send a message into the agent's chat queue, as if a user sent it from the browser.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *PushMessageParams) (*mcp.CallToolResult, any, error) {
 		if params.Text == "" {
 			return &mcp.CallToolResult{
