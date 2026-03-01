@@ -1,3 +1,5 @@
 dist
 npm-platforms
 node_modules
+tdspec/elm-stuff
+tdspec/docs.json

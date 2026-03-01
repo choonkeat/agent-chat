@@ -16,6 +16,7 @@ The event bus is the central hub connecting MCP tools to browser clients:
     Browser  -> pushMessage -> message queue -> MCP tool reads
 
 Responsibilities:
+
   - Fan-out: publish events to all connected browser subscribers
   - Blocking ack: createAck/resolveAck for tools that wait for user response
   - Event log: in-memory log for browser reconnect replay
@@ -67,7 +68,7 @@ type AckResult
 {-| Publish an event to all subscribers and append to event log.
 
 Sets timestamp to now if zero. Assigns next monotonic seq number.
-Tracks lastQuickReplies: set when event has quick_replies,
+Tracks lastQuickReplies: set when event has quick\_replies,
 cleared when event is userMessage.
 
 Source: eventbus.go `Publish` method.
@@ -129,7 +130,7 @@ subscribe () =
 {-| Poll until at least one subscriber is connected.
 Timeout: 30 seconds. Poll interval: 100ms.
 
-Used by blocking MCP tools (send_message, send_verbal_reply, draw)
+Used by blocking MCP tools (send\_message, send\_verbal\_reply, draw)
 to ensure at least one browser is watching before publishing.
 
 Source: eventbus.go `WaitForSubscriber` method.
@@ -162,7 +163,7 @@ pushMessage msg =
 {-| Non-blocking drain of all queued user messages.
 Returns empty list if queue is empty.
 
-Used by check_messages tool.
+Used by check\_messages tool.
 
 Source: eventbus.go `DrainMessages` method.
 
@@ -174,7 +175,7 @@ drainMessages () =
 
 {-| Block until at least one message is queued, then drain all.
 
-Used by send_message and send_verbal_reply tools.
+Used by send\_message and send\_verbal\_reply tools.
 
 Source: eventbus.go `WaitForMessages` method.
 
@@ -215,7 +216,7 @@ pendingAckId () =
     Nothing
 
 
-{-| Return the last quick_replies sent to browser, or empty.
+{-| Return the last quick\_replies sent to browser, or empty.
 Tracks whether the agent is waiting for input (has replies)
 or working (no replies). Sent in connected handshake.
 

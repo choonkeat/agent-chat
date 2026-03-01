@@ -17,6 +17,7 @@ Source of truth: eventbus.go (types), tools.go (params), main.go (protocol)
 @docs Seq, AckId, Timestamp, Version
 @docs EventType, Event
 @docs QuickReplies
+@docs Json
 
 -}
 
@@ -108,10 +109,13 @@ type EventType
          Also appended to event log for reconnect replay.
       -}
     | DrawEvent
-      {- "draw" -- canvas drawing instructions.
-         Rendered as inline canvas bubble in chat history.
-         May include quick_replies and ack_id.
-      -}
+
+
+
+{- "draw" -- canvas drawing instructions.
+   Rendered as inline canvas bubble in chat history.
+   May include quick_replies and ack_id.
+-}
 
 
 {-| A chat event published through the event bus.

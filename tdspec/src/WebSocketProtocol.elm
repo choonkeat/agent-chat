@@ -41,12 +41,15 @@ type ServerToClient
          Duplicates (seq <= highSeq) are skipped server-side.
       -}
     | MessageQueued
-      {- Sent only to the browser that submitted a message.
-         Confirms the message was queued in the event bus.
-         Browser uses this to notify parent frame (for check_messages).
 
-         Wire format: { "type": "messageQueued" }
-      -}
+
+
+{- Sent only to the browser that submitted a message.
+   Confirms the message was queued in the event bus.
+   Browser uses this to notify parent frame (for check_messages).
+
+   Wire format: { "type": "messageQueued" }
+-}
 
 
 {-| The connected handshake sent on WebSocket open.
@@ -85,18 +88,18 @@ type ClientToServer
          Wire: { "type": "message", "text": "...", "files": [...] }
       -}
     | AckReply { id : AckId, message : String }
-      {- User clicked a quick-reply button or typed into ack input.
-         Server resolves the pending ack (unblocking the MCP tool),
-         then publishes userMessage event with the reply text.
-
-         If message is empty, ack result is "ack".
-         If message is non-empty, ack result is "ack:{message}".
-
-         Wire: { "type": "ack", "id": "uuid", "message": "..." }
-      -}
 
 
 
+{- User clicked a quick-reply button or typed into ack input.
+   Server resolves the pending ack (unblocking the MCP tool),
+   then publishes userMessage event with the reply text.
+
+   If message is empty, ack result is "ack".
+   If message is non-empty, ack result is "ack:{message}".
+
+   Wire: { "type": "ack", "id": "uuid", "message": "..." }
+-}
 -- -- HTTP endpoints -----------------------------------------------
 
 
@@ -131,9 +134,12 @@ type HttpEndpoint
            var SERVER_VERSION = "0.1.6 (bcaedff)";
       -}
     | StaticAssets
-      {- GET /
-         Serves embedded client-dist/ files (index.html, app.js, style.css, etc.).
-      -}
+
+
+
+{- GET /
+   Serves embedded client-dist/ files (index.html, app.js, style.css, etc.).
+-}
 
 
 {-| All HTTP endpoints.

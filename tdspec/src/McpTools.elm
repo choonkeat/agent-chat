@@ -1,6 +1,5 @@
 module McpTools exposing
-    ( McpTool(..)
-    , McpResource(..)
+    ( McpTool(..), McpResource(..)
     , MessageParams, VerbalReplyParams, DrawParams, ProgressParams
     , ToolResult(..)
     , allTools, allResources
@@ -11,9 +10,9 @@ module McpTools exposing
 Source: tools.go (tool registration), resources.go (resource registration)
 
 The agent calls these tools over stdio MCP or StreamableHTTP.
-Blocking tools (send_message, send_verbal_reply, draw) wait for user
-interaction before returning. Non-blocking tools (send_progress,
-send_verbal_progress, check_messages) return immediately.
+Blocking tools (send\_message, send\_verbal\_reply, draw) wait for user
+interaction before returning. Non-blocking tools (send\_progress,
+send\_verbal\_progress, check\_messages) return immediately.
 
 Message flow:
 
@@ -68,13 +67,16 @@ type McpTool
          Browser speaks the text via text-to-speech.
       -}
     | CheckMessages
-      {- Non-blocking. Drain message queue, return any queued messages.
-         Returns "No new messages." if queue is empty.
-         Returns "User said: {formatted}" if messages exist.
-      -}
 
 
-{-| Parameters for send_message tool.
+
+{- Non-blocking. Drain message queue, return any queued messages.
+   Returns "No new messages." if queue is empty.
+   Returns "User said: {formatted}" if messages exist.
+-}
+
+
+{-| Parameters for send\_message tool.
 
 Source: tools.go `MessageParams` struct.
 
@@ -87,7 +89,7 @@ type alias MessageParams =
     }
 
 
-{-| Parameters for send_verbal_reply tool.
+{-| Parameters for send\_verbal\_reply tool.
 
 Source: tools.go `VerbalReplyParams` struct.
 Same shape as MessageParams.
@@ -114,7 +116,7 @@ type alias DrawParams =
     }
 
 
-{-| Parameters for send_progress and send_verbal_progress tools.
+{-| Parameters for send\_progress and send\_verbal\_progress tools.
 
 Source: tools.go `ProgressParams` and `VerbalProgressParams` structs.
 
@@ -172,9 +174,12 @@ type McpResource
          Layout rules, cognitive principles for diagrams.
       -}
     | WhiteboardQuickReference
-      {- whiteboard://quick-reference (quick-reference.md)
-         Condensed cheat sheet for drawing.
-      -}
+
+
+
+{- whiteboard://quick-reference (quick-reference.md)
+   Condensed cheat sheet for drawing.
+-}
 
 
 {-| All registered resources.

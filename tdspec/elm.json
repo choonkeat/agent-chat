@@ -3,7 +3,7 @@
     "name": "choonkeat/agent-chat",
     "summary": "Elm type-checked specification of the agent-chat bridge",
     "license": "MIT",
-    "version": "1.0.0",
+    "version": "0.1.6",
     "exposed-modules": [
         "Domain",
         "EventBus",
