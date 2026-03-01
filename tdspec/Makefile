@@ -1,4 +1,4 @@
-.PHONY: build preview clean docs audit check
+.PHONY: build preview clean docs audit check www-and-serve
 
 EDP_STATIC := $(shell npm root -g 2>/dev/null || echo /home/app/.swe-swe/lib/node_modules)/elm-doc-preview/static
 VERSION := $(shell node -e 'console.log(JSON.parse(require("fs").readFileSync("$(CURDIR)/../package.json","utf8")).version)')
@@ -36,6 +36,11 @@ docs: build
 	cp docs.json README.md elm.json $(PKG)/$(VERSION)/
 	echo '{"$(VERSION)":$(shell date +%s)}' > $(PKG)/releases.json
 	echo '[]' > $(WWW)/search.json
+
+# Generate static docs and serve them
+www-and-serve: docs
+	@echo "Serving tdspec docs at http://localhost:$(PORT)"
+	cd $(WWW) && python3 -m http.server $(PORT) --bind 0.0.0.0
 
 clean:
 	rm -rf elm-stuff
