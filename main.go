@@ -179,8 +179,23 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 		Stateless: true,
 	})
 
+	// Orchestrator MCP server — separate from the agent-facing MCP server.
+	// Exposes tools for external callers (e.g. swe-swe server) to push messages
+	// and read chat history without interfering with the agent's message queue.
+	orchServer := mcp.NewServer(&mcp.Implementation{
+		Name:    "agent-chat-orchestrator",
+		Version: version,
+	}, nil)
+	registerOrchestratorTools(orchServer, bus)
+	orchHandler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
+		return orchServer
+	}, &mcp.StreamableHTTPOptions{
+		Stateless: true,
+	})
+
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/mcp/orchestrator", orchHandler)
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/upload", handleUpload)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))

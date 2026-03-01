@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -405,6 +406,49 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: result},
 			},
+		}, nil, nil
+	})
+}
+
+// registerOrchestratorTools registers tools on a separate MCP server for
+// external orchestrators (e.g. swe-swe server) to interact with the chat.
+func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
+	type PushMessageParams struct {
+		Text string `json:"text" jsonschema:"Message text to inject into the chat"`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "push_message",
+		Description: "Push a message into the agent's chat queue, as if a user sent it from the browser.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *PushMessageParams) (*mcp.CallToolResult, any, error) {
+		if params.Text == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: text is required"}},
+				IsError: true,
+			}, nil, nil
+		}
+		bus.PushMessage(params.Text, nil)
+		bus.Publish(Event{Type: "userMessage", Text: params.Text})
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "message pushed"}},
+		}, nil, nil
+	})
+
+	type GetHistoryParams struct {
+		Cursor int64 `json:"cursor,omitempty" jsonschema:"Return events with seq > cursor. 0 returns all."`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_chat_history",
+		Description: "Get chat event history. Returns all events since the given cursor (sequence number).",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *GetHistoryParams) (*mcp.CallToolResult, any, error) {
+		events := bus.EventsSince(params.Cursor)
+		data, err := json.Marshal(events)
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal events: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
 		}, nil, nil
 	})
 }
