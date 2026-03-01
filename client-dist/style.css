@@ -119,6 +119,7 @@ body {
   background: var(--bg-secondary);
   color: var(--text-primary);
   border-bottom-left-radius: 3px;
+  position: relative;
 }
 
 .bubble.user {
@@ -160,20 +161,43 @@ body {
   opacity: 0.6;
 }
 
-.play-btn {
-  align-self: flex-start;
-  background: #7c3aed;
-  color: #fff;
-  border: none;
-  border-radius: 1rem;
-  padding: 0.5rem 1rem;
-  font-size: 0.9rem;
+.bubble-tts-btn {
+  position: absolute;
+  right: -32px;
+  bottom: 4px;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
-  margin: 0.3rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.4;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
 }
-.play-btn:disabled {
-  opacity: 0.6;
-  cursor: default;
+.bubble-tts-btn:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+.bubble-tts-btn.playing {
+  opacity: 1;
+  color: #7c3aed;
+  border-color: #7c3aed;
+  animation: ttsPulse 1s ease-in-out infinite;
+}
+@keyframes ttsPulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+.bubble-tts-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
 .bubble code {

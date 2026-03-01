@@ -263,6 +263,24 @@ function renderFileAttachments(files) {
   return container;
 }
 
+function createTtsButton(bubble) {
+  var btn = document.createElement('button');
+  btn.className = 'bubble-tts-btn';
+  btn.title = 'Speak aloud';
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    if (btn.classList.contains('playing')) return;
+    btn.classList.add('playing');
+    // This speak is inside a user gesture — unlocks iOS TTS
+    speakText(bubble.innerText, function() {
+      btn.classList.remove('playing');
+      ttsUnlocked = true;
+    });
+  });
+  return btn;
+}
+
 var lastBubbleTs = 0;
 
 function formatElapsed(ms) {
@@ -295,6 +313,10 @@ function addBubble(text, role, files, extraClass, timestamp) {
   var attachments = renderFileAttachments(files);
   if (attachments) {
     div.appendChild(attachments);
+  }
+  // Add TTS play button to agent bubbles
+  if (role === 'agent') {
+    div.appendChild(createTtsButton(div));
   }
   appendMessage(div);
   scrollToBottom(false);
@@ -836,24 +858,28 @@ function addSystemBubble(text) {
   addBubble('[system] ' + text, 'system');
 }
 
-function addPlayButton(text, onDone) {
-  var btn = document.createElement('button');
-  btn.className = 'play-btn';
-  btn.textContent = '\u25B6 Tap to listen';
-  btn.addEventListener('click', function() {
-    btn.disabled = true;
-    btn.textContent = '\u25B6 Playing...';
-    // This speak() is inside a user gesture — unlocks iOS TTS
-    speakText(text, function() {
-      btn.textContent = '\u25B6 Tap to replay';
-      btn.disabled = false;
-      // Mark TTS as unlocked now that we've spoken from a gesture
-      ttsUnlocked = true;
+function pulseLastTtsButton(onDone) {
+  // Find the last agent bubble's TTS button and pulse it to attract attention
+  var bubbles = messages.querySelectorAll('.bubble.agent');
+  if (bubbles.length === 0) { if (onDone) onDone(); return; }
+  var last = bubbles[bubbles.length - 1];
+  var btn = last.querySelector('.bubble-tts-btn');
+  if (!btn) { if (onDone) onDone(); return; }
+  // Temporarily boost opacity to draw attention
+  btn.style.opacity = '1';
+  btn.style.color = '#7c3aed';
+  setTimeout(function() {
+    btn.style.opacity = '';
+    btn.style.color = '';
+  }, 2000);
+  // Attach one-time done callback when user taps it
+  if (onDone) {
+    var wrapper = function() {
       if (onDone) { onDone(); onDone = null; }
-    });
-  });
-  appendMessage(btn);
-  scrollToBottom(false);
+      btn.removeEventListener('click', wrapper);
+    };
+    btn.addEventListener('click', wrapper);
+  }
 }
 
 function setupSpeechRecognition() {
@@ -1149,8 +1175,8 @@ function speakVerbalReply(text, quickReplies) {
     speakText(text, onDone);
   } else {
     // TTS warmup did not succeed (likely iframe restriction on iOS).
-    // Show a "tap to play" button so user gesture unlocks TTS.
-    addPlayButton(text, onDone);
+    // Pulse the bubble's play button so user gesture unlocks TTS.
+    pulseLastTtsButton(onDone);
   }
 }
 
@@ -1448,7 +1474,7 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:2rem;display:flex;justify-content:center;}'
     + '.chat{max-width:800px;width:100%;display:flex;flex-direction:column;gap:0.4rem;}'
     + '.bubble{max-width:80%;padding:0.5rem 0.75rem;border-radius:12px;font-size:0.9rem;line-height:1.45;word-wrap:break-word;}'
-    + '.bubble.agent{align-self:flex-start;background:#16213e;color:#e0e0e0;border-bottom-left-radius:3px;}'
+    + '.bubble.agent{align-self:flex-start;background:#16213e;color:#e0e0e0;border-bottom-left-radius:3px;position:relative;}'
     + '.bubble.user{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px;}'
     + '.bubble.user.voice{background:#7c3aed;}'
     + '.bubble.agent.voice{background:#1e293b;border-left:3px solid #7c3aed;}'
@@ -1472,9 +1498,35 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + '.hl-k{color:#c792ea;}.hl-s{color:#c3e88d;}.hl-c{color:#6a737d;font-style:italic;}.hl-n{color:#f78c6c;}'
     + '.frozen-replies{display:flex;flex-direction:row;justify-content:flex-end;gap:0.5rem;padding:0.2rem 0;flex-wrap:wrap;}'
     + '.frozen-replies .chip{padding:0.35rem 0.9rem;font-size:0.8rem;font-weight:500;border:1px solid rgba(255,255,255,0.15);border-radius:16px;background:transparent;color:#999;cursor:default;}'
+    + '.bubble-tts-btn{position:absolute;right:-32px;bottom:4px;width:24px;height:24px;border:1.5px solid #666;border-radius:50%;background:transparent;color:#666;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;opacity:0.4;transition:opacity 0.15s,color 0.15s,border-color 0.15s;}'
+    + '.bubble-tts-btn:hover{opacity:1;color:#999;border-color:#999;}'
+    + '.bubble-tts-btn.playing{opacity:1;color:#7c3aed;border-color:#7c3aed;animation:ttsPulse 1s ease-in-out infinite;}'
+    + '@keyframes ttsPulse{0%,100%{opacity:0.7;}50%{opacity:1;}}'
+    + '.bubble-tts-btn svg{width:14px;height:14px;fill:currentColor;}'
     + '</style></head><body><div class="chat">'
     + items.join('\n')
-    + '</div></body></html>';
+    + '</div><script>'
+    + '(function(){'
+    + 'function splitChunks(t){var c=[],s="",ss=t.split(/(?<=[.!?])\\s+/);for(var i=0;i<ss.length;i++){if((s+ss[i]).length>800&&s){c.push(s);s="";}s+=(s?" ":"")+ss[i];}if(s)c.push(s);return c.length?c:[t];}'
+    + 'function speak(text,done){'
+    + 'if(typeof speechSynthesis==="undefined"){done();return;}'
+    + 'speechSynthesis.cancel();'
+    + 'var chunks=splitChunks(text),d=false;'
+    + 'function fin(){if(d)return;d=true;done();}'
+    + 'function next(i){if(d||i>=chunks.length){fin();return;}var u=new SpeechSynthesisUtterance(chunks[i]);u.rate=1;u.onend=function(){next(i+1);};u.onerror=function(){fin();};speechSynthesis.speak(u);}'
+    + 'setTimeout(function(){next(0);},100);'
+    + '}'
+    + 'var btns=document.querySelectorAll(".bubble-tts-btn");'
+    + 'for(var i=0;i<btns.length;i++){(function(btn){'
+    + 'btn.addEventListener("click",function(e){'
+    + 'e.stopPropagation();'
+    + 'if(btn.classList.contains("playing"))return;'
+    + 'btn.classList.add("playing");'
+    + 'speak(btn.parentElement.innerText,function(){btn.classList.remove("playing");});'
+    + '});'
+    + '})(btns[i]);}'
+    + '})();'
+    + '</script></body></html>';
 
   var blob = new Blob([html], { type: 'text/html' });
   var url = URL.createObjectURL(blob);
