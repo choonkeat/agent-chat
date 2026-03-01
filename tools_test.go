@@ -9,7 +9,11 @@ import (
 const (
 	replyInstructionsBody = "Before taking any action, ensure mutual understanding:\n" +
 		"- You and the user must agree on what will be done and what effect it will have.\n" +
-		"- Confirm your understanding. Verify the user understands the impact.\n" +
+		"- Confirm YOUR understanding by summarizing what you'll do in concrete terms.\n" +
+		"- Check THE USER's understanding: don't just ask \"Proceed?\" — ask an open\n" +
+		"  question that requires them to explain what they expect will happen.\n" +
+		"  Like a senior checking a junior understands: \"What do you expect will\n" +
+		"  change when I do this?\" If their answer reveals a gap, catch it before acting.\n" +
 		"- Get explicit \"yes\" before proceeding.\n" +
 		"- send_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
@@ -20,7 +24,11 @@ const (
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
 		"Before taking any action, ensure mutual understanding:\n" +
 		"- You and the user must agree on what will be done and what effect it will have.\n" +
-		"- Confirm your understanding. Verify the user understands the impact.\n" +
+		"- Confirm YOUR understanding by summarizing what you'll do in concrete terms.\n" +
+		"- Check THE USER's understanding: don't just ask \"Proceed?\" — ask an open\n" +
+		"  question that requires them to explain what they expect will happen.\n" +
+		"  Like a senior checking a junior understands: \"What do you expect will\n" +
+		"  change when I do this?\" If their answer reveals a gap, catch it before acting.\n" +
 		"- Get explicit \"yes\" before proceeding.\n" +
 		"- send_verbal_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
