@@ -29,8 +29,8 @@ type fileData struct {
 	Size string
 }
 
-// voiceSuffixData is the data passed to the "voice-suffix" template.
-type voiceSuffixData struct {
+// replyInstructionsData is the data passed to the "reply-instructions" template.
+type replyInstructionsData struct {
 	IsVoice bool
 }
 

@@ -25,7 +25,7 @@ func isVoiceMessage(msgs []UserMessage) bool {
 
 // voiceSuffix returns the appropriate reply instruction suffix.
 func voiceSuffix(msgs []UserMessage) string {
-	return execTemplate("voice-suffix", voiceSuffixData{IsVoice: isVoiceMessage(msgs)})
+	return execTemplate("reply-instructions", replyInstructionsData{IsVoice: isVoiceMessage(msgs)})
 }
 
 // MessageParams are the parameters for the send_message tool.
