@@ -37,5 +37,5 @@ Before taking any action
 When doing tasks
 - call check_messages between steps.
 
-User cannot see TUI, {{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }} to wait for further instructions. {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} for non-blocking updates.
+User cannot see TUI — never ask questions there. {{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }} to wait for further instructions. {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} for non-blocking updates.
 {{- end}}

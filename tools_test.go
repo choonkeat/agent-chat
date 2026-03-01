@@ -15,7 +15,7 @@ const (
 		"- send_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
-		"\nUser cannot see TUI, send_message to wait for further instructions. send_progress for non-blocking updates."
+		"\nUser cannot see TUI — never ask questions there. send_message to wait for further instructions. send_progress for non-blocking updates."
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n\n" +
 		"Before taking any action\n" +
@@ -27,7 +27,7 @@ const (
 		"- send_verbal_progress before proceeding\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
-		"\nUser cannot see TUI, send_verbal_reply to wait for further instructions. send_verbal_progress for non-blocking updates."
+		"\nUser cannot see TUI — never ask questions there. send_verbal_reply to wait for further instructions. send_verbal_progress for non-blocking updates."
 )
 
 func TestFormatMessagesPlainText(t *testing.T) {
