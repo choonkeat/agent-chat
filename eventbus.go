@@ -236,38 +236,23 @@ func (eb *EventBus) HasQueuedMessages() bool {
 
 // FormatMessages joins user messages into a single string with file attachment info.
 func FormatMessages(msgs []UserMessage) string {
-	var texts []string
+	data := formatMessagesData{}
 	for _, m := range msgs {
-		if strings.HasPrefix(m.Text, "\U0001f3a4 ") {
-			texts = append(texts, "Decoded user's speech to text (may be inaccurate): "+strings.TrimPrefix(m.Text, "\U0001f3a4 ")+"\n\nIMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.")
-		} else {
-			texts = append(texts, m.Text)
+		isVoice := strings.HasPrefix(m.Text, "\U0001f3a4 ")
+		text := m.Text
+		if isVoice {
+			text = strings.TrimPrefix(text, "\U0001f3a4 ")
 		}
-	}
-	result := strings.Join(texts, "\n\n")
-
-	// Collect all files
-	var allFiles []FileRef
-	for _, m := range msgs {
-		allFiles = append(allFiles, m.Files...)
-	}
-	if len(allFiles) > 0 {
-		result += "\n\nAttached files:"
-		for _, f := range allFiles {
-			sizeStr := fmt.Sprintf("%dB", f.Size)
-			if f.Size >= 1024*1024 {
-				sizeStr = fmt.Sprintf("%.1fMB", float64(f.Size)/1024/1024)
-			} else if f.Size >= 1024 {
-				sizeStr = fmt.Sprintf("%.0fKB", float64(f.Size)/1024)
-			}
+		data.Messages = append(data.Messages, messageData{Text: text, IsVoice: isVoice})
+		for _, f := range m.Files {
 			mime := f.Type
 			if mime == "" {
 				mime = "application/octet-stream"
 			}
-			result += fmt.Sprintf("\n  %s (%s, %s)", f.Path, mime, sizeStr)
+			data.Files = append(data.Files, fileData{Path: f.Path, Type: mime, Size: formatSize(f.Size)})
 		}
 	}
-	return result
+	return execTemplate("format-messages", data)
 }
 
 // Subscribe returns a buffered channel that receives all published events.

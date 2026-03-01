@@ -1,0 +1,34 @@
+{{- define "format-messages" -}}
+
+{{- range $i, $m := .Messages -}}
+  {{- if $i -}} {{- "\n\n" -}} {{- end -}}
+
+  {{- if $m.IsVoice -}}
+Decoded user's speech to text (may be inaccurate): {{$m.Text}}
+
+IMPORTANT: This was transcribed from speech and may contain errors. Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.
+  {{- else -}}
+    {{- $m.Text -}}
+  {{- end -}}
+
+{{- end -}}
+
+{{- if .Files -}} {{- "\n\n" -}}
+Attached files:
+  {{- range .Files}}
+  {{.Path}} ({{.Type}}, {{.Size}})
+  {{- end -}}
+{{- end -}}
+
+{{- end}}
+
+
+{{- define "voice-suffix" -}}
+
+{{- if .IsVoice -}}
+(Ask any question or Reply to user by voice using send_verbal_reply — keep it conversational, plain text only, no markdown. For non-blocking updates use send_verbal_progress.)
+{{- else -}}
+(Ask any question or Reply to user in chat when done)
+{{- end}}
+IMPORTANT: Call check_messages between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_verbal_reply/send_message so they can see it in the chat UI.
+{{- end}}
