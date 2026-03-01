@@ -38,6 +38,7 @@ var activeWs = null;
 var isUserScrolledUp = false;
 var pendingAckId = null;
 var pendingNotifyParent = false;
+var pendingInterrupt = false;
 var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
@@ -871,9 +872,17 @@ function setupSpeechRecognition() {
       return;
     }
 
+    // Detect interrupt phrases (stop, wait, cancel, hold on, etc.)
+    var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+    var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
+    var isInterrupt = interruptPhrases.some(function(phrase) {
+      return lowerText === phrase || lowerText.indexOf(phrase + ' ') === 0;
+    });
+
     // Don't display bubble yet — wait for server broadcast.
     if (window.parent !== window) {
       pendingNotifyParent = true;
+      if (isInterrupt) pendingInterrupt = true;
     }
     sendMessage('\ud83c\udfa4 ' + text);
     showLoading();
@@ -1290,13 +1299,20 @@ function connect() {
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
         if (pendingNotifyParent && window.parent !== window) {
-          var msg = { type: 'agent-chat-first-user-message' };
-          // First message includes hint text for the parent to type into the terminal.
-          if (!firstMessageSent) {
-            msg.text = 'check_messages; i sent u a chat message';
-            firstMessageSent = true;
+          if (pendingInterrupt) {
+            // Voice interrupt: send Esc-Esc to abort current tool, then
+            // nudge agent to check_messages so it sees the stop request.
+            window.parent.postMessage({ type: 'agent-chat-interrupt' }, '*');
+            pendingInterrupt = false;
+          } else {
+            var msg = { type: 'agent-chat-first-user-message' };
+            // First message includes hint text for the parent to type into the terminal.
+            if (!firstMessageSent) {
+              msg.text = 'check_messages; i sent u a chat message';
+              firstMessageSent = true;
+            }
+            window.parent.postMessage(msg, '*');
           }
-          window.parent.postMessage(msg, '*');
           pendingNotifyParent = false;
         }
         break;
