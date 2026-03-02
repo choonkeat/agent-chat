@@ -278,6 +278,11 @@ body {
   color: #fff;
 }
 
+.bubble.user blockquote {
+  border-left-color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.85);
+}
+
 [data-theme="light"] .bubble a {
   color: #1d4ed8;
 }

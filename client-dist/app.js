@@ -629,13 +629,11 @@ function handleSend() {
   freezeCurrentReplies(text);
   showLoading(); // hides quick replies via mutual exclusivity
 
-  if (window.parent !== window) {
-    pendingNotifyParent = true;
-    // Detect interrupt phrases for typed messages (exact match only)
-    var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
-    if (interruptPhrases.indexOf(lowerText) !== -1) {
-      pendingInterrupt = true;
-    }
+  pendingNotifyParent = true;
+  // Detect interrupt phrases for typed messages (exact match only)
+  var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+  if (interruptPhrases.indexOf(lowerText) !== -1) {
+    pendingInterrupt = true;
   }
 
   if (filesToUpload.length > 0) {
@@ -948,10 +946,8 @@ function setupSpeechRecognition() {
     });
 
     // Don't display bubble yet — wait for server broadcast.
-    if (window.parent !== window) {
-      pendingNotifyParent = true;
-      if (isInterrupt) pendingInterrupt = true;
-    }
+    pendingNotifyParent = true;
+    if (isInterrupt) pendingInterrupt = true;
     sendMessage('\ud83c\udfa4 ' + text);
     showLoading();
   };
@@ -1398,21 +1394,29 @@ function connect() {
       case 'messageQueued':
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
-        if (pendingNotifyParent && window.parent !== window) {
-          if (pendingInterrupt) {
-            // Voice interrupt: send Esc-Esc to abort current tool, then
-            // nudge agent to check_messages so it sees the stop request.
-            window.parent.postMessage({ type: 'agent-chat-interrupt' }, '*');
-            pendingInterrupt = false;
-          } else {
-            var msg = { type: 'agent-chat-first-user-message' };
-            // First message includes hint text for the parent to type into the terminal.
-            if (!firstMessageSent) {
-              msg.text = 'check_messages; i sent u a chat message';
-              firstMessageSent = true;
+        if (pendingNotifyParent) {
+          var nudgeText = pendingInterrupt
+            ? 'check_messages; ask me how to proceed'
+            : 'check_messages; i sent u a chat message';
+          if (window.parent !== window) {
+            if (pendingInterrupt) {
+              // Voice interrupt: send Esc-Esc to abort current tool, then
+              // nudge agent to check_messages so it sees the stop request.
+              window.parent.postMessage({ type: 'agent-chat-interrupt', text: nudgeText }, '*');
+            } else {
+              var msg = { type: 'agent-chat-first-user-message' };
+              // First message includes hint text for the parent to type into the terminal.
+              if (!firstMessageSent) {
+                msg.text = nudgeText;
+                firstMessageSent = true;
+              }
+              window.parent.postMessage(msg, '*');
             }
-            window.parent.postMessage(msg, '*');
+          } else {
+            // No parent frame (real terminal) — show system bubble with instructions.
+            addBubble('Unable to get to the agent. Type this in your agent terminal: ' + nudgeText, 'system');
           }
+          pendingInterrupt = false;
           pendingNotifyParent = false;
         }
         break;
