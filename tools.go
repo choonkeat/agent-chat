@@ -392,12 +392,12 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_messages",
-		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input.",
+		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input. The user cannot see your TUI output — always use send_message or send_progress to communicate.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
 		msgs := bus.DrainMessages()
 		var result string
 		if len(msgs) == 0 {
-			result = "No new messages."
+			result = "No new messages. Remember: user cannot see TUI output — use send_message/send_progress to communicate."
 		} else {
 			bus.SetLastVoice(isVoiceMessage(msgs))
 			result = "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
