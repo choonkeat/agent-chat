@@ -359,7 +359,7 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: "Progress sent."},
+				&mcp.TextContent{Text: "Progress sent. If you've finished your task, use send_message to present final results and wait for the user's next request."},
 			},
 		}, nil, nil
 	})
@@ -383,7 +383,7 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: "Verbal progress sent."},
+				&mcp.TextContent{Text: "Verbal progress sent. If you've finished your task, use send_verbal_reply to present final results and wait for the user's next request."},
 			},
 		}, nil, nil
 	})
@@ -397,7 +397,7 @@ The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewe
 		msgs := bus.DrainMessages()
 		var result string
 		if len(msgs) == 0 {
-			result = "No new messages. Remember: user cannot see TUI output — use send_message/send_progress to communicate."
+			result = "No new messages. If you've finished your current task, call send_message to present results and wait for user input — do NOT go idle."
 		} else {
 			bus.SetLastVoice(isVoiceMessage(msgs))
 			result = "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
