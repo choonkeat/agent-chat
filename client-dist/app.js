@@ -853,7 +853,51 @@ function speakText(text, onDone) {
 }
 
 function addSystemBubble(text) {
+  var MAX_VISIBLE = 2;
+
+  // Add the new bubble first
   addBubble('[system] ' + text, 'system');
+
+  // Walk backwards to find the trailing run of system bubbles + counter
+  var children = messages.children;
+  var runBubbles = [];
+  var counterEl = null;
+  for (var i = children.length - 1; i >= 0; i--) {
+    var ch = children[i];
+    if (ch.id === 'loading-bubble' || ch === quickReplies) continue;
+    if (ch.classList.contains('system-collapse-counter')) {
+      counterEl = ch;
+      continue;
+    }
+    if (ch.classList.contains('bubble') && ch.classList.contains('system')) {
+      runBubbles.unshift(ch);
+    } else {
+      break;
+    }
+  }
+
+  if (runBubbles.length <= MAX_VISIBLE) return;
+
+  // Remove all but the last MAX_VISIBLE
+  var toRemove = runBubbles.length - MAX_VISIBLE;
+  for (var k = 0; k < toRemove; k++) {
+    runBubbles[k].parentNode.removeChild(runBubbles[k]);
+  }
+
+  // Create or update counter
+  var prevCount = counterEl ? parseInt(counterEl.dataset.count, 10) || 0 : 0;
+  var totalHidden = prevCount + toRemove;
+  if (!counterEl) {
+    counterEl = document.createElement('div');
+    counterEl.className = 'system-collapse-counter';
+  }
+  counterEl.dataset.count = totalHidden;
+  counterEl.textContent = '\u00b7\u00b7\u00b7 ' + totalHidden + ' more \u00b7\u00b7\u00b7';
+  // Ensure counter is placed right before the first visible system bubble
+  var firstVisible = runBubbles[toRemove];
+  if (counterEl.nextSibling !== firstVisible) {
+    messages.insertBefore(counterEl, firstVisible);
+  }
 }
 
 function pulseLastTtsButton(onDone) {
@@ -1483,6 +1527,7 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + '.bubble.user.voice{background:#7c3aed;}'
     + '.bubble.agent.voice{background:#1e293b;border-left:3px solid #7c3aed;}'
     + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;}'
+    + '.system-collapse-counter{align-self:center;color:#666;font-size:0.65rem;padding:0.15rem 0.5rem;opacity:0.5;}'
     + '.bubble.canvas-bubble{padding:0;background:#0d1525;overflow:hidden;max-width:90%;}'
     + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
     + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
