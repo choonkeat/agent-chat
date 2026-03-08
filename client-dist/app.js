@@ -760,10 +760,21 @@ function findTrigger(text, cursorPos) {
   return null;
 }
 
+function acShowStatus(text) {
+  acDropdown.innerHTML = '';
+  var div = document.createElement('div');
+  div.className = 'ac-status';
+  div.textContent = text;
+  acDropdown.appendChild(div);
+  acActiveIndex = -1;
+  acDropdown.classList.add('visible');
+  acVisible = true;
+}
+
 function acShow(options, query) {
   acDropdown.innerHTML = '';
   if (options.length === 0) {
-    acHide();
+    acShowStatus('No results');
     return;
   }
   for (var i = 0; i < options.length; i++) {
@@ -862,6 +873,8 @@ function acFetch(type, query) {
     return;
   }
 
+  acShowStatus('Loading\u2026');
+
   fetch('/autocomplete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -901,6 +914,7 @@ chatInput.addEventListener('input', function () {
     return;
   }
 
+  acShowStatus('Loading\u2026');
   clearTimeout(acDebounceTimer);
   acDebounceTimer = setTimeout(function () {
     acFetch(type, trigger.query);

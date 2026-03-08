@@ -763,6 +763,14 @@ body {
   color: #1d4ed8;
 }
 
+.ac-status {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-style: italic;
+  cursor: default;
+}
+
 [data-theme="light"] #autocomplete-dropdown {
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.1);
 }
