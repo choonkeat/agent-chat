@@ -12,6 +12,11 @@ const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://chrome:9223';
 /**
  * Start agent-chat in a temp directory with known fixture files.
  * Returns { url, proc, dir } — caller must kill proc when done.
+ *
+ * Fixture files:
+ *   docs/autocomplete-api.md
+ *   main.go
+ *   README.md
  */
 function startServer() {
   return new Promise((resolve, reject) => {
@@ -50,7 +55,6 @@ function startServer() {
 
 // Custom test that connects to remote Chrome via CDP
 const test = base.extend({
-  // Override the default page fixture to use CDP
   page: async ({}, use) => {
     const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
     const context = await browser.newContext();
@@ -59,6 +63,35 @@ const test = base.extend({
     await context.close();
   },
 });
+
+/**
+ * Helper: navigate to server, wait for connection, clear input.
+ *
+ * Manual run equivalent (using Playwright MCP tools):
+ *   1. browser_navigate to the server URL
+ *   2. Wait for textarea to be enabled (WebSocket connected)
+ *   3. browser_click on the textarea
+ */
+async function setupPage(page, url) {
+  await page.goto(url);
+  const textarea = page.locator('#chat-input');
+  await expect(textarea).toBeEnabled({ timeout: 5000 });
+  await textarea.click();
+  return textarea;
+}
+
+/**
+ * Helper: type a query and wait for autocomplete to settle.
+ *
+ * Manual run equivalent:
+ *   1. browser_run_code: pressSequentially(text, { delay: 100 })
+ *   2. Wait 1s for debounce + fetch + render
+ */
+async function typeAndWait(page, textarea, text) {
+  await textarea.fill('');
+  await textarea.pressSequentially(text, { delay: 50 });
+  await page.waitForTimeout(1000);
+}
 
 test.describe('Autocomplete @filepath', () => {
   /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
@@ -91,23 +124,11 @@ test.describe('Autocomplete @filepath', () => {
       }
     });
 
-    // Navigate to agent-chat
-    await page.goto(server.url);
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, 'read @doc');
 
-    // Wait for WebSocket connection (textarea becomes enabled)
-    const textarea = page.locator('#chat-input');
-    await expect(textarea).toBeEnabled({ timeout: 5000 });
-
-    // Type "read @doc" with realistic delays between keystrokes
-    await textarea.click();
-    await textarea.pressSequentially('read @doc', { delay: 50 });
-
-    // Wait for autocomplete dropdown to appear with actual results
     const dropdown = page.locator('#autocomplete-dropdown');
     await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
-
-    // Wait a moment for the fetch response to arrive
-    await page.waitForTimeout(1000);
 
     // Assert: dropdown should have selectable options (not just a status message)
     const optionEls = dropdown.locator('.ac-option');
@@ -129,5 +150,38 @@ test.describe('Autocomplete @filepath', () => {
       r => r && r.results && r.results.some(f => f.includes('docs'))
     );
     expect(hasDocResult).toBe(true);
+  });
+
+  test('typing @xyz shows "No results" with debug info', async ({ page }) => {
+    const autocompleteResponses = [];
+    page.on('response', async (res) => {
+      if (res.url().includes('/autocomplete')) {
+        try { autocompleteResponses.push(await res.json()); } catch {}
+      }
+    });
+
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, '@xyz');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Assert: no selectable options
+    const optionEls = dropdown.locator('.ac-option');
+    expect(await optionEls.count()).toBe(0);
+
+    // Assert: status message is visible (either "No results" or debug info)
+    const statusEl = dropdown.locator('.ac-status');
+    expect(await statusEl.count()).toBe(1);
+    const statusText = await statusEl.textContent();
+    // Should contain the query and path info from the server
+    expect(statusText).toContain('xyz');
+
+    // Assert response: server returned empty results with info
+    const noResultResponse = autocompleteResponses.find(
+      r => r && r.results && r.results.length === 0 && r.info
+    );
+    expect(noResultResponse).toBeDefined();
+    expect(noResultResponse.info).toContain('xyz');
   });
 });
