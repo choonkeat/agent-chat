@@ -728,11 +728,228 @@ function autoGrow() {
 
 chatInput.addEventListener('input', autoGrow);
 
+// --- Autocomplete ---
+
+var acDropdown = document.getElementById('autocomplete-dropdown');
+var acTriggers = (typeof AUTOCOMPLETE_TRIGGERS !== 'undefined') ? AUTOCOMPLETE_TRIGGERS : {};
+var acDebounceTimer = null;
+var acActiveIndex = -1;   // currently highlighted option in dropdown
+var acTriggerPos = -1;    // position of the trigger character in the textarea
+var acTriggerChar = '';    // the trigger character that activated autocomplete
+var acVisible = false;
+// Cache: { type, query, results } — if new query starts with cached query,
+// filter client-side instead of re-fetching.
+var acCache = null;
+
+// Find the nearest trigger character before the cursor, only if it's at position 0
+// or preceded by whitespace.
+function findTrigger(text, cursorPos) {
+  for (var i = cursorPos - 1; i >= 0; i--) {
+    var ch = text[i];
+    if (ch === ' ' || ch === '\n' || ch === '\t') {
+      return null; // hit whitespace before finding trigger
+    }
+    if (acTriggers[ch] !== undefined) {
+      // Valid only at start of input or after whitespace
+      if (i === 0 || /\s/.test(text[i - 1])) {
+        return { char: ch, pos: i, query: text.substring(i + 1, cursorPos) };
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+function acShow(options, query) {
+  acDropdown.innerHTML = '';
+  if (options.length === 0) {
+    acHide();
+    return;
+  }
+  for (var i = 0; i < options.length; i++) {
+    var div = document.createElement('div');
+    div.className = 'ac-option';
+    div.dataset.index = i;
+    div.dataset.value = options[i];
+    div.innerHTML = acHighlight(options[i], query);
+    acDropdown.appendChild(div);
+  }
+  acActiveIndex = 0;
+  acUpdateActive();
+  acDropdown.classList.add('visible');
+  acVisible = true;
+}
+
+function acHide() {
+  acDropdown.classList.remove('visible');
+  acDropdown.innerHTML = '';
+  acVisible = false;
+  acActiveIndex = -1;
+  acTriggerPos = -1;
+  acTriggerChar = '';
+  acCache = null;
+}
+
+function acUpdateActive() {
+  var items = acDropdown.querySelectorAll('.ac-option');
+  for (var i = 0; i < items.length; i++) {
+    items[i].classList.toggle('active', i === acActiveIndex);
+  }
+  // Scroll active item into view
+  if (items[acActiveIndex]) {
+    items[acActiveIndex].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function acSelect(value) {
+  // Replace from trigger position through current cursor with trigger + chosen value
+  var before = chatInput.value.substring(0, acTriggerPos);
+  var after = chatInput.value.substring(chatInput.selectionStart);
+  chatInput.value = before + acTriggerChar + value + after;
+  var newPos = before.length + acTriggerChar.length + value.length;
+  chatInput.setSelectionRange(newPos, newPos);
+  acHide();
+  autoGrow();
+  chatInput.focus();
+}
+
+// Fuzzy highlight: highlight characters from query that appear in option, preferring
+// closest-together matches. Simple greedy left-to-right match.
+function acHighlight(option, query) {
+  if (!query) return escapeHTML(option);
+  var result = '';
+  var qi = 0;
+  var lowerOption = option.toLowerCase();
+  var lowerQuery = query.toLowerCase();
+  for (var i = 0; i < option.length; i++) {
+    if (qi < lowerQuery.length && lowerOption[i] === lowerQuery[qi]) {
+      result += '<span class="ac-highlight">' + escapeHTML(option[i]) + '</span>';
+      qi++;
+    } else {
+      result += escapeHTML(option[i]);
+    }
+  }
+  return result;
+}
+
+function escapeHTML(s) {
+  var div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+// Check if option fuzzy-matches query (all query chars appear in order).
+function acFuzzyMatch(option, query) {
+  if (!query) return true;
+  var qi = 0;
+  var lo = option.toLowerCase();
+  var lq = query.toLowerCase();
+  for (var i = 0; i < lo.length && qi < lq.length; i++) {
+    if (lo[i] === lq[qi]) qi++;
+  }
+  return qi === lq.length;
+}
+
+function acFetch(type, query) {
+  // Check cache: if query extends the cached query, filter client-side.
+  if (acCache && acCache.type === type && query.indexOf(acCache.query) === 0) {
+    var filtered = acCache.results.filter(function(opt) {
+      return acFuzzyMatch(opt, query);
+    });
+    if (acTriggerPos >= 0) {
+      acShow(filtered, query);
+    }
+    return;
+  }
+
+  fetch('/autocomplete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: type, query: query })
+  }).then(function(r) { return r.json(); })
+    .then(function(options) {
+      if (!Array.isArray(options)) options = [];
+      // Cache the full result set for client-side filtering.
+      acCache = { type: type, query: query, results: options };
+      // Only show if we're still in the same trigger context
+      if (acVisible || acTriggerPos >= 0) {
+        acShow(options, query);
+      }
+    })
+    .catch(function() { acHide(); });
+}
+
+chatInput.addEventListener('input', function () {
+  if (Object.keys(acTriggers).length === 0) return;
+
+  var cursorPos = chatInput.selectionStart;
+  var text = chatInput.value;
+  var trigger = findTrigger(text, cursorPos);
+
+  if (!trigger) {
+    acHide();
+    return;
+  }
+
+  acTriggerPos = trigger.pos;
+  acTriggerChar = trigger.char;
+
+  // No debounce needed for cache hits (client-side filtering is instant).
+  var type = acTriggers[trigger.char];
+  if (acCache && acCache.type === type && trigger.query.indexOf(acCache.query) === 0) {
+    acFetch(type, trigger.query);
+    return;
+  }
+
+  clearTimeout(acDebounceTimer);
+  acDebounceTimer = setTimeout(function () {
+    acFetch(type, trigger.query);
+  }, 200);
+});
+
+// Click on dropdown option
+acDropdown.addEventListener('mousedown', function (e) {
+  e.preventDefault(); // prevent blur
+  var option = e.target.closest('.ac-option');
+  if (option) {
+    acSelect(option.dataset.value);
+  }
+});
+
 // Desktop: Enter sends, Shift+Enter inserts newline
 // Mobile/touch: Enter inserts newline, send button only
 var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 768);
 
 chatInput.addEventListener('keydown', function (e) {
+  // Autocomplete keyboard navigation
+  if (acVisible) {
+    var items = acDropdown.querySelectorAll('.ac-option');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      acActiveIndex = (acActiveIndex + 1) % items.length;
+      acUpdateActive();
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      acActiveIndex = (acActiveIndex - 1 + items.length) % items.length;
+      acUpdateActive();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      if (items[acActiveIndex]) {
+        acSelect(items[acActiveIndex].dataset.value);
+      }
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      acHide();
+      return;
+    }
+  }
+
   if (e.key !== 'Enter') return;
   if (isMobile) return; // on mobile, Enter always inserts newline (default behavior)
   if (e.shiftKey || e.altKey) return; // modifier+Enter inserts newline on desktop

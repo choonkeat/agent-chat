@@ -42,6 +42,12 @@ var themeCookieName string
 // uploadDir is the directory for uploaded files.
 var uploadDir string
 
+// autocompleteURL is the external HTTP endpoint to proxy autocomplete requests to.
+var autocompleteURL string
+
+// autocompleteTriggers maps trigger characters to type names (e.g. "/=slash-command,@=filepath").
+var autocompleteTriggers string
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -87,6 +93,8 @@ func main() {
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
 	flag.StringVar(&uploadDir, "upload-dir", "", "directory for uploaded files (default: temp dir)")
+	flag.StringVar(&autocompleteURL, "autocomplete-url", "", "external HTTP endpoint for autocomplete suggestions")
+	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to types (e.g. '/=slash-command,@=filepath')")
 	flag.Parse()
 
 	if *showVersion {
@@ -199,13 +207,15 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.Handle("/mcp/orchestrator", orchHandler)
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/upload", handleUpload)
+	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
 	// This avoids relative-path resolution failures when the page is served
 	// behind a reverse proxy at a non-root path (e.g. /session/UUID).
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
-	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q;</script>",
-		themeCookieName, version+" ("+commit+")")
+	triggerJSON := parseTriggerFlags(autocompleteTriggers)
+	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s;</script>",
+		themeCookieName, version+" ("+commit+")", triggerJSON)
 	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
@@ -451,4 +461,52 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// parseTriggerFlags converts "/=slash-command,@=filepath" into JSON like {"/":" slash-command","@":"filepath"}.
+// Returns "{}" if the input is empty.
+func parseTriggerFlags(s string) string {
+	if s == "" {
+		return "{}"
+	}
+	m := make(map[string]string)
+	for _, part := range strings.Split(s, ",") {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) == 2 {
+			m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		}
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// handleAutocomplete proxies autocomplete requests to the configured external URL.
+func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if autocompleteURL == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
+	}
+
+	// Read and forward the request body as-is.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := http.Post(autocompleteURL, "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, io.LimitReader(resp.Body, 64*1024))
 }

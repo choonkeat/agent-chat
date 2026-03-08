@@ -570,11 +570,12 @@ body {
 #input-container {
   flex: 1;
   min-width: 0;
+  position: relative;
   border: 1px solid var(--border-primary);
   border-radius: 18px;
   background: var(--bg-secondary);
   transition: border-color 0.2s;
-  overflow: hidden;
+  overflow: visible;
 }
 
 #input-container:focus-within {
@@ -716,6 +717,54 @@ body {
 
 .file-chip.upload-failed .file-name {
   color: #ef4444;
+}
+
+/* --- Autocomplete dropdown --- */
+
+#autocomplete-dropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  margin-bottom: 4px;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 20;
+}
+
+#autocomplete-dropdown.visible {
+  display: block;
+}
+
+.ac-option {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.ac-option:hover,
+.ac-option.active {
+  background: var(--bg-elevated);
+}
+
+.ac-option .ac-highlight {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+[data-theme="light"] .ac-option .ac-highlight {
+  color: #1d4ed8;
+}
+
+[data-theme="light"] #autocomplete-dropdown {
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.1);
 }
 
 #btn-send {

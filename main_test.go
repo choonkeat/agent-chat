@@ -346,3 +346,106 @@ func TestUploadMethodNotAllowed(t *testing.T) {
 		t.Fatalf("expected 405, got %d", rr.Code)
 	}
 }
+
+func TestParseTriggerFlags(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", "{}"},
+		{"/=slash-command", `{"/":"slash-command"}`},
+		{"/=slash-command,@=filepath", ``}, // order may vary, check below
+	}
+
+	// Test empty
+	if got := parseTriggerFlags(tests[0].input); got != tests[0].want {
+		t.Errorf("parseTriggerFlags(%q) = %s, want %s", tests[0].input, got, tests[0].want)
+	}
+
+	// Test single trigger
+	if got := parseTriggerFlags(tests[1].input); got != tests[1].want {
+		t.Errorf("parseTriggerFlags(%q) = %s, want %s", tests[1].input, got, tests[1].want)
+	}
+
+	// Test multiple triggers — parse JSON to compare (order-independent)
+	got := parseTriggerFlags("/=slash-command,@=filepath")
+	var m map[string]string
+	if err := json.Unmarshal([]byte(got), &m); err != nil {
+		t.Fatalf("parseTriggerFlags returned invalid JSON: %s", got)
+	}
+	if m["/"] != "slash-command" || m["@"] != "filepath" {
+		t.Errorf("parseTriggerFlags returned unexpected map: %v", m)
+	}
+}
+
+func TestAutocompleteNoURL(t *testing.T) {
+	origURL := autocompleteURL
+	autocompleteURL = ""
+	t.Cleanup(func() { autocompleteURL = origURL })
+
+	body := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", body)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if got := rr.Body.String(); got != "[]" {
+		t.Errorf("expected empty array, got %s", got)
+	}
+}
+
+func TestAutocompleteMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/autocomplete", nil)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
+	}
+}
+
+func TestAutocompleteProxy(t *testing.T) {
+	// Mock upstream server
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Type  string `json:"type"`
+			Query string `json:"query"`
+		}
+		json.Unmarshal(body, &req)
+
+		var results []string
+		if req.Type == "slash-command" && req.Query == "bu" {
+			results = []string{"busy", "been up"}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+	}))
+	defer upstream.Close()
+
+	origURL := autocompleteURL
+	autocompleteURL = upstream.URL
+	t.Cleanup(func() { autocompleteURL = origURL })
+
+	reqBody := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var results []string
+	if err := json.Unmarshal(rr.Body.Bytes(), &results); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(results) != 2 || results[0] != "busy" || results[1] != "been up" {
+		t.Errorf("unexpected results: %v", results)
+	}
+}
