@@ -582,11 +582,13 @@ func builtinFilepathComplete(root, query string) []string {
 		if err != nil {
 			return nil
 		}
+		// Skip the root entry itself (before the hidden-dir check,
+		// because "." has a dot prefix but is not a hidden directory).
+		if path == root {
+			return nil
+		}
 		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
 			return filepath.SkipDir
-		}
-		if path == "." {
-			return nil
 		}
 		if fuzzyMatchPath(path, query) {
 			results = append(results, path)

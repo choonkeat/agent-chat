@@ -863,7 +863,10 @@ function acFuzzyMatch(option, query) {
 
 function acFetch(type, query) {
   // Check cache: if query extends the cached query, filter client-side.
-  if (acCache && acCache.type === type && query.indexOf(acCache.query) === 0) {
+  // Skip cache if the cached results were empty — a longer query might
+  // match files that weren't returned for the shorter query (e.g. the
+  // server caps results at 50).
+  if (acCache && acCache.type === type && acCache.results.length > 0 && query.indexOf(acCache.query) === 0) {
     var filtered = acCache.results.filter(function(opt) {
       return acFuzzyMatch(opt, query);
     });
@@ -915,7 +918,7 @@ chatInput.addEventListener('input', function () {
 
   // No debounce needed for cache hits (client-side filtering is instant).
   var type = acTriggers[trigger.char];
-  if (acCache && acCache.type === type && trigger.query.indexOf(acCache.query) === 0) {
+  if (acCache && acCache.type === type && acCache.results.length > 0 && trigger.query.indexOf(acCache.query) === 0) {
     acFetch(type, trigger.query);
     return;
   }
