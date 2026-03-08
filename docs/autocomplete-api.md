@@ -89,16 +89,29 @@ Body size limit: **4 096 bytes**.
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-["build", "bump-version", "busy"]
+{
+  "results": ["build", "bump-version", "busy"],
+  "info": ""
+}
 ```
 
-The response is a JSON array of strings — the completion candidates.
+| Field | Type | Description |
+|-------|------|-------------|
+| `results` | string[] | Completion candidates |
+| `info` | string | Optional message shown when results are empty (e.g. debug context) |
+
+When the built-in filepath handler returns no results, `info` includes
+the working directory and query to help diagnose the issue:
+
+```json
+{"results":[], "info":"No files matching \"xyz\" in /path/to/cwd"}
+```
 
 #### Status codes
 
 | Code | Meaning |
 |------|---------|
-| 200 | Success (body is a JSON string array) |
+| 200 | Success (body is a JSON object with `results` array) |
 | 405 | Method not allowed (only POST is accepted) |
 | 400 | Request body could not be read or parsed |
 | 502 | Upstream provider returned an error or is unreachable |
@@ -120,7 +133,9 @@ Content-Type: application/json
 
 The provider must return:
 
-- **Status 200** with a JSON body that is an array of strings.
+- **Status 200** with a JSON body that is an array of strings (e.g. `["a","b"]`).
+  The proxy wraps the array into the structured `{results, info}` format
+  before forwarding to the client.
 - Non-200 status codes cause agent-chat to return **502** to the client.
 - Malformed JSON responses are treated as an empty array.
 
