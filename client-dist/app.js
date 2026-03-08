@@ -40,7 +40,7 @@ var pendingAckId = null;
 var pendingNotifyParent = false;
 var pendingInterrupt = false;
 var firstMessageSent = false;
-var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null}]
+var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null, ref: FileRef|null, uploading: bool, uploadFailed: bool, abortController: AbortController|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
 
@@ -444,13 +444,89 @@ function addStagedFiles(fileList) {
   for (var i = 0; i < fileList.length; i++) {
     var file = fileList[i];
     var isImage = file.type && file.type.indexOf('image/') === 0;
-    stagedFiles.push({
+    var entry = {
       file: file,
       name: file.name,
-      previewUrl: isImage ? URL.createObjectURL(file) : null
-    });
+      previewUrl: isImage ? URL.createObjectURL(file) : null,
+      ref: null,
+      uploading: true,
+      uploadFailed: false,
+      abortController: null
+    };
+    stagedFiles.push(entry);
+    startUpload(entry);
   }
   renderStaging();
+  updateSendButton();
+}
+
+function startUpload(entry, isRetry) {
+  var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  entry.abortController = controller;
+  entry.uploading = true;
+  entry.uploadFailed = false;
+  renderStaging();
+  updateSendButton();
+
+  var formData = new FormData();
+  formData.append('files', entry.file);
+  var opts = { method: 'POST', body: formData };
+  if (controller) opts.signal = controller.signal;
+
+  fetch('/upload', opts)
+    .then(function(resp) {
+      if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
+      return resp.json();
+    })
+    .then(function(refs) {
+      entry.ref = refs[0];
+      entry.uploading = false;
+      entry.abortController = null;
+      renderStaging();
+      updateSendButton();
+    })
+    .catch(function(err) {
+      entry.abortController = null;
+      if (err.name === 'AbortError') return; // user removed chip
+      if (!isRetry) {
+        // Auto-retry once after 1s
+        setTimeout(function() {
+          if (stagedFiles.indexOf(entry) !== -1) {
+            startUpload(entry, true);
+          }
+        }, 1000);
+      } else {
+        entry.uploading = false;
+        entry.uploadFailed = true;
+        console.error('Upload failed after retry:', err);
+        renderStaging();
+        updateSendButton();
+      }
+    });
+}
+
+function hasUploadsPending() {
+  for (var i = 0; i < stagedFiles.length; i++) {
+    if (stagedFiles[i].uploading || stagedFiles[i].uploadFailed) return true;
+  }
+  return false;
+}
+
+function updateSendButton() {
+  // Only act within the "enabled" branch — don't override existing disable reasons.
+  // If input is in sending state (waiting for server), leave button as-is.
+  if (chatInput.readOnly && chatInput.classList.contains('sending')) return;
+  if (hasUploadsPending()) {
+    sendBtn.disabled = true;
+    if (stagedFiles.some(function(sf) { return sf.uploading; })) {
+      sendBtn.classList.add('loading');
+    } else {
+      sendBtn.classList.remove('loading');
+    }
+  } else {
+    sendBtn.disabled = false;
+    sendBtn.classList.remove('loading');
+  }
 }
 
 function renderStaging() {
@@ -464,6 +540,8 @@ function renderStaging() {
     var sf = stagedFiles[i];
     var chip = document.createElement('div');
     chip.className = 'file-chip';
+    if (sf.uploading) chip.classList.add('uploading');
+    if (sf.uploadFailed) chip.classList.add('upload-failed');
 
     if (sf.previewUrl) {
       var img = document.createElement('img');
@@ -481,7 +559,7 @@ function renderStaging() {
     var nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
     nameSpan.textContent = sf.name;
-    nameSpan.title = sf.name;
+    nameSpan.title = sf.uploadFailed ? 'Upload failed \u2014 remove and re-add' : sf.name;
     chip.appendChild(nameSpan);
 
     var removeBtn = document.createElement('button');
@@ -490,11 +568,14 @@ function renderStaging() {
     removeBtn.dataset.index = i;
     removeBtn.addEventListener('click', function(e) {
       var idx = parseInt(e.currentTarget.dataset.index);
-      if (stagedFiles[idx] && stagedFiles[idx].previewUrl) {
-        URL.revokeObjectURL(stagedFiles[idx].previewUrl);
+      var entry = stagedFiles[idx];
+      if (entry) {
+        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+        if (entry.abortController) entry.abortController.abort();
       }
       stagedFiles.splice(idx, 1);
       renderStaging();
+      updateSendButton();
     });
     chip.appendChild(removeBtn);
 
@@ -546,6 +627,7 @@ function enableInput(replies) {
   chatInput.readOnly = false;
   chatInput.classList.remove('sending');
   sendBtn.disabled = false;
+  sendBtn.classList.remove('sending');
   btnAttach.disabled = false;
   if (replies && replies.length > 0) {
     removeLoading(); // loading and quick replies are mutually exclusive
@@ -553,6 +635,7 @@ function enableInput(replies) {
   } else {
     quickReplies.classList.remove('visible');
   }
+  updateSendButton(); // re-disable if uploads still pending
   chatInput.focus();
   setTimeout(function () { scrollToBottom(true); }, 100);
 }
@@ -600,22 +683,14 @@ function sendMessage(text, files) {
   }
 }
 
-function uploadFiles(fileEntries) {
-  var formData = new FormData();
-  for (var i = 0; i < fileEntries.length; i++) {
-    formData.append('files', fileEntries[i].file);
-  }
-  return fetch('/upload', { method: 'POST', body: formData })
-    .then(function(resp) {
-      if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
-      return resp.json();
-    });
-}
 
 function handleSend() {
   var text = chatInput.value.trim();
-  var filesToUpload = stagedFiles.slice();
-  if (!text && filesToUpload.length === 0) return;
+  var fileRefs = [];
+  for (var i = 0; i < stagedFiles.length; i++) {
+    if (stagedFiles[i].ref) fileRefs.push(stagedFiles[i].ref);
+  }
+  if (!text && fileRefs.length === 0) return;
 
   // Don't display the bubble yet — wait for the server to broadcast it back.
   // Use readOnly instead of disabled to preserve focus and keep mobile keyboard up.
@@ -624,6 +699,11 @@ function handleSend() {
   chatInput.classList.add('sending');
   sendBtn.disabled = true;
   sendBtn.classList.add('sending');
+  sendBtn.classList.remove('loading');
+  // Clean up staged file resources
+  for (var j = 0; j < stagedFiles.length; j++) {
+    if (stagedFiles[j].previewUrl) URL.revokeObjectURL(stagedFiles[j].previewUrl);
+  }
   stagedFiles = [];
   renderStaging();
   freezeCurrentReplies(text);
@@ -636,17 +716,7 @@ function handleSend() {
     pendingInterrupt = true;
   }
 
-  if (filesToUpload.length > 0) {
-    uploadFiles(filesToUpload).then(function(refs) {
-      sendMessage(text, refs);
-    }).catch(function(err) {
-      console.error('Upload error:', err);
-      // Send text-only on upload failure
-      if (text) sendMessage(text);
-    });
-  } else {
-    sendMessage(text);
-  }
+  sendMessage(text, fileRefs.length > 0 ? fileRefs : undefined);
 }
 
 // Auto-grow textarea
@@ -1429,6 +1499,7 @@ function connect() {
         chatInput.classList.remove('sending');
         sendBtn.disabled = false;
         sendBtn.classList.remove('sending');
+        updateSendButton(); // re-disable if uploads still pending
         // Show loading — agent is now processing the user's message.
         // Also ensures correct state after replay for new/reconnecting browsers.
         showLoading();
