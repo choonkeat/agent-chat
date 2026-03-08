@@ -400,8 +400,12 @@ func TestAutocompleteNoURLUnknownType(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	if got := rr.Body.String(); got != "[]" {
-		t.Errorf("expected empty array, got %s", got)
+	var resp autocompleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty results, got %v", resp.Results)
 	}
 }
 
@@ -451,12 +455,12 @@ func TestAutocompleteProxy(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var results []string
-	if err := json.Unmarshal(rr.Body.Bytes(), &results); err != nil {
+	var resp autocompleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if len(results) != 2 || results[0] != "busy" || results[1] != "been up" {
-		t.Errorf("unexpected results: %v", results)
+	if len(resp.Results) != 2 || resp.Results[0] != "busy" || resp.Results[1] != "been up" {
+		t.Errorf("unexpected results: %v", resp.Results)
 	}
 }
 
@@ -483,10 +487,10 @@ func TestAutocompletePerTriggerURL(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	var results []string
-	json.Unmarshal(rr.Body.Bytes(), &results)
-	if len(results) != 2 || results[0] != "deploy" {
-		t.Errorf("unexpected results: %v", results)
+	var resp autocompleteResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Results) != 2 || resp.Results[0] != "deploy" {
+		t.Errorf("unexpected results: %v", resp.Results)
 	}
 }
 
@@ -512,18 +516,46 @@ func TestAutocompleteBuiltinFilepath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
 	}
-	var results []string
-	if err := json.Unmarshal(rr.Body.Bytes(), &results); err != nil {
+	var resp autocompleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 	found := false
-	for _, r := range results {
+	for _, r := range resp.Results {
 		if strings.HasSuffix(r, "main.go") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected main.go in results, got %v", results)
+		t.Errorf("expected main.go in results, got %v", resp.Results)
+	}
+}
+
+func TestAutocompleteBuiltinFilepathInfo(t *testing.T) {
+	dir := t.TempDir()
+	// Empty directory — no files to match
+
+	origURL := autocompleteURL
+	origTriggerURLs := triggerURLs
+	origRoot := filepathRoot
+	autocompleteURL = ""
+	triggerURLs = nil
+	filepathRoot = dir
+	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs; filepathRoot = origRoot })
+
+	reqBody := bytes.NewBufferString(`{"type":"filepath","query":"xyz"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	var resp autocompleteResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Results) != 0 {
+		t.Errorf("expected empty results, got %v", resp.Results)
+	}
+	if !strings.Contains(resp.Info, "xyz") || !strings.Contains(resp.Info, dir) {
+		t.Errorf("expected info to contain query and dir, got %q", resp.Info)
 	}
 }
 

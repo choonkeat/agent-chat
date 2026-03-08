@@ -500,6 +500,12 @@ func parseTriggerConfig(s string) (string, map[string]string) {
 	return string(b), urlMap
 }
 
+// autocompleteResponse is the structured response from /autocomplete.
+type autocompleteResponse struct {
+	Results []string `json:"results"`
+	Info    string   `json:"info,omitempty"`
+}
+
 // handleAutocomplete routes autocomplete requests to per-trigger URLs, the global
 // autocomplete URL, or built-in handlers (e.g. filepath completion).
 func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
@@ -539,22 +545,34 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer resp.Body.Close()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, io.LimitReader(resp.Body, 64*1024))
+		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		// Wrap upstream array in structured format.
+		var results []string
+		if json.Unmarshal(upstreamBody, &results) != nil {
+			results = []string{}
+		}
+		writeAutocompleteResponse(w, results, "")
 		return
 	}
 
 	// Built-in handlers.
 	if req.Type == "filepath" {
+		root, _ := filepath.Abs(filepathRoot)
 		results := builtinFilepathComplete(filepathRoot, req.Query)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(results)
+		info := ""
+		if len(results) == 0 {
+			info = fmt.Sprintf("No files matching %q in %s", req.Query, root)
+		}
+		writeAutocompleteResponse(w, results, info)
 		return
 	}
 
+	writeAutocompleteResponse(w, []string{}, "")
+}
+
+func writeAutocompleteResponse(w http.ResponseWriter, results []string, info string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte("[]"))
+	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info})
 }
 
 // builtinFilepathComplete returns file paths under root that fuzzy-match the query.

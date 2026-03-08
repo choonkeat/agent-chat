@@ -880,13 +880,19 @@ function acFetch(type, query) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ type: type, query: query })
   }).then(function(r) { return r.json(); })
-    .then(function(options) {
-      if (!Array.isArray(options)) options = [];
+    .then(function(data) {
+      // Support structured {results, info} or plain array.
+      var options = Array.isArray(data) ? data : (data.results || []);
+      var info = (!Array.isArray(data) && data.info) ? data.info : '';
       // Cache the full result set for client-side filtering.
       acCache = { type: type, query: query, results: options };
       // Only show if we're still in the same trigger context
       if (acVisible || acTriggerPos >= 0) {
-        acShow(options, query);
+        if (options.length === 0 && info) {
+          acShowStatus(info);
+        } else {
+          acShow(options, query);
+        }
       }
     })
     .catch(function() { acHide(); });
