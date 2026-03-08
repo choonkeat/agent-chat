@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -347,41 +348,48 @@ func TestUploadMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestParseTriggerFlags(t *testing.T) {
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"", "{}"},
-		{"/=slash-command", `{"/":"slash-command"}`},
-		{"/=slash-command,@=filepath", ``}, // order may vary, check below
+func TestParseTriggerConfig(t *testing.T) {
+	// Empty input
+	got, urls := parseTriggerConfig("")
+	if got != "{}" {
+		t.Errorf("parseTriggerConfig(\"\") JSON = %s, want {}", got)
+	}
+	if urls != nil {
+		t.Errorf("parseTriggerConfig(\"\") urls = %v, want nil", urls)
 	}
 
-	// Test empty
-	if got := parseTriggerFlags(tests[0].input); got != tests[0].want {
-		t.Errorf("parseTriggerFlags(%q) = %s, want %s", tests[0].input, got, tests[0].want)
+	// Single trigger without URL
+	got, urls = parseTriggerConfig("/=slash-command")
+	if got != `{"/":"slash-command"}` {
+		t.Errorf("parseTriggerConfig single = %s", got)
+	}
+	if len(urls) != 0 {
+		t.Errorf("expected no URL overrides, got %v", urls)
 	}
 
-	// Test single trigger
-	if got := parseTriggerFlags(tests[1].input); got != tests[1].want {
-		t.Errorf("parseTriggerFlags(%q) = %s, want %s", tests[1].input, got, tests[1].want)
-	}
-
-	// Test multiple triggers — parse JSON to compare (order-independent)
-	got := parseTriggerFlags("/=slash-command,@=filepath")
+	// Multiple triggers, one with URL
+	got, urls = parseTriggerConfig("/=slash-command=http://localhost:9000/completions,@=filepath")
 	var m map[string]string
 	if err := json.Unmarshal([]byte(got), &m); err != nil {
-		t.Fatalf("parseTriggerFlags returned invalid JSON: %s", got)
+		t.Fatalf("parseTriggerConfig returned invalid JSON: %s", got)
 	}
 	if m["/"] != "slash-command" || m["@"] != "filepath" {
-		t.Errorf("parseTriggerFlags returned unexpected map: %v", m)
+		t.Errorf("unexpected client map: %v", m)
+	}
+	if urls["slash-command"] != "http://localhost:9000/completions" {
+		t.Errorf("expected URL for slash-command, got %q", urls["slash-command"])
+	}
+	if _, ok := urls["filepath"]; ok {
+		t.Error("filepath should not have a URL override")
 	}
 }
 
-func TestAutocompleteNoURL(t *testing.T) {
+func TestAutocompleteNoURLUnknownType(t *testing.T) {
 	origURL := autocompleteURL
+	origTriggerURLs := triggerURLs
 	autocompleteURL = ""
-	t.Cleanup(func() { autocompleteURL = origURL })
+	triggerURLs = nil
+	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
 
 	body := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", body)
@@ -428,8 +436,10 @@ func TestAutocompleteProxy(t *testing.T) {
 	defer upstream.Close()
 
 	origURL := autocompleteURL
+	origTriggerURLs := triggerURLs
 	autocompleteURL = upstream.URL
-	t.Cleanup(func() { autocompleteURL = origURL })
+	triggerURLs = nil
+	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
 
 	reqBody := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
@@ -447,5 +457,121 @@ func TestAutocompleteProxy(t *testing.T) {
 	}
 	if len(results) != 2 || results[0] != "busy" || results[1] != "been up" {
 		t.Errorf("unexpected results: %v", results)
+	}
+}
+
+func TestAutocompletePerTriggerURL(t *testing.T) {
+	// Mock upstream for slash-commands only
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`["deploy","docs"]`))
+	}))
+	defer upstream.Close()
+
+	origURL := autocompleteURL
+	origTriggerURLs := triggerURLs
+	autocompleteURL = ""
+	triggerURLs = map[string]string{"slash-command": upstream.URL}
+	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
+
+	reqBody := bytes.NewBufferString(`{"type":"slash-command","query":"d"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var results []string
+	json.Unmarshal(rr.Body.Bytes(), &results)
+	if len(results) != 2 || results[0] != "deploy" {
+		t.Errorf("unexpected results: %v", results)
+	}
+}
+
+func TestAutocompleteBuiltinFilepath(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), nil, 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), nil, 0644)
+
+	origURL := autocompleteURL
+	origTriggerURLs := triggerURLs
+	origRoot := filepathRoot
+	autocompleteURL = ""
+	triggerURLs = nil
+	filepathRoot = dir
+	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs; filepathRoot = origRoot })
+
+	reqBody := bytes.NewBufferString(`{"type":"filepath","query":"main"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	var results []string
+	if err := json.Unmarshal(rr.Body.Bytes(), &results); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	found := false
+	for _, r := range results {
+		if strings.HasSuffix(r, "main.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected main.go in results, got %v", results)
+	}
+}
+
+func TestBuiltinFilepathComplete(t *testing.T) {
+	dir := t.TempDir()
+	// Create test files
+	os.MkdirAll(filepath.Join(dir, "src"), 0755)
+	os.WriteFile(filepath.Join(dir, "main.go"), nil, 0644)
+	os.WriteFile(filepath.Join(dir, "README.md"), nil, 0644)
+	os.WriteFile(filepath.Join(dir, "src", "app.go"), nil, 0644)
+	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
+	os.WriteFile(filepath.Join(dir, ".git", "config"), nil, 0644)
+
+	results := builtinFilepathComplete(dir, "")
+	// Should include main.go, README.md, src, src/app.go but NOT .git/config
+	for _, r := range results {
+		if strings.Contains(r, ".git") {
+			t.Errorf("should skip hidden dirs, got %s", r)
+		}
+	}
+	if len(results) < 3 {
+		t.Errorf("expected at least 3 results, got %v", results)
+	}
+
+	// Fuzzy match
+	results = builtinFilepathComplete(dir, "app")
+	found := false
+	for _, r := range results {
+		if strings.HasSuffix(r, "app.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected src/app.go in results for query 'app', got %v", results)
+	}
+}
+
+func TestFuzzyMatchPath(t *testing.T) {
+	if !fuzzyMatchPath("src/main.go", "main") {
+		t.Error("expected 'src/main.go' to match 'main'")
+	}
+	if !fuzzyMatchPath("src/main.go", "smg") {
+		t.Error("expected 'src/main.go' to match 'smg'")
+	}
+	if fuzzyMatchPath("README.md", "xyz") {
+		t.Error("expected 'README.md' not to match 'xyz'")
+	}
+	if !fuzzyMatchPath("anything", "") {
+		t.Error("empty query should match everything")
 	}
 }

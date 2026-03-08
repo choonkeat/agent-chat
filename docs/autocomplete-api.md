@@ -1,42 +1,67 @@
 # Autocomplete API
 
 Agent-chat provides a trigger-based autocomplete system. When a user types a
-trigger character (e.g. `/` or `@`), the client requests completions from an
-external provider via a built-in proxy endpoint.
+trigger character (e.g. `/` or `@`), the client requests completions from the
+server's proxy endpoint, which routes to an external provider or a built-in
+handler.
+
+## Defaults
+
+With no flags, agent-chat registers `@` as a filepath trigger backed by a
+built-in handler. Typing `@mai` in the chat input suggests file paths matching
+"mai" (e.g. `main.go`). No external provider is required.
 
 ## Configuration
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--autocomplete-url` | URL of the external completion provider | `http://localhost:9000/completions` |
-| `--autocomplete-triggers` | Comma-separated `CHAR=TYPE` mappings | `/=slash-command,@=filepath` |
-
-If `--autocomplete-url` is not set, the proxy returns an empty array and the
-feature is effectively disabled.
+| `--autocomplete-url` | Default URL for types without a per-trigger URL | `http://localhost:9000/completions` |
+| `--autocomplete-triggers` | Comma-separated `CHAR=TYPE[=URL]` mappings | `/=slash-command=http://host/api,@=filepath` |
 
 ### Trigger mappings
 
-Each mapping pairs a single trigger character with a type string:
+Each mapping pairs a trigger character with a type string and an optional
+provider URL:
 
 ```
---autocomplete-triggers '/=slash-command,@=filepath'
+--autocomplete-triggers '/=slash-command=http://localhost:9000/completions,@=filepath'
 ```
 
-This produces the trigger table:
+This produces:
 
-| Character | Type |
-|-----------|------|
-| `/` | `slash-command` |
-| `@` | `filepath` |
+| Character | Type | Provider |
+|-----------|------|----------|
+| `/` | `slash-command` | `http://localhost:9000/completions` |
+| `@` | `filepath` | built-in (no URL) |
 
-The type string is sent to the provider so it knows what kind of completions
-to return.
+### Resolution order
+
+When the server receives an autocomplete request for a given type:
+
+1. **Per-trigger URL** — if the trigger mapping included `=URL`, use that URL.
+2. **Global URL** — if `--autocomplete-url` is set, use it as fallback.
+3. **Built-in handler** — if the type is `filepath`, use the built-in handler.
+4. **Empty result** — return `[]`.
+
+### Built-in filepath handler
+
+The `filepath` type has a built-in handler that walks the working directory,
+skips hidden directories (e.g. `.git`), and returns up to 50 file paths that
+fuzzy-match the query (case-insensitive, greedy left-to-right character
+matching).
+
+This handler is used when no external URL is configured for the `filepath`
+type. To override it with an external provider:
+
+```
+--autocomplete-triggers '@=filepath=http://my-server/files'
+```
 
 ## Proxy endpoint
 
 ### `POST /autocomplete`
 
-The client never contacts the provider directly. All requests go through this
+The client never contacts providers directly. All requests go through this
 proxy endpoint on the agent-chat server.
 
 #### Request
@@ -75,11 +100,8 @@ The response is a JSON array of strings — the completion candidates.
 |------|---------|
 | 200 | Success (body is a JSON string array) |
 | 405 | Method not allowed (only POST is accepted) |
-| 400 | Request body could not be read |
+| 400 | Request body could not be read or parsed |
 | 502 | Upstream provider returned an error or is unreachable |
-
-When `--autocomplete-url` is not configured, the endpoint returns `200` with
-an empty array `[]`.
 
 ## Provider contract
 
@@ -87,7 +109,7 @@ The external provider receives the exact same JSON body that was sent to
 `POST /autocomplete`:
 
 ```http
-POST <autocomplete-url> HTTP/1.1
+POST <provider-url> HTTP/1.1
 Content-Type: application/json
 
 {

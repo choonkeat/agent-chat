@@ -48,6 +48,13 @@ var autocompleteURL string
 // autocompleteTriggers maps trigger characters to type names (e.g. "/=slash-command,@=filepath").
 var autocompleteTriggers string
 
+// triggerURLs maps autocomplete type names to per-trigger provider URLs.
+// Populated by parseTriggerConfig at startup.
+var triggerURLs map[string]string
+
+// filepathRoot is the directory used by the built-in filepath autocompleter.
+var filepathRoot = "."
+
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
@@ -213,7 +220,12 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// This avoids relative-path resolution failures when the page is served
 	// behind a reverse proxy at a non-root path (e.g. /session/UUID).
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
-	triggerJSON := parseTriggerFlags(autocompleteTriggers)
+	triggers := autocompleteTriggers
+	if triggers == "" {
+		triggers = "@=filepath"
+	}
+	triggerJSON, urls := parseTriggerConfig(triggers)
+	triggerURLs = urls
 	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s;</script>",
 		themeCookieName, version+" ("+commit+")", triggerJSON)
 	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
@@ -463,50 +475,127 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseTriggerFlags converts "/=slash-command,@=filepath" into JSON like {"/":" slash-command","@":"filepath"}.
-// Returns "{}" if the input is empty.
-func parseTriggerFlags(s string) string {
+// parseTriggerConfig parses trigger flag strings like "/=slash-command,@=filepath=http://host/path"
+// into client-side JSON ({"char":"type",...}) and a server-side map of type→URL for per-trigger routing.
+// Returns "{}" and nil if the input is empty.
+func parseTriggerConfig(s string) (string, map[string]string) {
 	if s == "" {
-		return "{}"
+		return "{}", nil
 	}
-	m := make(map[string]string)
+	clientMap := make(map[string]string)
+	urlMap := make(map[string]string)
 	for _, part := range strings.Split(s, ",") {
-		kv := strings.SplitN(part, "=", 2)
-		if len(kv) == 2 {
-			m[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		parts := strings.SplitN(strings.TrimSpace(part), "=", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		char := strings.TrimSpace(parts[0])
+		typeName := strings.TrimSpace(parts[1])
+		clientMap[char] = typeName
+		if len(parts) == 3 {
+			urlMap[typeName] = strings.TrimSpace(parts[2])
 		}
 	}
-	b, _ := json.Marshal(m)
-	return string(b)
+	b, _ := json.Marshal(clientMap)
+	return string(b), urlMap
 }
 
-// handleAutocomplete proxies autocomplete requests to the configured external URL.
+// handleAutocomplete routes autocomplete requests to per-trigger URLs, the global
+// autocomplete URL, or built-in handlers (e.g. filepath completion).
 func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if autocompleteURL == "" {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[]"))
-		return
-	}
 
-	// Read and forward the request body as-is.
 	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 	if err != nil {
 		http.Error(w, "failed to read request body", http.StatusBadRequest)
 		return
 	}
 
-	resp, err := http.Post(autocompleteURL, "application/json", strings.NewReader(string(body)))
-	if err != nil {
-		http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
+	var req struct {
+		Type  string `json:"type"`
+		Query string `json:"query"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	defer resp.Body.Close()
+
+	// Resolve provider URL: per-trigger URL > global URL > built-in handler.
+	providerURL := ""
+	if triggerURLs != nil {
+		providerURL = triggerURLs[req.Type]
+	}
+	if providerURL == "" {
+		providerURL = autocompleteURL
+	}
+
+	if providerURL != "" {
+		resp, err := http.Post(providerURL, "application/json", strings.NewReader(string(body)))
+		if err != nil {
+			http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, io.LimitReader(resp.Body, 64*1024))
+		return
+	}
+
+	// Built-in handlers.
+	if req.Type == "filepath" {
+		results := builtinFilepathComplete(filepathRoot, req.Query)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(results)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, io.LimitReader(resp.Body, 64*1024))
+	w.Write([]byte("[]"))
+}
+
+// builtinFilepathComplete returns file paths under root that fuzzy-match the query.
+func builtinFilepathComplete(root, query string) []string {
+	var results []string
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if path == "." {
+			return nil
+		}
+		if fuzzyMatchPath(path, query) {
+			results = append(results, path)
+		}
+		if len(results) >= 50 {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if results == nil {
+		results = []string{}
+	}
+	return results
+}
+
+// fuzzyMatchPath checks if all query characters appear in s in order (case-insensitive).
+func fuzzyMatchPath(s, query string) bool {
+	if query == "" {
+		return true
+	}
+	ls := strings.ToLower(s)
+	lq := strings.ToLower(query)
+	qi := 0
+	for i := 0; i < len(ls) && qi < len(lq); i++ {
+		if ls[i] == lq[qi] {
+			qi++
+		}
+	}
+	return qi == len(lq)
 }
