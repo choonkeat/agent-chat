@@ -18,11 +18,14 @@
   },
   "license": "MIT",
   "optionalDependencies": {
-    "@choonkeat/agent-chat-linux-x64": "0.1.8",
-    "@choonkeat/agent-chat-linux-arm64": "0.1.8",
-    "@choonkeat/agent-chat-darwin-x64": "0.1.8",
     "@choonkeat/agent-chat-darwin-arm64": "0.1.8",
-    "@choonkeat/agent-chat-win32-x64": "0.1.8",
-    "@choonkeat/agent-chat-win32-arm64": "0.1.8"
+    "@choonkeat/agent-chat-darwin-x64": "0.1.8",
+    "@choonkeat/agent-chat-linux-arm64": "0.1.8",
+    "@choonkeat/agent-chat-linux-x64": "0.1.8",
+    "@choonkeat/agent-chat-win32-arm64": "0.1.8",
+    "@choonkeat/agent-chat-win32-x64": "0.1.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

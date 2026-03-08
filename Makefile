@@ -1,4 +1,4 @@
-.PHONY: build bundle-client publish publish-dry test bump
+.PHONY: build bundle-client publish publish-dry test e2e bump
 
 build: build-platforms
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
@@ -9,6 +9,9 @@ bundle-client:
 test:
 	go vet ./...
 	go test ./...
+
+e2e: build-platforms
+	npx playwright test -c playwright.config.cjs
 
 build-platforms: bundle-client
 	./scripts/build-platforms.sh
