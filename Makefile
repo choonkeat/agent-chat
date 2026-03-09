@@ -1,4 +1,4 @@
-.PHONY: build bundle-client publish publish-dry test unit-test e2e bump
+.PHONY: build bundle-client publish publish-dry test unit-test e2e-test e2e-report bump
 
 build: build-platforms
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
@@ -6,15 +6,18 @@ build: build-platforms
 bundle-client:
 	npx esbuild canvas-entry.ts --bundle --format=iife --global-name=CanvasBundle --outfile=client-dist/canvas-bundle.js --target=es2020
 
-test: unit-test e2e
+test: unit-test e2e-test
 
 unit-test:
 	go vet ./...
 	go test ./...
 
-e2e: build-platforms
-	SLOW_MO=$${SLOW_MO:-0} npx playwright test -c playwright.config.cjs; \
+e2e-test: build-platforms
+	SLOW_MO=$${SLOW_MO:-0} npx playwright test -c playwright.config.cjs
+
+e2e-report:
 	E2E_REPORT_PORT=$${E2E_REPORT_PORT:-$${PORT:-3001}}; \
+	lsof -ti tcp:$$E2E_REPORT_PORT | xargs -r kill 2>/dev/null || true; \
 	echo "Serving HTML report on http://localhost:$$E2E_REPORT_PORT"; \
 	npx -y http-server playwright-report -p $$E2E_REPORT_PORT --host 0.0.0.0 -c-1
 
