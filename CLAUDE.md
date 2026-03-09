@@ -2,7 +2,11 @@
 
 ## Testing
 
-Always use `make test` to run tests. Never run `go test` or `go vet` directly.
+Always use `make test` to run all tests (unit + E2E). Never run `go test` or `go vet` directly.
+
+- `make test` — runs both unit tests and E2E tests
+- `make unit-test` — runs only Go unit tests (`go vet` + `go test`)
+- `make e2e` — runs only Playwright E2E tests
 
 ## E2E Testing
 

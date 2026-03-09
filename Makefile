@@ -1,4 +1,4 @@
-.PHONY: build bundle-client publish publish-dry test e2e bump
+.PHONY: build bundle-client publish publish-dry test unit-test e2e bump
 
 build: build-platforms
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
@@ -6,7 +6,9 @@ build: build-platforms
 bundle-client:
 	npx esbuild canvas-entry.ts --bundle --format=iife --global-name=CanvasBundle --outfile=client-dist/canvas-bundle.js --target=es2020
 
-test:
+test: unit-test e2e
+
+unit-test:
 	go vet ./...
 	go test ./...
 

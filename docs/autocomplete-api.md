@@ -46,9 +46,21 @@ When the server receives an autocomplete request for a given type:
 ### Built-in filepath handler
 
 The `filepath` type has a built-in handler that walks the working directory,
-skips hidden directories (e.g. `.git`), and returns up to 50 file paths that
+skips hidden directories (e.g. `.git`), collects up to 500 file paths that
 fuzzy-match the query (case-insensitive, greedy left-to-right character
-matching).
+matching), scores them by match quality, and returns the top 50.
+
+#### Scoring
+
+Results are sorted by a quality score (lower is better). The score is the
+character span of the fuzzy match — i.e. the distance from the first matched
+character to the last. A contiguous substring match (e.g. query `task` in
+`tasks/readme.md`) gets a bonus: its score is halved. This ensures that paths
+containing the query as a substring rank above paths with scattered character
+matches.
+
+External providers implementing the same contract should apply similar
+scoring to produce consistent results across built-in and custom handlers.
 
 This handler is used when no external URL is configured for the `filepath`
 type. To override it with an external provider:

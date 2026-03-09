@@ -607,3 +607,58 @@ func TestFuzzyMatchPath(t *testing.T) {
 		t.Error("empty query should match everything")
 	}
 }
+
+func TestFuzzyScorePath(t *testing.T) {
+	// Contiguous substring match should score lower than scattered match
+	substringScore, ok1 := fuzzyScorePath("tasks/readme.md", "task")
+	scatteredScore, ok2 := fuzzyScorePath("cmd/templates/host/Dockerfile", "task")
+	if !ok1 || !ok2 {
+		t.Fatal("both paths should match 'task'")
+	}
+	if substringScore >= scatteredScore {
+		t.Errorf("substring match (%d) should score lower than scattered match (%d)", substringScore, scatteredScore)
+	}
+
+	// Empty query scores 0
+	score, ok := fuzzyScorePath("anything", "")
+	if !ok || score != 0 {
+		t.Errorf("empty query should match with score 0, got %d, %v", score, ok)
+	}
+
+	// Non-matching query
+	_, ok = fuzzyScorePath("README.md", "xyz")
+	if ok {
+		t.Error("expected 'README.md' not to match 'xyz'")
+	}
+}
+
+func TestBuiltinFilepathCompleteScoring(t *testing.T) {
+	dir := t.TempDir()
+	// Create files: "tasks/" should rank higher than "cmd/templates/host/" for query "task"
+	os.MkdirAll(filepath.Join(dir, "cmd", "templates", "host"), 0755)
+	os.WriteFile(filepath.Join(dir, "cmd", "templates", "host", "Dockerfile"), nil, 0644)
+	os.MkdirAll(filepath.Join(dir, "tasks"), 0755)
+	os.WriteFile(filepath.Join(dir, "tasks", "readme.md"), nil, 0644)
+
+	results := builtinFilepathComplete(dir, "task")
+	if len(results) < 2 {
+		t.Fatalf("expected at least 2 results, got %v", results)
+	}
+	// tasks/readme.md should come before cmd/templates/host/Dockerfile
+	tasksIdx := -1
+	cmdIdx := -1
+	for i, r := range results {
+		if strings.Contains(r, "tasks") {
+			tasksIdx = i
+		}
+		if strings.Contains(r, "cmd") {
+			cmdIdx = i
+		}
+	}
+	if tasksIdx < 0 || cmdIdx < 0 {
+		t.Fatalf("expected both paths in results, got %v", results)
+	}
+	if tasksIdx > cmdIdx {
+		t.Errorf("tasks/readme.md (idx %d) should rank before cmd/templates/host/Dockerfile (idx %d)", tasksIdx, cmdIdx)
+	}
+}

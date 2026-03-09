@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -575,9 +576,15 @@ func writeAutocompleteResponse(w http.ResponseWriter, results []string, info str
 	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info})
 }
 
-// builtinFilepathComplete returns file paths under root that fuzzy-match the query.
+// builtinFilepathComplete returns file paths under root that fuzzy-match the query,
+// sorted by match quality (lower score = better match). Collects up to 500 candidates,
+// scores them, and returns the top 50.
 func builtinFilepathComplete(root, query string) []string {
-	var results []string
+	type scored struct {
+		path  string
+		score int
+	}
+	var candidates []scored
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -590,32 +597,69 @@ func builtinFilepathComplete(root, query string) []string {
 		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
 			return filepath.SkipDir
 		}
-		if fuzzyMatchPath(path, query) {
-			results = append(results, path)
+		if s, ok := fuzzyScorePath(path, query); ok {
+			candidates = append(candidates, scored{path, s})
 		}
-		if len(results) >= 50 {
+		if len(candidates) >= 500 {
 			return filepath.SkipAll
 		}
 		return nil
 	})
-	if results == nil {
-		results = []string{}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score < candidates[j].score
+		}
+		return candidates[i].path < candidates[j].path
+	})
+	limit := 50
+	if len(candidates) < limit {
+		limit = len(candidates)
+	}
+	results := make([]string, limit)
+	for i := 0; i < limit; i++ {
+		results[i] = candidates[i].path
 	}
 	return results
 }
 
-// fuzzyMatchPath checks if all query characters appear in s in order (case-insensitive).
-func fuzzyMatchPath(s, query string) bool {
+// fuzzyScorePath checks if all query characters appear in s in order (case-insensitive)
+// and returns a score indicating match quality. Lower scores are better matches.
+//
+// Scoring: the score is the total distance (character span) of the match in the string.
+// A contiguous substring match like "task" in "tasks/foo.md" scores len(query),
+// while scattered matches score higher. An additional bonus (score halved) is applied
+// when the query appears as a contiguous substring anywhere in the path.
+func fuzzyScorePath(s, query string) (int, bool) {
 	if query == "" {
-		return true
+		return 0, true
 	}
 	ls := strings.ToLower(s)
 	lq := strings.ToLower(query)
 	qi := 0
+	first := -1
+	last := -1
 	for i := 0; i < len(ls) && qi < len(lq); i++ {
 		if ls[i] == lq[qi] {
+			if qi == 0 {
+				first = i
+			}
+			last = i
 			qi++
 		}
 	}
-	return qi == len(lq)
+	if qi < len(lq) {
+		return 0, false
+	}
+	score := last - first + 1 // span of the match
+	// Bonus: if query is a contiguous substring, halve the score.
+	if strings.Contains(ls, lq) {
+		score = score / 2
+	}
+	return score, true
+}
+
+// fuzzyMatchPath checks if all query characters appear in s in order (case-insensitive).
+func fuzzyMatchPath(s, query string) bool {
+	_, ok := fuzzyScorePath(s, query)
+	return ok
 }
