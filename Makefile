@@ -11,7 +11,10 @@ test:
 	go test ./...
 
 e2e: build-platforms
-	npx playwright test -c playwright.config.cjs
+	SLOW_MO=$${SLOW_MO:-0} npx playwright test -c playwright.config.cjs; \
+	E2E_REPORT_PORT=$${E2E_REPORT_PORT:-$${PORT:-3001}}; \
+	echo "Serving HTML report on http://localhost:$$E2E_REPORT_PORT"; \
+	npx -y http-server playwright-report -p $$E2E_REPORT_PORT --host 0.0.0.0 -c-1
 
 build-platforms: bundle-client
 	./scripts/build-platforms.sh
