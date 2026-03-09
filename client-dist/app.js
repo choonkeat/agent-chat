@@ -1515,7 +1515,7 @@ function speakVerbalReply(text, quickReplies) {
     if (hasQuickReplies) enableInput(quickReplies);
     // Resume listening if voice mode is on
     if (voiceMode) {
-      playBeep(880, 0.15);
+      playBeep(hasQuickReplies ? 880 : 440, 0.15);
       micRetryCount = 0;
       setTimeout(startListening, 200);
     }
