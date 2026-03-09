@@ -9,6 +9,9 @@ const os = require('os');
 // CDP endpoint for the remote Chrome browser
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://chrome:9223';
 
+// Optional slowMo for live viewing (set SLOW_MO=500 to watch in browser)
+const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
+
 /**
  * Start agent-chat in a temp directory with known fixture files.
  * Returns { url, proc, dir } — caller must kill proc when done.
@@ -53,14 +56,20 @@ function startServer() {
   });
 }
 
-// Custom test that connects to remote Chrome via CDP
+// Custom test that connects to remote Chrome via CDP.
+// Reuses the existing browser page (visible in Agent View) instead of
+// creating a new context, so viewers can watch tests run live.
 const test = base.extend({
   page: async ({}, use) => {
-    const browser = await chromium.connectOverCDP(CDP_ENDPOINT);
-    const context = await browser.newContext();
-    const page = await context.newPage();
+    const browser = await chromium.connectOverCDP(CDP_ENDPOINT, {
+      ...(SLOW_MO > 0 && { slowMo: SLOW_MO }),
+    });
+    // Reuse the first existing page so it's visible in Agent View
+    const contexts = browser.contexts();
+    const pages = contexts.flatMap(c => c.pages());
+    const page = pages[0] || (await browser.newContext()).newPage();
     await use(page);
-    await context.close();
+    // Don't close — we're borrowing the existing page
   },
 });
 
@@ -108,7 +117,7 @@ test.describe('Autocomplete @filepath', () => {
     }
   });
 
-  test('typing @doc shows matching file suggestions', async ({ page }) => {
+  test('typing @dom shows matching file suggestions', async ({ page }) => {
     // Collect /autocomplete requests and responses
     const autocompleteRequests = [];
     const autocompleteResponses = [];
@@ -125,7 +134,7 @@ test.describe('Autocomplete @filepath', () => {
     });
 
     const textarea = await setupPage(page, server.url);
-    await typeAndWait(page, textarea, 'read @doc');
+    await typeAndWait(page, textarea, 'read @dom');
 
     const dropdown = page.locator('#autocomplete-dropdown');
     await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
@@ -139,11 +148,11 @@ test.describe('Autocomplete @filepath', () => {
     const options = await optionEls.allTextContents();
     expect(options.some(opt => opt.includes('docs'))).toBe(true);
 
-    // Assert request: at least one request should have query containing "doc"
-    const hasDocQuery = autocompleteRequests.some(
-      r => r && r.query && r.query.length > 0 && 'doc'.startsWith(r.query)
+    // Assert request: at least one request should have query containing "dom"
+    const hasDomQuery = autocompleteRequests.some(
+      r => r && r.query && r.query.length > 0 && 'dom'.startsWith(r.query)
     );
-    expect(hasDocQuery).toBe(true);
+    expect(hasDomQuery).toBe(true);
 
     // Assert response: at least one response should have results matching "docs"
     const hasDocResult = autocompleteResponses.some(
