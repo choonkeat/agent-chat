@@ -34,16 +34,18 @@ if (!platform || !arch) {
 const pkgName = `@choonkeat/agent-chat-${platform}-${arch}`;
 const binName = process.platform === "win32" ? "agent-chat.exe" : "agent-chat";
 
+// Prefer local build in npm-platforms/ (development) over npm-installed package.
+// npm-platforms/ is not published to npm, so this only takes effect during local dev.
+const localPath = join(__dirname, "..", "npm-platforms", `${platform}-${arch}`, "bin", binName);
+
 let binPath;
-try {
-  const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
-  binPath = join(pkgDir, "bin", binName);
-} catch {
-  // Fallback: check for local build in npm-platforms/ (development)
-  const localPath = join(__dirname, "..", "npm-platforms", `${platform}-${arch}`, "bin", binName);
-  if (existsSync(localPath)) {
-    binPath = localPath;
-  } else {
+if (existsSync(localPath)) {
+  binPath = localPath;
+} else {
+  try {
+    const pkgDir = dirname(require.resolve(`${pkgName}/package.json`));
+    binPath = join(pkgDir, "bin", binName);
+  } catch {
     console.error(
       `Could not find package ${pkgName}.\n` +
         `Make sure it is installed — this usually means your platform is supported\n` +
