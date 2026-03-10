@@ -1044,8 +1044,15 @@ voiceSelect.addEventListener('change', function() {
 // Keeps each chunk short enough to avoid the iOS/WebKit ~15-second truncation bug.
 function splitIntoChunks(text) {
   // Split on sentence boundaries: period, exclamation, question mark followed by space or end.
-  // Also split on semicolons and colons followed by space, and em-dashes.
-  var sentences = text.match(/[^.!?;]+[.!?;]+[\s]?|[^.!?;]+$/g);
+  // Also split on semicolons. Periods after digits (e.g. "1.") are not sentence boundaries.
+  // First, protect numbered-list periods by replacing "N." with a placeholder.
+  var safeText = text.replace(/(\d)\./g, '$1\u2024');
+  var sentences = safeText.match(/[^.!?;]+[.!?;]+[\s]?|[^.!?;]+$/g);
+  if (sentences) {
+    for (var k = 0; k < sentences.length; k++) {
+      sentences[k] = sentences[k].replace(/\u2024/g, '.');
+    }
+  }
   if (!sentences) return [text];
 
   // Merge very short sentences together; split very long ones.
@@ -1146,16 +1153,18 @@ function speakText(text, onDone) {
     };
     speechSynthesis.speak(utterance);
     console.log('[' + ts() + '] TTS speak() chunk ' + (index + 1) + '/' + chunks.length + ', length=' + chunk.length + ', voice=' + (utterance.voice ? utterance.voice.name : 'default'));
-    // Safety timeout per chunk: 15s per chunk should be plenty
+    // Safety timeout proportional to chunk length (~100ms per char, min 15s).
+    // Previous fixed 15s was too short for longer chunks on slower iOS voices.
+    var chunkTimeout = Math.max(15000, chunk.length * 100);
     ttsSafetyTimer = setTimeout(function() {
       if (!done) {
-        console.warn('[' + ts() + '] TTS safety timeout on chunk ' + index + ' — speak() may have failed silently');
+        console.warn('[' + ts() + '] TTS safety timeout on chunk ' + index + ' (after ' + chunkTimeout + 'ms) — speak() may have failed silently');
         addSystemBubble('TTS timed out — future replies will have a play button');
         ttsUnlocked = false;
         speechSynthesis.cancel();
         finish('safety-timeout');
       }
-    }, 15000);
+    }, chunkTimeout);
   }
 
   // Delay speak() after cancel() to work around Safari WebKit bug
