@@ -1,7 +1,7 @@
 # Web Audio API for Voice Mode Beeps
 
 **Date:** 2026-02-24
-**Status:** Accepted
+**Status:** Superseded — beeps removed in favour of spoken cues (2026-03-10)
 
 ## Context
 

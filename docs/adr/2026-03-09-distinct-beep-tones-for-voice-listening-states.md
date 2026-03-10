@@ -1,7 +1,7 @@
 # Distinct Beep Tones for Voice Listening States
 
 **Date:** 2026-03-09
-**Status:** Accepted
+**Status:** Superseded by spoken "Be right back" suffix (2026-03-10)
 
 ## Context
 
@@ -28,6 +28,15 @@ Use two distinct beep frequencies after TTS completes:
 | No quick replies | **440 Hz** (low) | Mic is on, but agent isn't blocked |
 
 The first-time voice enable beep remains 880 Hz (unchanged).
+
+## Superseded
+
+Testing on iOS revealed that the Web Audio API beeps were inaudible — iOS plays
+its own system sounds when SpeechRecognition starts/stops, masking the
+programmatic beeps entirely. The approach was replaced with spoken word cues:
+progress messages append "Be right back." to the TTS output, and the message
+bubble shows `[brb]` via a CSS `::after` pseudo-element. Reply messages (with
+quick replies) have no suffix. See `2026-03-10-spoken-brb-for-voice-progress.md`.
 
 ## Consequences
 
