@@ -1016,13 +1016,21 @@ function playBeep(freq, duration, onDone) {
 function populateVoices() {
   var voices = speechSynthesis.getVoices();
   voiceSelect.innerHTML = '';
+  var savedName = localStorage.getItem('tts-voice');
+  var savedIndex = -1;
   for (var i = 0; i < voices.length; i++) {
     var opt = document.createElement('option');
     opt.value = i;
     opt.textContent = voices[i].name + ' (' + voices[i].lang + ')';
     voiceSelect.appendChild(opt);
+    if (savedName && voices[i].name === savedName) {
+      savedIndex = i;
+    }
   }
-  if (voices.length > 0 && !selectedVoice) {
+  if (savedIndex >= 0) {
+    voiceSelect.value = savedIndex;
+    selectedVoice = voices[savedIndex];
+  } else if (voices.length > 0 && !selectedVoice) {
     selectedVoice = voices[0];
   }
 }
@@ -1037,6 +1045,13 @@ voiceSelect.addEventListener('change', function() {
   var idx = parseInt(voiceSelect.value);
   if (voices[idx]) {
     selectedVoice = voices[idx];
+    localStorage.setItem('tts-voice', selectedVoice.name);
+    // Preview the selected voice so the user can hear it
+    speechSynthesis.cancel();
+    var preview = new SpeechSynthesisUtterance(selectedVoice.name + ', OK');
+    preview.voice = selectedVoice;
+    preview.rate = 1.0;
+    speechSynthesis.speak(preview);
   }
 });
 
