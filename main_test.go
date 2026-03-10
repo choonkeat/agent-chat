@@ -459,7 +459,7 @@ func TestAutocompleteProxy(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if len(resp.Results) != 2 || resp.Results[0] != "busy" || resp.Results[1] != "been up" {
+	if len(resp.Results) != 2 || resp.Results[0].V != "busy" || resp.Results[1].V != "been up" {
 		t.Errorf("unexpected results: %v", resp.Results)
 	}
 }
@@ -489,7 +489,7 @@ func TestAutocompletePerTriggerURL(t *testing.T) {
 	}
 	var resp autocompleteResponse
 	json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.Results) != 2 || resp.Results[0] != "deploy" {
+	if len(resp.Results) != 2 || resp.Results[0].V != "deploy" {
 		t.Errorf("unexpected results: %v", resp.Results)
 	}
 }
@@ -522,7 +522,7 @@ func TestAutocompleteBuiltinFilepath(t *testing.T) {
 	}
 	found := false
 	for _, r := range resp.Results {
-		if strings.HasSuffix(r, "main.go") {
+		if strings.HasSuffix(r.V, "main.go") {
 			found = true
 		}
 	}

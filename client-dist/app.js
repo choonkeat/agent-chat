@@ -778,11 +778,18 @@ function acShow(options, query) {
     return;
   }
   for (var i = 0; i < options.length; i++) {
+    var opt = typeof options[i] === 'string' ? { v: options[i], h: '' } : options[i];
     var div = document.createElement('div');
     div.className = 'ac-option';
     div.dataset.index = i;
-    div.dataset.value = options[i];
-    div.innerHTML = acHighlight(options[i], query);
+    div.dataset.value = opt.v;
+    div.innerHTML = acHighlight(opt.v, query);
+    if (opt.h) {
+      var hint = document.createElement('span');
+      hint.className = 'ac-hint';
+      hint.textContent = opt.h;
+      div.appendChild(hint);
+    }
     acDropdown.appendChild(div);
   }
   acActiveIndex = 0;
@@ -849,11 +856,23 @@ function escapeHTML(s) {
   return div.innerHTML;
 }
 
+// Normalize an autocomplete result to {v, h} format.
+// Accepts either a plain string or an object with v and optional h.
+function acNormalize(item) {
+  if (typeof item === 'string') return { v: item, h: '' };
+  return { v: item.v || '', h: item.h || '' };
+}
+
+// Normalize an array of results.
+function acNormalizeAll(items) {
+  return items.map(acNormalize);
+}
+
 // Check if option fuzzy-matches query (all query chars appear in order).
 function acFuzzyMatch(option, query) {
   if (!query) return true;
   var qi = 0;
-  var lo = option.toLowerCase();
+  var lo = (typeof option === 'string' ? option : option.v).toLowerCase();
   var lq = query.toLowerCase();
   for (var i = 0; i < lo.length && qi < lq.length; i++) {
     if (lo[i] === lq[qi]) qi++;
@@ -885,7 +904,8 @@ function acFetch(type, query) {
   }).then(function(r) { return r.json(); })
     .then(function(data) {
       // Support structured {results, info} or plain array.
-      var options = Array.isArray(data) ? data : (data.results || []);
+      var raw = Array.isArray(data) ? data : (data.results || []);
+      var options = acNormalizeAll(raw);
       var info = (!Array.isArray(data) && data.info) ? data.info : '';
       // Cache the full result set for client-side filtering.
       acCache = { type: type, query: query, results: options };

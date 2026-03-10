@@ -501,10 +501,16 @@ func parseTriggerConfig(s string) (string, map[string]string) {
 	return string(b), urlMap
 }
 
+// autocompleteItem is a single autocomplete result with a value and optional hint.
+type autocompleteItem struct {
+	V string `json:"v"`
+	H string `json:"h,omitempty"`
+}
+
 // autocompleteResponse is the structured response from /autocomplete.
 type autocompleteResponse struct {
-	Results []string `json:"results"`
-	Info    string   `json:"info,omitempty"`
+	Results []autocompleteItem `json:"results"`
+	Info    string             `json:"info,omitempty"`
 }
 
 // handleAutocomplete routes autocomplete requests to per-trigger URLs, the global
@@ -547,33 +553,52 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		}
 		defer resp.Body.Close()
 		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		// Wrap upstream array in structured format.
-		var results []string
-		if json.Unmarshal(upstreamBody, &results) != nil {
-			results = []string{}
+		// Accept both ["string"] and [{"v":"x","h":"y"}] from upstream.
+		var items []autocompleteItem
+		if json.Unmarshal(upstreamBody, &items) != nil {
+			// Try plain string array fallback.
+			var strings []string
+			if json.Unmarshal(upstreamBody, &strings) == nil {
+				items = stringsToItems(strings)
+			}
 		}
-		writeAutocompleteResponse(w, results, "")
+		writeAutocompleteResponse(w, items, "")
 		return
 	}
 
 	// Built-in handlers.
 	if req.Type == "filepath" {
-		root, _ := filepath.Abs(filepathRoot)
-		results := builtinFilepathComplete(filepathRoot, req.Query)
+		root := filepathRoot
+		// Support absolute paths: if query starts with /, walk from the
+		// query's directory prefix instead of filepathRoot.
+		if strings.HasPrefix(req.Query, "/") {
+			root = "/"
+		}
+		absRoot, _ := filepath.Abs(root)
+		results := builtinFilepathComplete(root, req.Query)
 		info := ""
 		if len(results) == 0 {
-			info = fmt.Sprintf("No files matching %q in %s", req.Query, root)
+			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
 		}
-		writeAutocompleteResponse(w, results, info)
+		writeAutocompleteResponse(w, stringsToItems(results), info)
 		return
 	}
 
-	writeAutocompleteResponse(w, []string{}, "")
+	writeAutocompleteResponse(w, []autocompleteItem{}, "")
 }
 
-func writeAutocompleteResponse(w http.ResponseWriter, results []string, info string) {
+func writeAutocompleteResponse(w http.ResponseWriter, results []autocompleteItem, info string) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info})
+}
+
+// stringsToItems converts plain string results to autocompleteItems.
+func stringsToItems(ss []string) []autocompleteItem {
+	items := make([]autocompleteItem, len(ss))
+	for i, s := range ss {
+		items[i] = autocompleteItem{V: s}
+	}
+	return items
 }
 
 // builtinFilepathComplete returns file paths under root that fuzzy-match the query,
@@ -584,6 +609,8 @@ func builtinFilepathComplete(root, query string) []string {
 		path  string
 		score int
 	}
+	// If query contains "/.", the user is explicitly targeting hidden dirs.
+	skipHidden := !strings.Contains(query, "/.")
 	var candidates []scored
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -594,7 +621,7 @@ func builtinFilepathComplete(root, query string) []string {
 		if path == root {
 			return nil
 		}
-		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+		if skipHidden && d.IsDir() && strings.HasPrefix(d.Name(), ".") {
 			return filepath.SkipDir
 		}
 		if s, ok := fuzzyScorePath(path, query); ok {
