@@ -1438,7 +1438,6 @@ function enableVoiceMode() {
     micRetryCount = 0;
     btnVoice.classList.add('active');
     voiceControls.classList.add('visible');
-    playBeep(880, 0.15);
     // If TTS warmup already succeeded (from the synchronous call above), skip.
     // Otherwise try again inside .then() as a fallback (works when Promise.then
     // preserves user activation, e.g. iOS Safari).
@@ -1487,7 +1486,6 @@ function disableVoiceMode() {
   isListening = false;
   ttsUnlocked = false;
   ttsQueue = [];
-  playBeep(440, 0.2);
 }
 
 btnVoice.addEventListener('click', function() {
@@ -1515,14 +1513,16 @@ function speakVerbalReply(text, quickReplies) {
     if (hasQuickReplies) enableInput(quickReplies);
     // Resume listening if voice mode is on
     if (voiceMode) {
-      playBeep(hasQuickReplies ? 880 : 440, 0.15);
       micRetryCount = 0;
       setTimeout(startListening, 200);
     }
   };
+  // For progress messages (no quick replies), append "Be right back" so the
+  // user knows the agent is still working. Reply messages speak as-is.
+  var spokenText = (!hasQuickReplies && text) ? text + ' Be right back.' : text;
   if (ttsUnlocked) {
     // TTS warmup succeeded — auto-play
-    speakText(text, onDone);
+    speakText(spokenText, onDone);
   } else {
     // TTS warmup did not succeed (likely iframe restriction on iOS).
     // Pulse the bubble's play button so user gesture unlocks TTS.
@@ -1712,7 +1712,8 @@ function connect() {
 
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
-        addAgentMessage(data.text || '', data.files, 'voice', data.ts);
+        var isProgress = !(data.quick_replies && data.quick_replies.length > 0);
+        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice', data.ts);
         if (isSpeaking) {
           console.log('[' + ts() + '] TTS busy — queuing reply');
           ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });

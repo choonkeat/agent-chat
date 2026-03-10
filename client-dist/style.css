@@ -145,6 +145,11 @@ body {
   background: #f5f3ff;
 }
 
+.bubble.brb::after {
+  content: " [brb]";
+  opacity: 0.5;
+}
+
 .bubble.system {
   align-self: center;
   background: transparent;
