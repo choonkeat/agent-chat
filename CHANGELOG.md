@@ -2,7 +2,17 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.10)
+## [Unreleased] (since 0.1.12)
+
+## [0.1.12] — 2026-03-11
+
+### Fixes
+- Merge default `@=filepath` trigger with custom `--autocomplete-triggers` instead of replacing it
+
+## [0.1.11] — 2026-03-11
+
+### Features
+- Add agent-chat branding link to Connected system message
 
 ## [0.1.10] — 2026-03-11
 
