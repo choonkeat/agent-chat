@@ -221,9 +221,9 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// This avoids relative-path resolution failures when the page is served
 	// behind a reverse proxy at a non-root path (e.g. /session/UUID).
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
-	triggers := autocompleteTriggers
-	if triggers == "" {
-		triggers = "@=filepath"
+	triggers := "@=filepath"
+	if autocompleteTriggers != "" {
+		triggers = triggers + "," + autocompleteTriggers
 	}
 	triggerJSON, urls := parseTriggerConfig(triggers)
 	triggerURLs = urls

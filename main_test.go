@@ -384,6 +384,42 @@ func TestParseTriggerConfig(t *testing.T) {
 	}
 }
 
+func TestParseTriggerConfigMerge(t *testing.T) {
+	// Simulates the merge logic from startHTTPServer: default @=filepath is
+	// always present, and custom triggers are appended (overriding defaults
+	// for the same character).
+
+	// Custom trigger without @: both should be present.
+	merged := "@=filepath" + "," + "/=slash-command"
+	got, urls := parseTriggerConfig(merged)
+	var m map[string]string
+	if err := json.Unmarshal([]byte(got), &m); err != nil {
+		t.Fatalf("invalid JSON: %s", got)
+	}
+	if m["@"] != "filepath" {
+		t.Errorf("expected default @=filepath, got @=%s", m["@"])
+	}
+	if m["/"] != "slash-command" {
+		t.Errorf("expected /=slash-command, got /=%s", m["/"])
+	}
+	if len(urls) != 0 {
+		t.Errorf("expected no URL overrides, got %v", urls)
+	}
+
+	// Custom trigger overrides @: custom wins because it comes last.
+	merged = "@=filepath" + "," + "@=mentions,/=slash-command"
+	got, urls = parseTriggerConfig(merged)
+	if err := json.Unmarshal([]byte(got), &m); err != nil {
+		t.Fatalf("invalid JSON: %s", got)
+	}
+	if m["@"] != "mentions" {
+		t.Errorf("expected custom @=mentions to override default, got @=%s", m["@"])
+	}
+	if m["/"] != "slash-command" {
+		t.Errorf("expected /=slash-command, got /=%s", m["/"])
+	}
+}
+
 func TestAutocompleteNoURLUnknownType(t *testing.T) {
 	origURL := autocompleteURL
 	origTriggerURLs := triggerURLs
