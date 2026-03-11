@@ -2,7 +2,12 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.9)
+## [Unreleased] (since 0.1.10)
+
+## [0.1.10] — 2026-03-11
+
+### Features
+- Pass through `has_more` from external autocomplete providers; update provider contract docs
 
 ## [0.1.9] — 2026-03-11
 
