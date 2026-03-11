@@ -348,86 +348,64 @@ func TestUploadMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestParseTriggerConfig(t *testing.T) {
-	// Empty input
-	got, urls := parseTriggerConfig("")
-	if got != "{}" {
-		t.Errorf("parseTriggerConfig(\"\") JSON = %s, want {}", got)
+func TestBuildTriggerMap(t *testing.T) {
+	// No flags: default @=builtin:filepath
+	m := buildTriggerMap("", "")
+	if m["@"] != "builtin:filepath" {
+		t.Errorf("expected default @=builtin:filepath, got @=%s", m["@"])
 	}
-	if urls != nil {
-		t.Errorf("parseTriggerConfig(\"\") urls = %v, want nil", urls)
-	}
-
-	// Single trigger without URL
-	got, urls = parseTriggerConfig("/=slash-command")
-	if got != `{"/":"slash-command"}` {
-		t.Errorf("parseTriggerConfig single = %s", got)
-	}
-	if len(urls) != 0 {
-		t.Errorf("expected no URL overrides, got %v", urls)
+	if len(m) != 1 {
+		t.Errorf("expected 1 entry, got %d: %v", len(m), m)
 	}
 
-	// Multiple triggers, one with URL
-	got, urls = parseTriggerConfig("/=slash-command=http://localhost:9000/completions,@=filepath")
-	var m map[string]string
-	if err := json.Unmarshal([]byte(got), &m); err != nil {
-		t.Fatalf("parseTriggerConfig returned invalid JSON: %s", got)
+	// New format: CHAR=URL
+	m = buildTriggerMap("/=http://localhost:9000/completions", "")
+	if m["/"] != "http://localhost:9000/completions" {
+		t.Errorf("expected URL, got %q", m["/"])
 	}
-	if m["/"] != "slash-command" || m["@"] != "filepath" {
-		t.Errorf("unexpected client map: %v", m)
+	if m["@"] != "builtin:filepath" {
+		t.Errorf("default @ should still be present, got %q", m["@"])
 	}
-	if urls["slash-command"] != "http://localhost:9000/completions" {
-		t.Errorf("expected URL for slash-command, got %q", urls["slash-command"])
+
+	// Legacy format: CHAR=TYPE=URL (type is ignored, URL is used)
+	m = buildTriggerMap("/=slash-command=http://localhost:9000/completions", "")
+	if m["/"] != "http://localhost:9000/completions" {
+		t.Errorf("legacy with URL: expected URL, got %q", m["/"])
 	}
-	if _, ok := urls["filepath"]; ok {
-		t.Error("filepath should not have a URL override")
+
+	// Legacy format: CHAR=TYPE with fallback URL
+	m = buildTriggerMap("/=slash-command", "http://fallback:9000")
+	if m["/"] != "http://fallback:9000" {
+		t.Errorf("legacy with fallback: expected fallback URL, got %q", m["/"])
+	}
+
+	// Legacy format: CHAR=TYPE without fallback URL — no entry added
+	m = buildTriggerMap("/=slash-command", "")
+	if _, ok := m["/"]; ok {
+		t.Errorf("legacy without fallback should not register /, got %q", m["/"])
+	}
+
+	// Override default @
+	m = buildTriggerMap("@=http://custom:8080/files", "")
+	if m["@"] != "http://custom:8080/files" {
+		t.Errorf("expected custom @ URL, got %q", m["@"])
 	}
 }
 
-func TestParseTriggerConfigMerge(t *testing.T) {
-	// Simulates the merge logic from startHTTPServer: default @=filepath is
-	// always present, and custom triggers are appended (overriding defaults
-	// for the same character).
-
-	// Custom trigger without @: both should be present.
-	merged := "@=filepath" + "," + "/=slash-command"
-	got, urls := parseTriggerConfig(merged)
-	var m map[string]string
-	if err := json.Unmarshal([]byte(got), &m); err != nil {
-		t.Fatalf("invalid JSON: %s", got)
-	}
-	if m["@"] != "filepath" {
-		t.Errorf("expected default @=filepath, got @=%s", m["@"])
-	}
-	if m["/"] != "slash-command" {
-		t.Errorf("expected /=slash-command, got /=%s", m["/"])
-	}
-	if len(urls) != 0 {
-		t.Errorf("expected no URL overrides, got %v", urls)
-	}
-
-	// Custom trigger overrides @: custom wins because it comes last.
-	merged = "@=filepath" + "," + "@=mentions,/=slash-command"
-	got, urls = parseTriggerConfig(merged)
-	if err := json.Unmarshal([]byte(got), &m); err != nil {
-		t.Fatalf("invalid JSON: %s", got)
-	}
-	if m["@"] != "mentions" {
-		t.Errorf("expected custom @=mentions to override default, got @=%s", m["@"])
-	}
-	if m["/"] != "slash-command" {
-		t.Errorf("expected /=slash-command, got /=%s", m["/"])
+func TestTriggerChars(t *testing.T) {
+	m := map[string]string{"@": "builtin:filepath", "/": "http://example.com"}
+	chars := triggerChars(m)
+	if len(chars) != 2 || chars[0] != "/" || chars[1] != "@" {
+		t.Errorf("expected sorted [/ @], got %v", chars)
 	}
 }
 
-func TestAutocompleteNoURLUnknownType(t *testing.T) {
-	origURL := autocompleteURL
-	origTriggerURLs := triggerURLs
-	autocompleteURL = ""
-	triggerURLs = nil
-	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
+func TestAutocompleteUnknownTrigger(t *testing.T) {
+	origMap := triggerMap
+	triggerMap = map[string]string{"@": "builtin:filepath"}
+	t.Cleanup(func() { triggerMap = origMap })
 
-	body := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
+	body := bytes.NewBufferString(`{"trigger":"/","query":"bu"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", body)
 	rr := httptest.NewRecorder()
 
@@ -457,17 +435,15 @@ func TestAutocompleteMethodNotAllowed(t *testing.T) {
 }
 
 func TestAutocompleteProxy(t *testing.T) {
-	// Mock upstream server
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		var req struct {
-			Type  string `json:"type"`
 			Query string `json:"query"`
 		}
 		json.Unmarshal(body, &req)
 
 		var results []string
-		if req.Type == "slash-command" && req.Query == "bu" {
+		if req.Query == "bu" {
 			results = []string{"busy", "been up"}
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -475,13 +451,11 @@ func TestAutocompleteProxy(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	origURL := autocompleteURL
-	origTriggerURLs := triggerURLs
-	autocompleteURL = upstream.URL
-	triggerURLs = nil
-	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
+	origMap := triggerMap
+	triggerMap = map[string]string{"@": "builtin:filepath", "/": upstream.URL}
+	t.Cleanup(func() { triggerMap = origMap })
 
-	reqBody := bytes.NewBufferString(`{"type":"slash-command","query":"bu"}`)
+	reqBody := bytes.NewBufferString(`{"trigger":"/","query":"bu"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
 	rr := httptest.NewRecorder()
 
@@ -500,50 +474,18 @@ func TestAutocompleteProxy(t *testing.T) {
 	}
 }
 
-func TestAutocompletePerTriggerURL(t *testing.T) {
-	// Mock upstream for slash-commands only
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`["deploy","docs"]`))
-	}))
-	defer upstream.Close()
-
-	origURL := autocompleteURL
-	origTriggerURLs := triggerURLs
-	autocompleteURL = ""
-	triggerURLs = map[string]string{"slash-command": upstream.URL}
-	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs })
-
-	reqBody := bytes.NewBufferString(`{"type":"slash-command","query":"d"}`)
-	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
-	rr := httptest.NewRecorder()
-
-	handleAutocomplete(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	var resp autocompleteResponse
-	json.Unmarshal(rr.Body.Bytes(), &resp)
-	if len(resp.Results) != 2 || resp.Results[0].V != "deploy" {
-		t.Errorf("unexpected results: %v", resp.Results)
-	}
-}
-
 func TestAutocompleteBuiltinFilepath(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "main.go"), nil, 0644)
 	os.WriteFile(filepath.Join(dir, "README.md"), nil, 0644)
 
-	origURL := autocompleteURL
-	origTriggerURLs := triggerURLs
+	origMap := triggerMap
 	origRoot := filepathRoot
-	autocompleteURL = ""
-	triggerURLs = nil
+	triggerMap = map[string]string{"@": "builtin:filepath"}
 	filepathRoot = dir
-	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs; filepathRoot = origRoot })
+	t.Cleanup(func() { triggerMap = origMap; filepathRoot = origRoot })
 
-	reqBody := bytes.NewBufferString(`{"type":"filepath","query":"main"}`)
+	reqBody := bytes.NewBufferString(`{"trigger":"@","query":"main"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
 	rr := httptest.NewRecorder()
 
@@ -569,17 +511,14 @@ func TestAutocompleteBuiltinFilepath(t *testing.T) {
 
 func TestAutocompleteBuiltinFilepathInfo(t *testing.T) {
 	dir := t.TempDir()
-	// Empty directory — no files to match
 
-	origURL := autocompleteURL
-	origTriggerURLs := triggerURLs
+	origMap := triggerMap
 	origRoot := filepathRoot
-	autocompleteURL = ""
-	triggerURLs = nil
+	triggerMap = map[string]string{"@": "builtin:filepath"}
 	filepathRoot = dir
-	t.Cleanup(func() { autocompleteURL = origURL; triggerURLs = origTriggerURLs; filepathRoot = origRoot })
+	t.Cleanup(func() { triggerMap = origMap; filepathRoot = origRoot })
 
-	reqBody := bytes.NewBufferString(`{"type":"filepath","query":"xyz"}`)
+	reqBody := bytes.NewBufferString(`{"trigger":"@","query":"xyz"}`)
 	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
 	rr := httptest.NewRecorder()
 

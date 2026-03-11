@@ -15,40 +15,60 @@ built-in handler. Typing `@mai` in the chat input suggests file paths matching
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `--autocomplete-url` | Default URL for types without a per-trigger URL | `http://localhost:9000/completions` |
-| `--autocomplete-triggers` | Comma-separated `CHAR=TYPE[=URL]` mappings | `/=slash-command=http://host/api,@=filepath` |
+| `--autocomplete-triggers` | Comma-separated `CHAR=URL` mappings | `/=http://host/api` |
+| `--autocomplete-url` | _(legacy)_ Fallback URL for triggers without an explicit URL | `http://localhost:9000/completions` |
 
 ### Trigger mappings
 
-Each mapping pairs a trigger character with a type string and an optional
-provider URL:
+Each mapping pairs a trigger character with a provider URL:
 
 ```
---autocomplete-triggers '/=slash-command=http://localhost:9000/completions,@=filepath'
+--autocomplete-triggers '/=http://localhost:9000/completions'
 ```
 
 This produces:
 
-| Character | Type | Provider |
-|-----------|------|----------|
-| `/` | `slash-command` | `http://localhost:9000/completions` |
-| `@` | `filepath` | built-in (no URL) |
+| Character | Provider |
+|-----------|----------|
+| `/` | `http://localhost:9000/completions` |
+| `@` | built-in filepath handler (default) |
+
+To override the default `@` trigger with a custom provider:
+
+```
+--autocomplete-triggers '@=http://my-server/files,/=http://host/api'
+```
+
+### Legacy format
+
+The old `CHAR=TYPE=URL` and `CHAR=TYPE` formats are still accepted for backward
+compatibility. The type name is ignored; only the URL matters:
+
+```
+# Legacy (still works):
+--autocomplete-triggers '/=slash-command=http://host/api'
+--autocomplete-triggers '/=slash-command' --autocomplete-url http://host/api
+
+# New (recommended):
+--autocomplete-triggers '/=http://host/api'
+```
 
 ### Resolution order
 
-When the server receives an autocomplete request for a given type:
+Internally, agent-chat maintains a flat map of trigger character → URL.
+When a request arrives for a trigger character:
 
-1. **Per-trigger URL** — if the trigger mapping included `=URL`, use that URL.
-2. **Global URL** — if `--autocomplete-url` is set, use it as fallback.
-3. **Built-in handler** — if the type is `filepath`, use the built-in handler.
-4. **Empty result** — return `[]`.
+1. **Per-trigger URL** — if the trigger has an explicit URL, proxy to it.
+2. **Built-in handler** — if the URL is `builtin:filepath`, use the built-in handler.
+3. **Empty result** — return `[]`.
 
 ### Built-in filepath handler
 
-The `filepath` type has a built-in handler that walks the working directory,
-skips hidden directories (e.g. `.git`), collects up to 500 file paths that
-fuzzy-match the query (case-insensitive, greedy left-to-right character
-matching), scores them by match quality, and returns the top 50.
+The `@` trigger defaults to `builtin:filepath`, a built-in handler that walks
+the working directory, skips hidden directories (e.g. `.git`), collects up to
+500 file paths that fuzzy-match the query (case-insensitive, greedy
+left-to-right character matching), scores them by match quality, and returns
+the top 50.
 
 #### Scoring
 
@@ -61,13 +81,6 @@ matches.
 
 External providers implementing the same contract should apply similar
 scoring to produce consistent results across built-in and custom handlers.
-
-This handler is used when no external URL is configured for the `filepath`
-type. To override it with an external provider:
-
-```
---autocomplete-triggers '@=filepath=http://my-server/files'
-```
 
 ## Proxy endpoint
 
@@ -83,14 +96,14 @@ POST /autocomplete HTTP/1.1
 Content-Type: application/json
 
 {
-  "type": "slash-command",
+  "trigger": "/",
   "query": "bu"
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Completion type from the trigger mapping |
+| `trigger` | string | The trigger character (e.g. `"/"`, `"@"`) |
 | `query` | string | Text the user typed after the trigger character |
 
 Body size limit: **4 096 bytes**.
@@ -132,15 +145,13 @@ the working directory and query to help diagnose the issue:
 
 ## Provider contract
 
-The external provider receives the exact same JSON body that was sent to
-`POST /autocomplete`:
+The server proxies a JSON body containing only the query to the provider URL:
 
 ```http
 POST <provider-url> HTTP/1.1
 Content-Type: application/json
 
 {
-  "type": "slash-command",
   "query": "bu"
 }
 ```
@@ -173,10 +184,9 @@ Response size limit enforced by the proxy: **64 KB**.
 @app.post("/completions")
 def completions(request):
     body = request.json()
-    type = body["type"]     # e.g. "slash-command"
     query = body["query"]   # e.g. "bu"
 
-    candidates, has_more = lookup(type, query, limit=50)
+    candidates, has_more = lookup(query, limit=50)
     return json_response({
         "results": candidates,  # ["build", "bump-version"]
         "has_more": has_more,   # true if results were truncated
@@ -190,6 +200,8 @@ the built-in chat UI.
 
 - **Trigger detection**: A trigger character is recognized when it appears at
   position 0 in the input or immediately after whitespace.
+- **Trigger config**: The server injects `AUTOCOMPLETE_TRIGGERS` into the page
+  as a JSON array of trigger characters (e.g. `["@", "/"]`).
 - **Debounce**: The client waits 200 ms after the last keystroke before
   sending a request.
 - **Client-side cache**: If the user extends a previous query (e.g. `b` → `bu`),

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -43,15 +44,17 @@ var themeCookieName string
 // uploadDir is the directory for uploaded files.
 var uploadDir string
 
-// autocompleteURL is the external HTTP endpoint to proxy autocomplete requests to.
+// autocompleteURL is a legacy flag: external HTTP endpoint used as fallback URL
+// for trigger entries that don't specify their own URL.
 var autocompleteURL string
 
-// autocompleteTriggers maps trigger characters to type names (e.g. "/=slash-command,@=filepath").
+// autocompleteTriggers is the raw flag value (e.g. "/=http://host/api,@=filepath").
 var autocompleteTriggers string
 
-// triggerURLs maps autocomplete type names to per-trigger provider URLs.
+// triggerMap is the resolved flat map of trigger character → URL.
+// A URL of "builtin:filepath" signals the built-in filepath handler.
 // Populated by parseTriggerConfig at startup.
-var triggerURLs map[string]string
+var triggerMap map[string]string
 
 // filepathRoot is the directory used by the built-in filepath autocompleter.
 var filepathRoot = "."
@@ -101,8 +104,8 @@ func main() {
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
 	flag.StringVar(&uploadDir, "upload-dir", "", "directory for uploaded files (default: temp dir)")
-	flag.StringVar(&autocompleteURL, "autocomplete-url", "", "external HTTP endpoint for autocomplete suggestions")
-	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to types (e.g. '/=slash-command,@=filepath')")
+	flag.StringVar(&autocompleteURL, "autocomplete-url", "", "legacy: fallback URL for triggers without an explicit URL")
+	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to URLs (e.g. '/=http://host/api')")
 	flag.Parse()
 
 	if *showVersion {
@@ -221,14 +224,10 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// This avoids relative-path resolution failures when the page is served
 	// behind a reverse proxy at a non-root path (e.g. /session/UUID).
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
-	triggers := "@=filepath"
-	if autocompleteTriggers != "" {
-		triggers = triggers + "," + autocompleteTriggers
-	}
-	triggerJSON, urls := parseTriggerConfig(triggers)
-	triggerURLs = urls
+	triggerMap = buildTriggerMap(autocompleteTriggers, autocompleteURL)
+	triggerCharsJSON, _ := json.Marshal(triggerChars(triggerMap))
 	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s;</script>",
-		themeCookieName, version+" ("+commit+")", triggerJSON)
+		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON))
 	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
@@ -476,29 +475,49 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseTriggerConfig parses trigger flag strings like "/=slash-command,@=filepath=http://host/path"
-// into client-side JSON ({"char":"type",...}) and a server-side map of type→URL for per-trigger routing.
-// Returns "{}" and nil if the input is empty.
-func parseTriggerConfig(s string) (string, map[string]string) {
-	if s == "" {
-		return "{}", nil
+// buildTriggerMap builds the flat trigger-char → URL map from command-line flags.
+// Default: "@" → "builtin:filepath". The triggers flag adds/overrides entries.
+//
+// New format: CHAR=URL (e.g. "/=http://host/api").
+// Legacy format: CHAR=TYPE=URL or CHAR=TYPE (type is ignored; if no URL,
+// the fallbackURL is used).
+func buildTriggerMap(triggers, fallbackURL string) map[string]string {
+	m := map[string]string{"@": "builtin:filepath"}
+	if triggers == "" {
+		return m
 	}
-	clientMap := make(map[string]string)
-	urlMap := make(map[string]string)
-	for _, part := range strings.Split(s, ",") {
-		parts := strings.SplitN(strings.TrimSpace(part), "=", 3)
+	for _, part := range strings.Split(triggers, ",") {
+		parts := strings.SplitN(strings.TrimSpace(part), "=", 2)
 		if len(parts) < 2 {
 			continue
 		}
 		char := strings.TrimSpace(parts[0])
-		typeName := strings.TrimSpace(parts[1])
-		clientMap[char] = typeName
-		if len(parts) == 3 {
-			urlMap[typeName] = strings.TrimSpace(parts[2])
+		rest := strings.TrimSpace(parts[1])
+		if strings.HasPrefix(rest, "http://") || strings.HasPrefix(rest, "https://") || strings.HasPrefix(rest, "builtin:") {
+			// New format: CHAR=URL
+			m[char] = rest
+		} else {
+			// Legacy format: CHAR=TYPE or CHAR=TYPE=URL
+			legacy := strings.SplitN(rest, "=", 2)
+			if len(legacy) == 2 {
+				m[char] = strings.TrimSpace(legacy[1])
+			} else if fallbackURL != "" {
+				m[char] = fallbackURL
+			}
+			// else: no URL available, skip (char won't be registered)
 		}
 	}
-	b, _ := json.Marshal(clientMap)
-	return string(b), urlMap
+	return m
+}
+
+// triggerChars returns the list of trigger characters from a trigger map.
+func triggerChars(m map[string]string) []string {
+	chars := make([]string, 0, len(m))
+	for ch := range m {
+		chars = append(chars, ch)
+	}
+	sort.Strings(chars)
+	return chars
 }
 
 // autocompleteItem is a single autocomplete result with a value and optional hint.
@@ -514,8 +533,8 @@ type autocompleteResponse struct {
 	HasMore bool               `json:"has_more,omitempty"`
 }
 
-// handleAutocomplete routes autocomplete requests to per-trigger URLs, the global
-// autocomplete URL, or built-in handlers (e.g. filepath completion).
+// handleAutocomplete looks up the trigger character in the flat map and either
+// delegates to a built-in handler or proxies to the configured URL.
 func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -529,32 +548,42 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type  string `json:"type"`
-		Query string `json:"query"`
+		Trigger string `json:"trigger"`
+		Query   string `json:"query"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Resolve provider URL: per-trigger URL > global URL > built-in handler.
-	providerURL := ""
-	if triggerURLs != nil {
-		providerURL = triggerURLs[req.Type]
-	}
-	if providerURL == "" {
-		providerURL = autocompleteURL
+	providerURL := triggerMap[req.Trigger]
+
+	// Built-in filepath handler.
+	if providerURL == "builtin:filepath" {
+		root := filepathRoot
+		if strings.HasPrefix(req.Query, "/") {
+			root = "/"
+		}
+		absRoot, _ := filepath.Abs(root)
+		results, hasMore := builtinFilepathComplete(root, req.Query)
+		info := ""
+		if len(results) == 0 {
+			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
+		}
+		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore)
+		return
 	}
 
+	// External URL proxy.
 	if providerURL != "" {
-		resp, err := http.Post(providerURL, "application/json", strings.NewReader(string(body)))
+		proxyBody, _ := json.Marshal(map[string]string{"query": req.Query})
+		resp, err := http.Post(providerURL, "application/json", bytes.NewReader(proxyBody))
 		if err != nil {
 			http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
 		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		// Accept structured {results, has_more}, item array, or string array.
 		var items []autocompleteItem
 		hasMore := false
 		var structured struct {
@@ -570,31 +599,12 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		} else if json.Unmarshal(upstreamBody, &items) != nil {
-			// Try plain string array fallback.
 			var strings []string
 			if json.Unmarshal(upstreamBody, &strings) == nil {
 				items = stringsToItems(strings)
 			}
 		}
 		writeAutocompleteResponse(w, items, "", hasMore)
-		return
-	}
-
-	// Built-in handlers.
-	if req.Type == "filepath" {
-		root := filepathRoot
-		// Support absolute paths: if query starts with /, walk from the
-		// query's directory prefix instead of filepathRoot.
-		if strings.HasPrefix(req.Query, "/") {
-			root = "/"
-		}
-		absRoot, _ := filepath.Abs(root)
-		results, hasMore := builtinFilepathComplete(root, req.Query)
-		info := ""
-		if len(results) == 0 {
-			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
-		}
-		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore)
 		return
 	}
 

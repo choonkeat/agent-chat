@@ -731,7 +731,11 @@ chatInput.addEventListener('input', autoGrow);
 // --- Autocomplete ---
 
 var acDropdown = document.getElementById('autocomplete-dropdown');
-var acTriggers = (typeof AUTOCOMPLETE_TRIGGERS !== 'undefined') ? AUTOCOMPLETE_TRIGGERS : {};
+// AUTOCOMPLETE_TRIGGERS is an array of trigger characters (e.g. ["@", "/"]).
+var acTriggersArr = (typeof AUTOCOMPLETE_TRIGGERS !== 'undefined') ? AUTOCOMPLETE_TRIGGERS : [];
+// Build a Set for O(1) lookup.
+var acTriggers = {};
+for (var _i = 0; _i < acTriggersArr.length; _i++) { acTriggers[acTriggersArr[_i]] = true; }
 var acDebounceTimer = null;
 var acActiveIndex = -1;   // currently highlighted option in dropdown
 var acTriggerPos = -1;    // position of the trigger character in the textarea
@@ -880,13 +884,13 @@ function acFuzzyMatch(option, query) {
   return qi === lq.length;
 }
 
-function acFetch(type, query) {
+function acFetch(trigger, query) {
   // Check cache: if query extends the cached query, filter client-side.
   // Skip cache if the cached results were empty or if the server indicated
   // there are more results beyond the returned set (has_more). In large
   // directories the server truncates results, so re-querying with a more
   // specific query may yield better matches.
-  if (acCache && acCache.type === type && acCache.results.length > 0 && !acCache.hasMore && query.indexOf(acCache.query) === 0) {
+  if (acCache && acCache.trigger === trigger && acCache.results.length > 0 && !acCache.hasMore && query.indexOf(acCache.query) === 0) {
     var filtered = acCache.results.filter(function(opt) {
       return acFuzzyMatch(opt, query);
     });
@@ -901,7 +905,7 @@ function acFetch(type, query) {
   fetch('/autocomplete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: type, query: query })
+    body: JSON.stringify({ trigger: trigger, query: query })
   }).then(function(r) { return r.json(); })
     .then(function(data) {
       // Support structured {results, info} or plain array.
@@ -910,7 +914,7 @@ function acFetch(type, query) {
       var info = (!Array.isArray(data) && data.info) ? data.info : '';
       var hasMore = (!Array.isArray(data) && data.has_more) ? true : false;
       // Cache the full result set for client-side filtering.
-      acCache = { type: type, query: query, results: options, hasMore: hasMore };
+      acCache = { trigger: trigger, query: query, results: options, hasMore: hasMore };
       // Only show if we're still in the same trigger context
       if (acVisible || acTriggerPos >= 0) {
         if (options.length === 0 && info) {
@@ -939,16 +943,16 @@ chatInput.addEventListener('input', function () {
   acTriggerChar = trigger.char;
 
   // No debounce needed for cache hits (client-side filtering is instant).
-  var type = acTriggers[trigger.char];
-  if (acCache && acCache.type === type && acCache.results.length > 0 && !acCache.hasMore && trigger.query.indexOf(acCache.query) === 0) {
-    acFetch(type, trigger.query);
+  var triggerCh = trigger.char;
+  if (acCache && acCache.trigger === triggerCh && acCache.results.length > 0 && !acCache.hasMore && trigger.query.indexOf(acCache.query) === 0) {
+    acFetch(triggerCh, trigger.query);
     return;
   }
 
   acShowStatus('Loading\u2026');
   clearTimeout(acDebounceTimer);
   acDebounceTimer = setTimeout(function () {
-    acFetch(type, trigger.query);
+    acFetch(triggerCh, trigger.query);
   }, 200);
 });
 
