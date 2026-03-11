@@ -145,11 +145,23 @@ Content-Type: application/json
 }
 ```
 
-The provider must return:
+The provider must return **Status 200** with one of these JSON formats (in
+order of preference):
 
-- **Status 200** with a JSON body that is an array of strings (e.g. `["a","b"]`).
-  The proxy wraps the array into the structured `{results, info}` format
-  before forwarding to the client.
+1. **Structured object** with `results` array and optional `has_more`:
+   ```json
+   {"results": ["build", "bump-version"], "has_more": true}
+   ```
+   The `has_more` flag tells the client not to cache results, ensuring each
+   keystroke re-queries for better matches. Omit or set to `false` when the
+   result set is complete.
+
+2. **Array of items** with value/hint pairs: `[{"v":"build","h":"Run build"}]`
+
+3. **Plain string array**: `["build", "bump-version"]`
+
+For formats 2 and 3, `has_more` defaults to `false`.
+
 - Non-200 status codes cause agent-chat to return **502** to the client.
 - Malformed JSON responses are treated as an empty array.
 
@@ -164,8 +176,11 @@ def completions(request):
     type = body["type"]     # e.g. "slash-command"
     query = body["query"]   # e.g. "bu"
 
-    candidates = lookup(type, query)
-    return json_response(candidates)  # ["build", "bump-version"]
+    candidates, has_more = lookup(type, query, limit=50)
+    return json_response({
+        "results": candidates,  # ["build", "bump-version"]
+        "has_more": has_more,   # true if results were truncated
+    })
 ```
 
 ## Client behavior summary

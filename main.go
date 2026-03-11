@@ -554,16 +554,29 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		}
 		defer resp.Body.Close()
 		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		// Accept both ["string"] and [{"v":"x","h":"y"}] from upstream.
+		// Accept structured {results, has_more}, item array, or string array.
 		var items []autocompleteItem
-		if json.Unmarshal(upstreamBody, &items) != nil {
+		hasMore := false
+		var structured struct {
+			Results json.RawMessage `json:"results"`
+			HasMore bool            `json:"has_more"`
+		}
+		if json.Unmarshal(upstreamBody, &structured) == nil && len(structured.Results) > 0 {
+			hasMore = structured.HasMore
+			if json.Unmarshal(structured.Results, &items) != nil {
+				var strings []string
+				if json.Unmarshal(structured.Results, &strings) == nil {
+					items = stringsToItems(strings)
+				}
+			}
+		} else if json.Unmarshal(upstreamBody, &items) != nil {
 			// Try plain string array fallback.
 			var strings []string
 			if json.Unmarshal(upstreamBody, &strings) == nil {
 				items = stringsToItems(strings)
 			}
 		}
-		writeAutocompleteResponse(w, items, "", false)
+		writeAutocompleteResponse(w, items, "", hasMore)
 		return
 	}
 
