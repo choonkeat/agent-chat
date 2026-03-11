@@ -1699,6 +1699,9 @@ function connect() {
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
         var label = hasConnectedBefore ? 'Reconnected' : 'Connected';
+        if (!hasConnectedBefore) {
+          label += ' \u00b7 [agent-chat](https://github.com/choonkeat/agent-chat)';
+        }
         if (data.version) {
           var pageVersion = typeof SERVER_VERSION !== 'undefined' ? SERVER_VERSION : '';
           if (pageVersion && pageVersion !== data.version) {
