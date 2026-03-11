@@ -511,6 +511,7 @@ type autocompleteItem struct {
 type autocompleteResponse struct {
 	Results []autocompleteItem `json:"results"`
 	Info    string             `json:"info,omitempty"`
+	HasMore bool               `json:"has_more,omitempty"`
 }
 
 // handleAutocomplete routes autocomplete requests to per-trigger URLs, the global
@@ -562,7 +563,7 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 				items = stringsToItems(strings)
 			}
 		}
-		writeAutocompleteResponse(w, items, "")
+		writeAutocompleteResponse(w, items, "", false)
 		return
 	}
 
@@ -575,21 +576,21 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 			root = "/"
 		}
 		absRoot, _ := filepath.Abs(root)
-		results := builtinFilepathComplete(root, req.Query)
+		results, hasMore := builtinFilepathComplete(root, req.Query)
 		info := ""
 		if len(results) == 0 {
 			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
 		}
-		writeAutocompleteResponse(w, stringsToItems(results), info)
+		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore)
 		return
 	}
 
-	writeAutocompleteResponse(w, []autocompleteItem{}, "")
+	writeAutocompleteResponse(w, []autocompleteItem{}, "", false)
 }
 
-func writeAutocompleteResponse(w http.ResponseWriter, results []autocompleteItem, info string) {
+func writeAutocompleteResponse(w http.ResponseWriter, results []autocompleteItem, info string, hasMore bool) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info})
+	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info, HasMore: hasMore})
 }
 
 // stringsToItems converts plain string results to autocompleteItems.
@@ -604,7 +605,7 @@ func stringsToItems(ss []string) []autocompleteItem {
 // builtinFilepathComplete returns file paths under root that fuzzy-match the query,
 // sorted by match quality (lower score = better match). Collects up to 500 candidates,
 // scores them, and returns the top 50.
-func builtinFilepathComplete(root, query string) []string {
+func builtinFilepathComplete(root, query string) ([]string, bool) {
 	type scored struct {
 		path  string
 		score int
@@ -612,6 +613,7 @@ func builtinFilepathComplete(root, query string) []string {
 	// If query contains "/.", the user is explicitly targeting hidden dirs.
 	skipHidden := !strings.Contains(query, "/.")
 	var candidates []scored
+	walkCapped := false
 	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -628,6 +630,7 @@ func builtinFilepathComplete(root, query string) []string {
 			candidates = append(candidates, scored{path, s})
 		}
 		if len(candidates) >= 500 {
+			walkCapped = true
 			return filepath.SkipAll
 		}
 		return nil
@@ -642,11 +645,12 @@ func builtinFilepathComplete(root, query string) []string {
 	if len(candidates) < limit {
 		limit = len(candidates)
 	}
+	hasMore := walkCapped || len(candidates) > limit
 	results := make([]string, limit)
 	for i := 0; i < limit; i++ {
 		results[i] = candidates[i].path
 	}
-	return results
+	return results, hasMore
 }
 
 // fuzzyScorePath checks if all query characters appear in s in order (case-insensitive)

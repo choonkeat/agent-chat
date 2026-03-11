@@ -103,7 +103,8 @@ Content-Type: application/json
 
 {
   "results": ["build", "bump-version", "busy"],
-  "info": ""
+  "info": "",
+  "has_more": false
 }
 ```
 
@@ -111,6 +112,7 @@ Content-Type: application/json
 |-------|------|-------------|
 | `results` | string[] | Completion candidates |
 | `info` | string | Optional message shown when results are empty (e.g. debug context) |
+| `has_more` | bool | `true` when the server truncated results and more matches exist. Clients should not cache these results — re-query with a more specific query for better matches. Omitted when `false`. |
 
 When the built-in filepath handler returns no results, `info` includes
 the working directory and query to help diagnose the issue:
@@ -177,6 +179,9 @@ the built-in chat UI.
   sending a request.
 - **Client-side cache**: If the user extends a previous query (e.g. `b` → `bu`),
   the client filters the cached results locally instead of making a new request.
+  The cache is bypassed when the server indicated `has_more: true`, meaning
+  results were truncated — in that case each keystroke re-queries the server
+  (with debounce) for better matches.
 - **Fuzzy matching**: Candidates are matched greedily left-to-right against the
   query characters (case-insensitive).
 - **Selection**: When the user picks a candidate, the trigger character plus the

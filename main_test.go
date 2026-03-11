@@ -569,7 +569,7 @@ func TestBuiltinFilepathComplete(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, ".git"), 0755)
 	os.WriteFile(filepath.Join(dir, ".git", "config"), nil, 0644)
 
-	results := builtinFilepathComplete(dir, "")
+	results, _ := builtinFilepathComplete(dir, "")
 	// Should include main.go, README.md, src, src/app.go but NOT .git/config
 	for _, r := range results {
 		if strings.Contains(r, ".git") {
@@ -581,7 +581,7 @@ func TestBuiltinFilepathComplete(t *testing.T) {
 	}
 
 	// Fuzzy match
-	results = builtinFilepathComplete(dir, "app")
+	results, _ = builtinFilepathComplete(dir, "app")
 	found := false
 	for _, r := range results {
 		if strings.HasSuffix(r, "app.go") {
@@ -640,7 +640,7 @@ func TestBuiltinFilepathCompleteScoring(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "tasks"), 0755)
 	os.WriteFile(filepath.Join(dir, "tasks", "readme.md"), nil, 0644)
 
-	results := builtinFilepathComplete(dir, "task")
+	results, _ := builtinFilepathComplete(dir, "task")
 	if len(results) < 2 {
 		t.Fatalf("expected at least 2 results, got %v", results)
 	}

@@ -882,10 +882,11 @@ function acFuzzyMatch(option, query) {
 
 function acFetch(type, query) {
   // Check cache: if query extends the cached query, filter client-side.
-  // Skip cache if the cached results were empty — a longer query might
-  // match files that weren't returned for the shorter query (e.g. the
-  // server caps results at 50).
-  if (acCache && acCache.type === type && acCache.results.length > 0 && query.indexOf(acCache.query) === 0) {
+  // Skip cache if the cached results were empty or if the server indicated
+  // there are more results beyond the returned set (has_more). In large
+  // directories the server truncates results, so re-querying with a more
+  // specific query may yield better matches.
+  if (acCache && acCache.type === type && acCache.results.length > 0 && !acCache.hasMore && query.indexOf(acCache.query) === 0) {
     var filtered = acCache.results.filter(function(opt) {
       return acFuzzyMatch(opt, query);
     });
@@ -907,8 +908,9 @@ function acFetch(type, query) {
       var raw = Array.isArray(data) ? data : (data.results || []);
       var options = acNormalizeAll(raw);
       var info = (!Array.isArray(data) && data.info) ? data.info : '';
+      var hasMore = (!Array.isArray(data) && data.has_more) ? true : false;
       // Cache the full result set for client-side filtering.
-      acCache = { type: type, query: query, results: options };
+      acCache = { type: type, query: query, results: options, hasMore: hasMore };
       // Only show if we're still in the same trigger context
       if (acVisible || acTriggerPos >= 0) {
         if (options.length === 0 && info) {
@@ -938,7 +940,7 @@ chatInput.addEventListener('input', function () {
 
   // No debounce needed for cache hits (client-side filtering is instant).
   var type = acTriggers[trigger.char];
-  if (acCache && acCache.type === type && acCache.results.length > 0 && trigger.query.indexOf(acCache.query) === 0) {
+  if (acCache && acCache.type === type && acCache.results.length > 0 && !acCache.hasMore && trigger.query.indexOf(acCache.query) === 0) {
     acFetch(type, trigger.query);
     return;
   }
