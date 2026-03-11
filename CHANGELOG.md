@@ -2,13 +2,16 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.8)
+## [Unreleased] (since 0.1.9)
+
+## [0.1.9] — 2026-03-11
 
 ### Features
 - Replace beep tones with spoken "Be right back" for voice progress updates
 - Preview TTS voice on selection and persist choice in localStorage
 - Distinct beep tones for active vs passive listening (superseded by spoken brb)
 - Score and rank autocomplete results by match quality
+- Add `has_more` flag to autocomplete API; skip client cache when results are truncated
 
 ### Fixes
 - TTS cutoff on iOS: proportional safety timeout and numbered-list protection
