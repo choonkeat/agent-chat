@@ -10,7 +10,8 @@
     "bin"
   ],
   "scripts": {
-    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(__dirname,'bin','agent-chat.js'),0o755)}catch(e){}\""
+    "postinstall": "node -e \"try{require('fs').chmodSync(require('path').join(__dirname,'bin','agent-chat.js'),0o755)}catch(e){}\"",
+    "prepare": "node scripts/prepare-local-build.js"
   },
   "repository": {
     "type": "git",
