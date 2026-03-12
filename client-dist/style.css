@@ -544,6 +544,17 @@ body {
   50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.1); }
 }
 
+#btn-voice.speaking {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+  animation: voiceSpeaking 1.2s ease-in-out infinite;
+}
+
+@keyframes voiceSpeaking {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.1); }
+}
+
 /* --- Voice controls dropdown --- */
 
 #voice-controls {

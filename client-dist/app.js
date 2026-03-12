@@ -1151,6 +1151,7 @@ function speakText(text, onDone) {
   speechSynthesis.cancel();
   if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
   isSpeaking = true;
+  btnVoice.classList.add('speaking');
   addSystemBubble('Speaking...');
   var ttsStart = Date.now();
   var done = false;
@@ -1158,6 +1159,7 @@ function speakText(text, onDone) {
     if (done) return;
     done = true;
     isSpeaking = false;
+    btnVoice.classList.remove('speaking');
     if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
     console.log('[' + ts() + '] TTS finished (' + reason + ') after ' + (Date.now() - ttsStart) + 'ms');
     if (onDone) onDone();
@@ -1521,7 +1523,7 @@ function enableVoiceMode() {
 
 function disableVoiceMode() {
   voiceMode = false;
-  btnVoice.classList.remove('active');
+  btnVoice.classList.remove('active', 'speaking');
   voiceControls.classList.remove('visible');
   if (micRetryTimer) { clearTimeout(micRetryTimer); micRetryTimer = null; }
   if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
@@ -1538,6 +1540,17 @@ function disableVoiceMode() {
 }
 
 btnVoice.addEventListener('click', function() {
+  if (isSpeaking) {
+    // Interrupt TTS — cancel speech, clear queue, go back to listening
+    speechSynthesis.cancel();
+    isSpeaking = false;
+    btnVoice.classList.remove('speaking');
+    if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
+    ttsQueue = [];
+    micRetryCount = 0;
+    setTimeout(startListening, 200);
+    return;
+  }
   if (voiceMode) {
     disableVoiceMode();
   } else {
