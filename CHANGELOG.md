@@ -2,7 +2,13 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.12)
+## [Unreleased] (since 0.1.13)
+
+## [0.1.13] — 2026-03-12
+
+### Features
+- Show amber warning bubble when not in iframe, prompting user to type `check_messages`
+- Update nudge text to "reply me with a send_message"
 
 ## [0.1.12] — 2026-03-11
 

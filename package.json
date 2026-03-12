@@ -1,6 +1,6 @@
 {
   "name": "@choonkeat/agent-chat",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "A \"less intimidating\" chat UI for any agent",
   "type": "module",
   "bin": {
