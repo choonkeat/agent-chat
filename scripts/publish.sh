@@ -6,6 +6,23 @@ OUT_DIR="$REPO_ROOT/npm-platforms"
 DRY_RUN="${DRY_RUN:-true}"
 OTP="${NPM_OTP:-}"
 
+# ── 0. Verify optionalDependencies match the main version ────────────────
+VERSION=$(node -p "require('$REPO_ROOT/package.json').version")
+node -e "
+  const pkg = require('$REPO_ROOT/package.json');
+  const deps = pkg.optionalDependencies || {};
+  const bad = Object.entries(deps).filter(([,v]) => v !== pkg.version);
+  if (bad.length) {
+    bad.forEach(([k,v]) => console.error('  ' + k + ': ' + v + ' (expected ' + pkg.version + ')'));
+    process.exit(1);
+  }
+" || {
+  echo ""
+  echo "ERROR: optionalDependencies version mismatch!"
+  echo "Run: make bump VERSION=$VERSION"
+  exit 1
+}
+
 if [ "$DRY_RUN" = "true" ]; then
   PUBLISH_ARGS="--dry-run"
   echo "Dry-run mode (set DRY_RUN=false to publish for real)"
