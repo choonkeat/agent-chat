@@ -150,6 +150,11 @@ body {
   opacity: 0.5;
 }
 
+.bubble.lmk::after {
+  content: " [lmk]";
+  opacity: 0.5;
+}
+
 .bubble.system {
   align-self: center;
   background: transparent;

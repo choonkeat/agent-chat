@@ -1567,8 +1567,8 @@ function speakVerbalReply(text, quickReplies) {
     }
   };
   // For progress messages (no quick replies), append "Be right back" so the
-  // user knows the agent is still working. Reply messages speak as-is.
-  var spokenText = (!hasQuickReplies && text) ? text + ' Be right back.' : text;
+  // user knows the agent is still working. For replies, append "Let me know."
+  var spokenText = (!hasQuickReplies && text) ? text + ' Be right back.' : (hasQuickReplies && text) ? text + ' Let me know.' : text;
   if (ttsUnlocked) {
     // TTS warmup succeeded — auto-play
     speakText(spokenText, onDone);
@@ -1638,7 +1638,8 @@ function replayHistory(history) {
         break;
       case 'verbalReply':
         if (event.text || (event.files && event.files.length > 0)) {
-          addBubble(event.text, 'agent', event.files, 'voice', event.ts);
+          var hasReplies = event.quick_replies && event.quick_replies.length > 0;
+          addBubble(event.text, 'agent', event.files, hasReplies ? 'voice lmk' : 'voice brb', event.ts);
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
@@ -1765,7 +1766,7 @@ function connect() {
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
         var isProgress = !(data.quick_replies && data.quick_replies.length > 0);
-        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice', data.ts);
+        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice lmk', data.ts);
         if (isSpeaking) {
           console.log('[' + ts() + '] TTS busy — queuing reply');
           ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
