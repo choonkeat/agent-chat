@@ -43,6 +43,7 @@ var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null, ref: FileRef|null, uploading: bool, uploadFailed: bool, abortController: AbortController|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
+var warningShown = false; // show "type check_messages" warning only once
 
 // --- Voice mode state ---
 var voiceMode = false;
@@ -1016,9 +1017,7 @@ quickReplies.addEventListener('click', function (e) {
   var message = chip.dataset.message || '';
   if (!message) return;
   // Don't display bubble — wait for server broadcast (same as handleSend).
-  if (window.parent !== window) {
-    pendingNotifyParent = true;
-  }
+  pendingNotifyParent = true;
   freezeCurrentReplies(message);
   sendMessage(message);
   showLoading(); // hides quick replies via mutual exclusivity
@@ -1806,7 +1805,7 @@ function connect() {
         if (pendingNotifyParent) {
           var nudgeText = pendingInterrupt
             ? 'check_messages; ask me how to proceed'
-            : 'check_messages; i sent u a chat message';
+            : 'check_messages; reply me with a send_message';
           if (window.parent !== window) {
             if (pendingInterrupt) {
               // Voice interrupt: send Esc-Esc to abort current tool, then
@@ -1821,9 +1820,10 @@ function connect() {
               }
               window.parent.postMessage(msg, '*');
             }
-          } else {
-            // No parent frame (real terminal) — show system bubble with instructions.
-            addBubble('Unable to get to the agent. Type this in your agent terminal: ' + nudgeText, 'system');
+          } else if (!warningShown) {
+            // Parent not connected — show warning bubble with instructions (once).
+            warningShown = true;
+            addBubble('Type `check_messages` in your agent terminal to connect this chat. You only need to do this once.', 'agent', null, 'warning');
           }
           pendingInterrupt = false;
           pendingNotifyParent = false;

@@ -158,6 +158,31 @@ body {
   padding: 0.2rem 0;
 }
 
+.bubble.warning {
+  align-self: flex-start;
+  background: #92400e;
+  color: #fef3c7;
+  border-bottom-left-radius: 3px;
+  border-left: 3px solid #f59e0b;
+}
+
+.bubble.warning code {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
+[data-theme="light"] .bubble.warning {
+  background: #fef3c7;
+  color: #92400e;
+  border-left-color: #d97706;
+}
+
+[data-theme="light"] .bubble.warning code {
+  background: rgba(0, 0, 0, 0.08);
+}
+
 .system-collapse-counter {
   align-self: center;
   color: var(--text-muted);
