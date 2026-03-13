@@ -759,7 +759,7 @@ function findTrigger(text, cursorPos) {
       if (i === 0 || /\s/.test(text[i - 1])) {
         return { char: ch, pos: i, query: text.substring(i + 1, cursorPos) };
       }
-      return null;
+      continue;
     }
   }
   return null;
