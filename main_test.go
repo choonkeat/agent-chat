@@ -349,13 +349,16 @@ func TestUploadMethodNotAllowed(t *testing.T) {
 }
 
 func TestBuildTriggerMap(t *testing.T) {
-	// No flags: default @=builtin:filepath
+	// No flags: defaults @=builtin:filepath, :=builtin:emoji
 	m := buildTriggerMap("", "")
 	if m["@"] != "builtin:filepath" {
 		t.Errorf("expected default @=builtin:filepath, got @=%s", m["@"])
 	}
-	if len(m) != 1 {
-		t.Errorf("expected 1 entry, got %d: %v", len(m), m)
+	if m[":"] != "builtin:emoji" {
+		t.Errorf("expected default :=builtin:emoji, got :=%s", m[":"])
+	}
+	if len(m) != 2 {
+		t.Errorf("expected 2 entries, got %d: %v", len(m), m)
 	}
 
 	// New format: CHAR=URL
@@ -531,6 +534,146 @@ func TestAutocompleteBuiltinFilepathInfo(t *testing.T) {
 	}
 	if !strings.Contains(resp.Info, "xyz") || !strings.Contains(resp.Info, dir) {
 		t.Errorf("expected info to contain query and dir, got %q", resp.Info)
+	}
+}
+
+func TestAutocompleteProxyReplaceTrigger(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results":         []map[string]string{{"v": "❤️", "h": "heart"}},
+			"replace_trigger": true,
+		})
+	}))
+	defer upstream.Close()
+
+	origMap := triggerMap
+	triggerMap = map[string]string{":": upstream.URL}
+	t.Cleanup(func() { triggerMap = origMap })
+
+	reqBody := bytes.NewBufferString(`{"trigger":":","query":"hea"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp autocompleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !resp.ReplaceTrigger {
+		t.Error("expected replace_trigger to be true")
+	}
+	if len(resp.Results) != 1 || resp.Results[0].V != "❤️" {
+		t.Errorf("unexpected results: %v", resp.Results)
+	}
+}
+
+func TestAutocompleteProxyReplaceTriggerDefault(t *testing.T) {
+	// When provider doesn't send replace_trigger, it should default to false
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results": []string{"build"},
+		})
+	}))
+	defer upstream.Close()
+
+	origMap := triggerMap
+	triggerMap = map[string]string{"/": upstream.URL}
+	t.Cleanup(func() { triggerMap = origMap })
+
+	reqBody := bytes.NewBufferString(`{"trigger":"/","query":"bu"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	var resp autocompleteResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.ReplaceTrigger {
+		t.Error("expected replace_trigger to be false when not set by provider")
+	}
+}
+
+func TestAutocompleteBuiltinEmoji(t *testing.T) {
+	origMap := triggerMap
+	triggerMap = map[string]string{":": "builtin:emoji"}
+	t.Cleanup(func() { triggerMap = origMap })
+
+	reqBody := bytes.NewBufferString(`{"trigger":":","query":"heart"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp autocompleteResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if !resp.ReplaceTrigger {
+		t.Error("expected replace_trigger to be true for emoji handler")
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("expected emoji results for 'heart' query")
+	}
+	// First result should be the heart emoji (exact keyword match)
+	if resp.Results[0].V != "❤️" {
+		t.Errorf("expected ❤️ as first result, got %q", resp.Results[0].V)
+	}
+	if resp.Results[0].H != "heart" {
+		t.Errorf("expected 'heart' as hint, got %q", resp.Results[0].H)
+	}
+}
+
+func TestAutocompleteBuiltinEmojiEmpty(t *testing.T) {
+	origMap := triggerMap
+	triggerMap = map[string]string{":": "builtin:emoji"}
+	t.Cleanup(func() { triggerMap = origMap })
+
+	// Empty query should return popular emojis
+	reqBody := bytes.NewBufferString(`{"trigger":":","query":""}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	var resp autocompleteResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Results) == 0 {
+		t.Error("expected popular emojis for empty query")
+	}
+	if !resp.ReplaceTrigger {
+		t.Error("expected replace_trigger to be true for emoji handler")
+	}
+}
+
+func TestAutocompleteBuiltinEmojiNoMatch(t *testing.T) {
+	origMap := triggerMap
+	triggerMap = map[string]string{":": "builtin:emoji"}
+	t.Cleanup(func() { triggerMap = origMap })
+
+	reqBody := bytes.NewBufferString(`{"trigger":":","query":"zzzznotanemoji"}`)
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", reqBody)
+	rr := httptest.NewRecorder()
+
+	handleAutocomplete(rr, req)
+
+	var resp autocompleteResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Results) != 0 {
+		t.Errorf("expected no results, got %d", len(resp.Results))
+	}
+	if !strings.Contains(resp.Info, "zzzznotanemoji") {
+		t.Errorf("expected info to contain query, got %q", resp.Info)
 	}
 }
 

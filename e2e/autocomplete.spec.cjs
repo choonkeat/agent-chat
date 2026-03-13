@@ -161,6 +161,22 @@ test.describe('Autocomplete @filepath', () => {
     expect(hasDocResult).toBe(true);
   });
 
+  test('selecting @filepath inserts trigger + value', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, '@mai');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Select the first option (should be main.go)
+    const firstOption = dropdown.locator('.ac-option').first();
+    await firstOption.click();
+
+    // The input should contain @main.go (trigger kept)
+    const value = await textarea.inputValue();
+    expect(value).toContain('@main.go');
+  });
+
   test('typing @xyz shows "No results" with debug info', async ({ page }) => {
     const autocompleteResponses = [];
     page.on('response', async (res) => {
@@ -192,5 +208,81 @@ test.describe('Autocomplete @filepath', () => {
     );
     expect(noResultResponse).toBeDefined();
     expect(noResultResponse.info).toContain('xyz');
+  });
+});
+
+test.describe('Autocomplete :emoji', () => {
+  /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
+  let server = null;
+
+  test.beforeAll(async () => {
+    server = await startServer();
+  });
+
+  test.afterAll(async () => {
+    if (server?.proc) {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('typing :heart shows emoji suggestions with replace_trigger', async ({ page }) => {
+    const autocompleteResponses = [];
+    page.on('response', async (res) => {
+      if (res.url().includes('/autocomplete')) {
+        try { autocompleteResponses.push(await res.json()); } catch {}
+      }
+    });
+
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, ':heart');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Should have emoji options
+    const optionEls = dropdown.locator('.ac-option');
+    const optionCount = await optionEls.count();
+    expect(optionCount).toBeGreaterThan(0);
+
+    // Response should have replace_trigger: true
+    const emojiResponse = autocompleteResponses.find(
+      r => r && r.replace_trigger === true
+    );
+    expect(emojiResponse).toBeDefined();
+    expect(emojiResponse.results.length).toBeGreaterThan(0);
+  });
+
+  test('selecting emoji replaces trigger character', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, ':thumbsup');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Select the first option (should be 👍)
+    const firstOption = dropdown.locator('.ac-option').first();
+    await firstOption.click();
+
+    // The input should contain just the emoji, NOT `:👍`
+    const value = await textarea.inputValue();
+    expect(value).not.toContain(':');
+    expect(value).toContain('👍');
+  });
+
+  test('typing :zzzznotanemoji shows no results', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, ':zzzznotanemoji');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    const optionEls = dropdown.locator('.ac-option');
+    expect(await optionEls.count()).toBe(0);
+
+    const statusEl = dropdown.locator('.ac-status');
+    expect(await statusEl.count()).toBe(1);
+    const statusText = await statusEl.textContent();
+    expect(statusText).toContain('zzzznotanemoji');
   });
 });

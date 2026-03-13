@@ -825,11 +825,14 @@ function acUpdateActive() {
 }
 
 function acSelect(value) {
-  // Replace from trigger position through current cursor with trigger + chosen value
+  // Replace from trigger position through current cursor with chosen value.
+  // When replace_trigger is set by the provider, omit the trigger character
+  // (e.g. emoji shortcodes: `:heart:` → `❤️` instead of `:❤️`).
   var before = chatInput.value.substring(0, acTriggerPos);
   var after = chatInput.value.substring(chatInput.selectionStart);
-  chatInput.value = before + acTriggerChar + value + after;
-  var newPos = before.length + acTriggerChar.length + value.length;
+  var prefix = (acCache && acCache.replaceTrigger) ? '' : acTriggerChar;
+  chatInput.value = before + prefix + value + after;
+  var newPos = before.length + prefix.length + value.length;
   chatInput.setSelectionRange(newPos, newPos);
   acHide();
   autoGrow();
@@ -914,8 +917,9 @@ function acFetch(trigger, query) {
       var options = acNormalizeAll(raw);
       var info = (!Array.isArray(data) && data.info) ? data.info : '';
       var hasMore = (!Array.isArray(data) && data.has_more) ? true : false;
+      var replaceTrigger = (!Array.isArray(data) && data.replace_trigger) ? true : false;
       // Cache the full result set for client-side filtering.
-      acCache = { trigger: trigger, query: query, results: options, hasMore: hasMore };
+      acCache = { trigger: trigger, query: query, results: options, hasMore: hasMore, replaceTrigger: replaceTrigger };
       // Only show if we're still in the same trigger context
       if (acVisible || acTriggerPos >= 0) {
         if (options.length === 0 && info) {

@@ -482,7 +482,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // Legacy format: CHAR=TYPE=URL or CHAR=TYPE (type is ignored; if no URL,
 // the fallbackURL is used).
 func buildTriggerMap(triggers, fallbackURL string) map[string]string {
-	m := map[string]string{"@": "builtin:filepath"}
+	m := map[string]string{"@": "builtin:filepath", ":": "builtin:emoji"}
 	if triggers == "" {
 		return m
 	}
@@ -528,9 +528,10 @@ type autocompleteItem struct {
 
 // autocompleteResponse is the structured response from /autocomplete.
 type autocompleteResponse struct {
-	Results []autocompleteItem `json:"results"`
-	Info    string             `json:"info,omitempty"`
-	HasMore bool               `json:"has_more,omitempty"`
+	Results        []autocompleteItem `json:"results"`
+	Info           string             `json:"info,omitempty"`
+	HasMore        bool               `json:"has_more,omitempty"`
+	ReplaceTrigger bool               `json:"replace_trigger,omitempty"`
 }
 
 // handleAutocomplete looks up the trigger character in the flat map and either
@@ -558,6 +559,17 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 
 	providerURL := triggerMap[req.Trigger]
 
+	// Built-in emoji handler.
+	if providerURL == "builtin:emoji" {
+		results, hasMore := builtinEmojiComplete(req.Query)
+		info := ""
+		if len(results) == 0 {
+			info = fmt.Sprintf("No emoji matching %q", req.Query)
+		}
+		writeAutocompleteResponse(w, results, info, hasMore, true)
+		return
+	}
+
 	// Built-in filepath handler.
 	if providerURL == "builtin:filepath" {
 		root := filepathRoot
@@ -570,7 +582,7 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		if len(results) == 0 {
 			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
 		}
-		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore)
+		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore, false)
 		return
 	}
 
@@ -586,12 +598,15 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 		upstreamBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		var items []autocompleteItem
 		hasMore := false
+		replaceTrigger := false
 		var structured struct {
-			Results json.RawMessage `json:"results"`
-			HasMore bool            `json:"has_more"`
+			Results        json.RawMessage `json:"results"`
+			HasMore        bool            `json:"has_more"`
+			ReplaceTrigger bool            `json:"replace_trigger"`
 		}
 		if json.Unmarshal(upstreamBody, &structured) == nil && len(structured.Results) > 0 {
 			hasMore = structured.HasMore
+			replaceTrigger = structured.ReplaceTrigger
 			if json.Unmarshal(structured.Results, &items) != nil {
 				var strings []string
 				if json.Unmarshal(structured.Results, &strings) == nil {
@@ -604,16 +619,16 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 				items = stringsToItems(strings)
 			}
 		}
-		writeAutocompleteResponse(w, items, "", hasMore)
+		writeAutocompleteResponse(w, items, "", hasMore, replaceTrigger)
 		return
 	}
 
-	writeAutocompleteResponse(w, []autocompleteItem{}, "", false)
+	writeAutocompleteResponse(w, []autocompleteItem{}, "", false, false)
 }
 
-func writeAutocompleteResponse(w http.ResponseWriter, results []autocompleteItem, info string, hasMore bool) {
+func writeAutocompleteResponse(w http.ResponseWriter, results []autocompleteItem, info string, hasMore bool, replaceTrigger bool) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info, HasMore: hasMore})
+	json.NewEncoder(w).Encode(autocompleteResponse{Results: results, Info: info, HasMore: hasMore, ReplaceTrigger: replaceTrigger})
 }
 
 // stringsToItems converts plain string results to autocompleteItems.

@@ -126,6 +126,7 @@ Content-Type: application/json
 | `results` | string[] | Completion candidates |
 | `info` | string | Optional message shown when results are empty (e.g. debug context) |
 | `has_more` | bool | `true` when the server truncated results and more matches exist. Clients should not cache these results — re-query with a more specific query for better matches. Omitted when `false`. |
+| `replace_trigger` | bool | `true` when the trigger character should be omitted during insertion. For example, an emoji provider for `:` would set this so selecting `❤️` replaces `:heart` with `❤️` instead of `:❤️`. Omitted when `false`. |
 
 When the built-in filepath handler returns no results, `info` includes
 the working directory and query to help diagnose the issue:
@@ -159,13 +160,20 @@ Content-Type: application/json
 The provider must return **Status 200** with one of these JSON formats (in
 order of preference):
 
-1. **Structured object** with `results` array and optional `has_more`:
+1. **Structured object** with `results` array and optional flags:
    ```json
-   {"results": ["build", "bump-version"], "has_more": true}
+   {"results": ["build", "bump-version"], "has_more": true, "replace_trigger": false}
    ```
    The `has_more` flag tells the client not to cache results, ensuring each
    keystroke re-queries for better matches. Omit or set to `false` when the
    result set is complete.
+
+   The `replace_trigger` flag controls whether the trigger character is
+   included when a candidate is inserted. When `true`, only the selected
+   value is inserted (the trigger character and query text are fully
+   replaced). This is useful for emoji shortcode providers where `:heart`
+   should become `❤️`, not `:❤️`. Omit or set to `false` for the default
+   behavior of prepending the trigger character.
 
 2. **Array of items** with value/hint pairs: `[{"v":"build","h":"Run build"}]`
 
@@ -213,3 +221,5 @@ the built-in chat UI.
   query characters (case-insensitive).
 - **Selection**: When the user picks a candidate, the trigger character plus the
   selected value replace the text from the trigger position to the cursor.
+  If the provider set `replace_trigger: true`, the trigger character is omitted
+  and only the selected value is inserted.
