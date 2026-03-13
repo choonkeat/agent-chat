@@ -156,7 +156,10 @@ test.describe('Autocomplete @filepath', () => {
 
     // Assert response: at least one response should have results matching "docs"
     const hasDocResult = autocompleteResponses.some(
-      r => r && r.results && r.results.some(f => f.includes('docs'))
+      r => r && r.results && r.results.some(f => {
+        var val = typeof f === 'string' ? f : (f.v || '');
+        return val.includes('docs');
+      })
     );
     expect(hasDocResult).toBe(true);
   });
