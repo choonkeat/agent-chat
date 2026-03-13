@@ -14,7 +14,7 @@ Always use `make test` to run all tests (unit + E2E). Never run `go test` or `go
 Run `make e2e-test` to execute Playwright E2E tests. Run `make e2e-report` to
 serve the HTML report from the last run.
 
-- Tests connect to a remote Chrome via CDP (`CDP_ENDPOINT`, default `http://chrome:9223`)
+- Tests connect to a remote Chrome via CDP. Auto-detected from `BROWSER_CDP_PORT` env var, or set `CDP_ENDPOINT` explicitly (legacy default: `http://chrome:9223`)
 - Set `SLOW_MO=500` to slow down browser actions for live viewing in Agent View
 - `make e2e-report` kills any previous report server, then serves on `E2E_REPORT_PORT` (defaults to `$PORT` or 3001)
 - View the report in the Preview tab

@@ -6,8 +6,11 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// CDP endpoint for the remote Chrome browser
-const CDP_ENDPOINT = process.env.CDP_ENDPOINT || 'http://chrome:9223';
+// CDP endpoint for the remote Chrome browser.
+// Prefer explicit CDP_ENDPOINT, then derive from BROWSER_CDP_PORT (swe-swe env),
+// then fall back to the legacy chrome:9223 default.
+const CDP_ENDPOINT = process.env.CDP_ENDPOINT
+  || (process.env.BROWSER_CDP_PORT ? `http://localhost:${process.env.BROWSER_CDP_PORT}` : 'http://chrome:9223');
 
 // Optional slowMo for live viewing (set SLOW_MO=500 to watch in browser)
 const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
