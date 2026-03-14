@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.14)
+## [0.1.15] — 2026-03-14
 
 ### Features
 - Built-in emoji autocomplete via `:` trigger (1,560 emojis with multi-keyword fuzzy search)
