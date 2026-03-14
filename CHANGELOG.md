@@ -2,9 +2,25 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased] (since 0.1.13)
+## [Unreleased] (since 0.1.14)
 
-## [0.1.13] — 2026-03-12
+### Features
+- Built-in emoji autocomplete via `:` trigger (1,560 emojis with multi-keyword fuzzy search)
+- `replace_trigger` response field: providers can control whether the trigger character is kept or removed on selection
+- Auto-detect Chrome CDP endpoint from `BROWSER_CDP_PORT` env var for E2E tests
+
+### Fixes
+- Handle object results `{v, h}` in E2E autocomplete response assertion
+
+### Docs
+- ADR for `replace_trigger` and built-in emoji autocomplete
+- Document `replace_trigger` in autocomplete API reference
+
+### Tests
+- Unit tests for emoji handler (match, empty query, no match) and `replace_trigger` passthrough
+- E2E tests for emoji selection (trigger removed) and filepath selection (trigger kept)
+
+## [0.1.14] — 2026-03-13
 
 ### Features
 - Show amber warning bubble when not in iframe, prompting user to type `check_messages`
