@@ -474,7 +474,7 @@ function startUpload(entry, isRetry) {
   var opts = { method: 'POST', body: formData };
   if (controller) opts.signal = controller.signal;
 
-  fetch('/upload', opts)
+  fetch('upload', opts)
     .then(function(resp) {
       if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
       return resp.json();
@@ -906,7 +906,7 @@ function acFetch(trigger, query) {
 
   acShowStatus('Loading\u2026');
 
-  fetch('/autocomplete', {
+  fetch('autocomplete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trigger: trigger, query: query })
