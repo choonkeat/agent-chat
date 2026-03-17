@@ -33,9 +33,16 @@ function startServer() {
     fs.writeFileSync(path.join(dir, 'README.md'), '# README\n');
 
     const bin = path.resolve(__dirname, '..', 'npm-platforms', 'linux-x64', 'bin', 'agent-chat');
+    // Build a clean env: inherit process.env but remove AGENT_CHAT_* vars
+    // that could leak state from the host (e.g. shared event log).
+    const cleanEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
+    );
+    cleanEnv.AGENT_CHAT_PORT = '0';
+
     const proc = spawn(bin, ['-no-stdio-mcp'], {
       cwd: dir,
-      env: { ...process.env, AGENT_CHAT_PORT: '0' },
+      env: cleanEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
