@@ -67,6 +67,13 @@ window.addEventListener('scroll', function () {
   isUserScrolledUp = distFromBottom > threshold;
 });
 
+// Auto-focus chat input when window/iframe regains focus
+window.addEventListener('focus', function () {
+  if (chatInput && !chatInput.disabled) {
+    chatInput.focus();
+  }
+});
+
 function scrollToBottom(force) {
   if (!force && isUserScrolledUp) return;
   window.scrollTo(0, document.documentElement.scrollHeight);
