@@ -67,11 +67,19 @@ window.addEventListener('scroll', function () {
   isUserScrolledUp = distFromBottom > threshold;
 });
 
-// Auto-focus chat input when window/iframe regains focus
-window.addEventListener('focus', function () {
-  if (chatInput && !chatInput.disabled) {
+// Auto-focus chat input when window/iframe regains focus.
+// Use multiple strategies: window focus for top-level, click/pointerdown
+// for iframe contexts where window focus events may not fire reliably.
+function focusChatInput() {
+  if (chatInput && !chatInput.disabled && !chatInput.readOnly) {
     chatInput.focus();
   }
+}
+window.addEventListener('focus', focusChatInput);
+document.addEventListener('click', focusChatInput);
+// Also try to grab focus when the document becomes visible (tab switch)
+document.addEventListener('visibilitychange', function () {
+  if (!document.hidden) focusChatInput();
 });
 
 function scrollToBottom(force) {
@@ -645,6 +653,10 @@ function enableInput(replies) {
   }
   updateSendButton(); // re-disable if uploads still pending
   chatInput.focus();
+  // Retry focus after a short delay — in iframe contexts the initial focus()
+  // can silently fail if the iframe hasn't received focus from the parent yet.
+  setTimeout(function () { chatInput.focus(); }, 100);
+  setTimeout(function () { chatInput.focus(); }, 500);
   setTimeout(function () { scrollToBottom(true); }, 100);
 }
 
