@@ -7,30 +7,28 @@ import (
 
 // Common expected substrings for reply instructions (shared across tests).
 const (
-	replyInstructionsBody = "Before taking any action, ensure mutual understanding:\n" +
-		"- You and the user must agree on what will be done and what effect it will have.\n" +
-		"- Confirm YOUR understanding by summarizing what you'll do in concrete terms.\n" +
-		"- Check THE USER's understanding: don't just ask \"Proceed?\" — ask an open\n" +
-		"  question that requires them to explain what they expect will happen.\n" +
-		"  Like a senior checking a junior understands: \"What do you expect will\n" +
-		"  change when I do this?\" If their answer reveals a gap, catch it before acting.\n" +
-		"- Get explicit \"yes\" before proceeding.\n" +
-		"- send_progress before proceeding\n" +
+	replyInstructionsBody = "Before taking any action, ensure mutual understanding using `send_message`:\n" +
+		"- Summarize what you'll do in concrete terms, including an open question\n" +
+		"  that requires them to explain what they expect will happen. Like a senior\n" +
+		"  checking a junior understands: \"What do you expect will change when I do\n" +
+		"  this?\" If their answer reveals a gap, catch it before acting.\n" +
+		"- NEVER use other tools to ask questions — user cannot see the TUI — use `send_message`.\n" +
+		"- ALL confirmation must go through `send_message`.\n" +
+		"- `send_progress` before proceeding.\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
 		"\nUser cannot see TUI — never ask questions there. send_message to wait for further instructions. send_progress for non-blocking updates."
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
-		"Before taking any action, ensure mutual understanding:\n" +
-		"- You and the user must agree on what will be done and what effect it will have.\n" +
-		"- Confirm YOUR understanding by summarizing what you'll do in concrete terms.\n" +
-		"- Check THE USER's understanding: don't just ask \"Proceed?\" — ask an open\n" +
-		"  question that requires them to explain what they expect will happen.\n" +
-		"  Like a senior checking a junior understands: \"What do you expect will\n" +
-		"  change when I do this?\" If their answer reveals a gap, catch it before acting.\n" +
-		"- Get explicit \"yes\" before proceeding.\n" +
-		"- send_verbal_progress before proceeding\n" +
+		"Before taking any action, ensure mutual understanding using `send_verbal_reply`:\n" +
+		"- Summarize what you'll do in concrete terms, including an open question\n" +
+		"  that requires them to explain what they expect will happen. Like a senior\n" +
+		"  checking a junior understands: \"What do you expect will change when I do\n" +
+		"  this?\" If their answer reveals a gap, catch it before acting.\n" +
+		"- NEVER use other tools to ask questions — user cannot see the TUI — use `send_verbal_reply`.\n" +
+		"- ALL confirmation must go through `send_verbal_reply`.\n" +
+		"- `send_verbal_progress` before proceeding.\n" +
 		"\nWhen doing tasks\n" +
 		"- call check_messages between steps.\n" +
 		"\nUser cannot see TUI — never ask questions there. send_verbal_reply to wait for further instructions. send_verbal_progress for non-blocking updates."
