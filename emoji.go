@@ -1788,6 +1788,7 @@ func builtinEmojiComplete(query string) ([]autocompleteItem, bool) {
 		emoji   string
 		keyword string
 		score   int
+		kwIdx   int // keyword index (lower = primary keyword)
 	}
 
 	var results []scored
@@ -1795,56 +1796,65 @@ func builtinEmojiComplete(query string) ([]autocompleteItem, bool) {
 	for _, entry := range emojiList {
 		bestScore := -1
 		bestKW := entry.keywords[0]
-		for _, kw := range entry.keywords {
+		bestIdx := 0
+		for ki, kw := range entry.keywords {
 			kwLower := strings.ToLower(kw)
 			if kwLower == query {
 				if bestScore < 0 || 0 < bestScore {
 					bestScore = 0
 					bestKW = kw
+					bestIdx = ki
 				}
 			} else if strings.HasPrefix(kwLower, query) {
 				s := 1
 				if bestScore < 0 || s < bestScore {
 					bestScore = s
 					bestKW = kw
+					bestIdx = ki
 				}
 			} else if strings.Contains(kwLower, query) {
 				s := 2
 				if bestScore < 0 || s < bestScore {
 					bestScore = s
 					bestKW = kw
+					bestIdx = ki
 				}
 			} else if bestScore < 0 {
 				// fuzzy: check if all query chars appear in order
 				qi := 0
 				first := -1
 				last := -1
-				for ki := 0; ki < len(kwLower) && qi < len(query); ki++ {
-					if kwLower[ki] == query[qi] {
+				for ci := 0; ci < len(kwLower) && qi < len(query); ci++ {
+					if kwLower[ci] == query[qi] {
 						if first < 0 {
-							first = ki
+							first = ci
 						}
-						last = ki
+						last = ci
 						qi++
 					}
 				}
 				if qi == len(query) {
 					span := last - first
-					s := 3 + span
+					s := 3 + span + first // early-position bonus
 					if bestScore < 0 || s < bestScore {
 						bestScore = s
 						bestKW = kw
+						bestIdx = ki
 					}
 				}
 			}
 		}
 		if bestScore >= 0 {
-			results = append(results, scored{entry.emoji, bestKW, bestScore})
+			results = append(results, scored{entry.emoji, bestKW, bestScore, bestIdx})
 		}
 	}
 
 	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].score < results[j].score
+		if results[i].score != results[j].score {
+			return results[i].score < results[j].score
+		}
+		// Tiebreaker: prefer match on primary keyword (lower index).
+		return results[i].kwIdx < results[j].kwIdx
 	})
 
 	limit := 50

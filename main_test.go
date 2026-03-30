@@ -748,6 +748,16 @@ func TestFuzzyScorePath(t *testing.T) {
 	if ok {
 		t.Error("expected 'README.md' not to match 'xyz'")
 	}
+
+	// Early-position bonus: same span but earlier match should score lower
+	earlyScore, ok3 := fuzzyScorePath("abc_xyz", "abc")
+	lateScore, ok4 := fuzzyScorePath("xyz_abc", "abc")
+	if !ok3 || !ok4 {
+		t.Fatal("both should match 'abc'")
+	}
+	if earlyScore >= lateScore {
+		t.Errorf("early match (%d) should score lower than late match (%d)", earlyScore, lateScore)
+	}
 }
 
 func TestBuiltinFilepathCompleteScoring(t *testing.T) {

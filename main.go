@@ -724,6 +724,8 @@ func fuzzyScorePath(s, query string) (int, bool) {
 	if strings.Contains(ls, lq) {
 		score = score / 2
 	}
+	// Early-position bonus: prefer matches closer to the start of the string.
+	score += first
 	return score, true
 }
 

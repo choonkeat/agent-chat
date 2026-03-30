@@ -888,10 +888,13 @@ function acNormalizeAll(items) {
 }
 
 // Check if option fuzzy-matches query (all query chars appear in order).
+// Matches against both the main value and hint label.
 function acFuzzyMatch(option, query) {
   if (!query) return true;
   var qi = 0;
-  var lo = (typeof option === 'string' ? option : option.v).toLowerCase();
+  var v = typeof option === 'string' ? option : option.v;
+  var h = (typeof option === 'string' ? '' : option.h) || '';
+  var lo = (h ? v + ' ' + h : v).toLowerCase();
   var lq = query.toLowerCase();
   for (var i = 0; i < lo.length && qi < lq.length; i++) {
     if (lo[i] === lq[qi]) qi++;
