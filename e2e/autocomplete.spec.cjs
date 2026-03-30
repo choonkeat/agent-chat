@@ -24,7 +24,7 @@ const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
  *   main.go
  *   README.md
  */
-function startServer() {
+function startServer(extraFlags = []) {
   return new Promise((resolve, reject) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-chat-e2e-'));
     fs.mkdirSync(path.join(dir, 'docs'));
@@ -40,7 +40,7 @@ function startServer() {
     );
     cleanEnv.AGENT_CHAT_PORT = '0';
 
-    const proc = spawn(bin, ['-no-stdio-mcp'], {
+    const proc = spawn(bin, ['-no-stdio-mcp', ...extraFlags], {
       cwd: dir,
       env: cleanEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -297,5 +297,99 @@ test.describe('Autocomplete :emoji', () => {
     expect(await statusEl.count()).toBe(1);
     const statusText = await statusEl.textContent();
     expect(statusText).toContain('zzzznotanemoji');
+  });
+
+  test('client-side cache filter matches hint labels', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+
+    // Type a short emoji query to populate the cache with results that
+    // have hint labels (keyword text). ":thu" returns thumbsup, etc.
+    await typeAndWait(page, textarea, ':thu');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Verify we got cached results
+    const optionEls = dropdown.locator('.ac-option');
+    const initialCount = await optionEls.count();
+    expect(initialCount).toBeGreaterThan(0);
+
+    // Now extend the query — this triggers client-side cache filtering.
+    // The emoji values are emoji characters (e.g. 👍) which don't contain
+    // "thumbsup", but the hint label does. Without hint matching this
+    // would filter to zero results.
+    await textarea.pressSequentially('mbsup', { delay: 50 });
+    await page.waitForTimeout(500);
+
+    // Should still have results because hint labels are matched
+    await expect(dropdown).toHaveClass(/visible/);
+    const filteredCount = await dropdown.locator('.ac-option').count();
+    expect(filteredCount).toBeGreaterThan(0);
+
+    // The thumbsup emoji should be in the results
+    const options = await dropdown.locator('.ac-option').allTextContents();
+    expect(options.some(opt => opt.includes('👍'))).toBe(true);
+  });
+
+  test('early-position bonus ranks earlier matches higher', async ({ page }) => {
+    const autocompleteResponses = [];
+    page.on('response', async (res) => {
+      if (res.url().includes('/autocomplete')) {
+        try { autocompleteResponses.push(await res.json()); } catch {}
+      }
+    });
+
+    const textarea = await setupPage(page, server.url);
+    // "heart" is the first keyword for ❤️ but a later keyword for 💌
+    // (love_letter, email, envelope, heart). With early-position bonus
+    // and keyword-index tiebreaker, ❤️ should rank first.
+    await typeAndWait(page, textarea, ':heart');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    const optionEls = dropdown.locator('.ac-option');
+    expect(await optionEls.count()).toBeGreaterThan(0);
+
+    // First option should be ❤️ (red heart), not 💌 (love letter)
+    const firstOption = await optionEls.first().textContent();
+    expect(firstOption).toContain('❤');
+  });
+});
+
+test.describe('Autocomplete error handling', () => {
+  /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
+  let server = null;
+
+  test.beforeAll(async () => {
+    // Start server with a custom trigger pointing to a broken endpoint
+    server = await startServer([
+      '-autocomplete-triggers', '@=builtin:filepath,:=builtin:emoji,/=http://localhost:1/broken',
+    ]);
+  });
+
+  test.afterAll(async () => {
+    if (server?.proc) {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('failing autocomplete endpoint shows error in dropdown', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    // Type "/" trigger which points to broken endpoint
+    await typeAndWait(page, textarea, '/test');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    // Should show error status, not selectable options
+    const optionEls = dropdown.locator('.ac-option');
+    expect(await optionEls.count()).toBe(0);
+
+    const statusEl = dropdown.locator('.ac-status');
+    expect(await statusEl.count()).toBe(1);
+    const statusText = await statusEl.textContent();
+    expect(statusText).toMatch(/Error/i);
   });
 });
