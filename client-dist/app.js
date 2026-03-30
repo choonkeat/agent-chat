@@ -924,7 +924,10 @@ function acFetch(trigger, query) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trigger: trigger, query: query })
-  }).then(function(r) { return r.json(); })
+  }).then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    })
     .then(function(data) {
       // Support structured {results, info} or plain array.
       var raw = Array.isArray(data) ? data : (data.results || []);
@@ -943,7 +946,11 @@ function acFetch(trigger, query) {
         }
       }
     })
-    .catch(function() { acHide(); });
+    .catch(function(err) {
+      if (acVisible || acTriggerPos >= 0) {
+        acShowStatus('Error: ' + (err.message || 'failed to load'));
+      }
+    });
 }
 
 chatInput.addEventListener('input', function () {
