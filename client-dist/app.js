@@ -169,8 +169,14 @@ function renderMarkdown(text) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
     return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
   });
-  // Inline code (same line only to prevent dangling backtick eating content)
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  // Inline code (same line only to prevent dangling backtick eating content).
+  // Stash code spans behind placeholders so later inline rules (bold/italic/links)
+  // don't mangle their contents — per CommonMark, code span text is literal.
+  var codeSpans = [];
+  html = html.replace(/`([^`\n]+)`/g, function(_, content) {
+    var idx = codeSpans.push('<code>' + content + '</code>') - 1;
+    return '\u0000CODE' + idx + '\u0000';
+  });
   // Tables
   html = html.replace(/(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n?)+)/g, function(block) {
     var lines = block.trim().split('\n');
@@ -242,6 +248,10 @@ function renderMarkdown(text) {
   html = html.replace(/(<\/(h[1-6]|hr|ul|ol|li|pre|table|thead|tbody|tr|th|td|blockquote)>)\n*/g, '$1');
   // Newlines
   html = html.replace(/\n/g, '<br>');
+  // Restore stashed inline code spans
+  html = html.replace(/\u0000CODE(\d+)\u0000/g, function(_, idx) {
+    return codeSpans[parseInt(idx, 10)];
+  });
   return html;
 }
 

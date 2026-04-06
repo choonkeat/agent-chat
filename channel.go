@@ -99,16 +99,24 @@ func (ci *channelInterceptor) handlePermissionRequest(params json.RawMessage) {
 	ci.permMu.Unlock()
 
 	// Format a user-friendly description
-	text := fmt.Sprintf("**Permission request** — %s", req.ToolName)
+	text := fmt.Sprintf("**Permission request** — `%s`", req.ToolName)
 	if req.Description != "" {
 		text += "\n\n" + req.Description
 	}
 	if req.InputPreview != "" {
-		text += "\n\n```\n" + req.InputPreview + "\n```"
+		text += "\n\n```json\n" + prettyJSON(req.InputPreview) + "\n```"
+	}
+	text += "\n\nReply with **Allow** or **Deny**."
+
+	// If the user is currently in voice mode, publish as verbalReply so the
+	// prompt is spoken aloud (regular agentMessage events are not TTS-ed).
+	eventType := "agentMessage"
+	if ci.bus.LastVoice() {
+		eventType = "verbalReply"
 	}
 
 	ci.bus.Publish(Event{
-		Type:         "agentMessage",
+		Type:         eventType,
 		Text:         text,
 		QuickReplies: []string{"Allow", "Deny"},
 	})
@@ -164,6 +172,20 @@ func (ci *channelInterceptor) HandleUserResponse(text string) bool {
 		ci.restoreQuickReplies(saved)
 		return false
 	}
+}
+
+// prettyJSON re-indents a JSON string with 2-space indent. If the input isn't
+// valid JSON, the original string is returned unchanged.
+func prettyJSON(s string) string {
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return s
+	}
+	out, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return s
+	}
+	return string(out)
 }
 
 // sendVerdict writes a permission verdict notification directly to stdout.
