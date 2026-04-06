@@ -191,6 +191,28 @@ func TestHandleUserResponseCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestHandleUserResponseVoicePrefix verifies that a voice-prefixed "🎤 Allow" is consumed.
+func TestHandleUserResponseVoicePrefix(t *testing.T) {
+	bus := NewEventBus()
+	defer bus.Close()
+
+	origStdout := os.Stdout
+	_, w, _ := os.Pipe()
+	os.Stdout = w
+
+	ci := &channelInterceptor{bus: bus}
+	ci.pendingPermission = &PermissionRequest{RequestID: "ccccc", ToolName: "Bash"}
+
+	consumed := ci.HandleUserResponse("\U0001f3a4 Allow")
+
+	w.Close()
+	os.Stdout = origStdout
+
+	if !consumed {
+		t.Error("expected voice-prefixed Allow to be consumed")
+	}
+}
+
 // TestRestoreQuickReplies verifies that agent quick replies are restored after permission resolution.
 func TestRestoreQuickReplies(t *testing.T) {
 	bus := NewEventBus()

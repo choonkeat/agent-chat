@@ -129,7 +129,9 @@ func (ci *channelInterceptor) HandleUserResponse(text string) bool {
 		return false
 	}
 
-	normalized := strings.TrimSpace(strings.ToLower(text))
+	// Strip optional voice-message prefix (🎤) so verbal "Allow"/"Deny" matches.
+	stripped := strings.TrimPrefix(strings.TrimSpace(text), "\U0001f3a4")
+	normalized := strings.TrimSpace(strings.ToLower(stripped))
 	switch normalized {
 	case "allow":
 		ci.pendingPermission = nil
