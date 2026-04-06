@@ -77,6 +77,14 @@ var httpListener net.Listener
 // mcpServerRef holds a reference to the MCP server for lazy HTTP startup.
 var mcpServerRef *mcp.Server
 
+// channelInterceptorRef holds the channel interceptor for permission handling.
+var channelInterceptorRef *channelInterceptor
+
+// nopWriteCloser wraps an io.Writer with a no-op Close method.
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
+
 // ensureHTTPServer lazily starts the HTTP server and opens the browser.
 // If the server has crashed since the last call, it restarts automatically.
 func ensureHTTPServer() error {
@@ -160,7 +168,14 @@ func main() {
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
 		Version: version,
-	}, nil)
+	}, &mcp.ServerOptions{
+		Capabilities: &mcp.ServerCapabilities{
+			Experimental: map[string]any{
+				"claude/channel":            map[string]any{},
+				"claude/channel/permission": map[string]any{},
+			},
+		},
+	})
 	mcpServerRef = server
 	if !disabled {
 		registerTools(server, bus)
@@ -171,9 +186,17 @@ func main() {
 		}
 	}
 
+	// Channel interceptor sits between real stdin and the MCP SDK,
+	// handling Claude Code channel notifications (e.g. permission prompts).
+	channelInterceptorRef = newChannelInterceptor(bus)
+
 	if !*noStdio {
-		// Run MCP over stdio (blocks until client disconnects)
-		if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+		// Run MCP over intercepted stdio (blocks until client disconnects)
+		transport := &mcp.IOTransport{
+			Reader: channelInterceptorRef.pipeReader,
+			Writer: nopWriteCloser{os.Stdout},
+		}
+		if err := server.Run(ctx, transport); err != nil {
 			log.Fatalf("mcp server error: %v", err)
 		}
 	} else {
@@ -450,15 +473,26 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		switch m.Type {
 		case "message":
 			if m.Text != "" || len(m.Files) > 0 {
-				bus.PushMessage(m.Text, m.Files)
-				// Broadcast userMessage to all connected browsers (including sender)
-				// so every tab shows the bubble. Also appends to event log for reconnect replay.
-				bus.Publish(Event{Type: "userMessage", Text: m.Text, Files: m.Files})
-				// Notify browser that message is queued — it waits for this
-				// before telling the parent frame to call check_messages.
-				select {
-				case writeCh <- map[string]string{"type": "messageQueued"}:
-				default:
+				// Check if this is a response to a pending permission prompt.
+				consumed := false
+				if channelInterceptorRef != nil && len(m.Files) == 0 {
+					consumed = channelInterceptorRef.HandleUserResponse(m.Text)
+				}
+				if consumed {
+					// Permission response handled — broadcast as userMessage for display
+					// but don't push to agent's message queue.
+					bus.Publish(Event{Type: "userMessage", Text: m.Text})
+				} else {
+					bus.PushMessage(m.Text, m.Files)
+					// Broadcast userMessage to all connected browsers (including sender)
+					// so every tab shows the bubble. Also appends to event log for reconnect replay.
+					bus.Publish(Event{Type: "userMessage", Text: m.Text, Files: m.Files})
+					// Notify browser that message is queued — it waits for this
+					// before telling the parent frame to call check_messages.
+					select {
+					case writeCh <- map[string]string{"type": "messageQueued"}:
+					default:
+					}
 				}
 			}
 		case "ack":
