@@ -2006,10 +2006,11 @@ document.getElementById('btn-download').addEventListener('click', function () {
 // --- Playback mode ---
 
 function startPlaybackMode(url) {
-  // Hide interactive elements
+  // Hide interactive elements (but keep btn-download visible — recordings are
+  // exportable too, and the export logic walks the same DOM that playback
+  // populates).
   document.getElementById('input-bar').style.display = 'none';
   document.getElementById('quick-replies').style.display = 'none';
-  document.getElementById('btn-download').style.display = 'none';
   setStatus('connected');
 
   fetch(url)
