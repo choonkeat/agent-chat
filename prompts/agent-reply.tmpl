@@ -5,8 +5,6 @@
 {{end -}}
 {{- if $m.IsVoice -}}
 Decoded user's speech to text (may be inaccurate): {{$m.Text}}
-
-IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.
 {{- else -}}
 {{- $m.Text -}}
 {{- end -}}
@@ -22,22 +20,19 @@ Attached files:
 
 
 {{- define "reply-instructions" -}}
+{{- $reply := "send_message" -}}
+{{- $progress := "send_progress" -}}
 {{- if .IsVoice -}}
+{{- $reply = "send_verbal_reply" -}}
+{{- $progress = "send_verbal_progress" -}}
 User can only hear you now; keep it conversational, no markdown.
 IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.
 
 {{end -}}
-Before taking any action, ensure mutual understanding using `{{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }}`:
-- Summarize what you'll do in concrete terms, including an open question
-  that requires them to explain what they expect will happen. Like a senior
-  checking a junior understands: "What do you expect will change when I do
-  this?" If their answer reveals a gap, catch it before acting.
-- NEVER use other tools to ask questions — user cannot see the TUI — use `{{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }}`.
-- ALL confirmation must go through `{{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }}`.
-- `{{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }}` before proceeding.
+The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `{{$reply}}` or `{{$progress}}`. Plain text in your response is never seen by the user.
 
-When doing tasks
-- call check_messages between steps.
-
-User cannot see TUI — never ask questions there. {{ if .IsVoice -}}send_verbal_reply{{ else }}send_message{{ end }} to wait for further instructions. {{ if .IsVoice -}}send_verbal_progress{{ else }}send_progress{{ end }} for non-blocking updates.
+- If the request is ambiguous, risky, or destructive, confirm with `{{$reply}}` BEFORE acting. Otherwise just proceed.
+- Use `{{$progress}}` for non-blocking status updates during long work.
+- When the task is done, deliver the result with `{{$reply}}` and wait. NEVER end your turn without calling `{{$reply}}` — going silent looks like a crash to the user.
+- For long-running multi-step work, call `check_messages` between steps to stay responsive.
 {{- end}}

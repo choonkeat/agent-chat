@@ -7,31 +7,19 @@ import (
 
 // Common expected substrings for reply instructions (shared across tests).
 const (
-	replyInstructionsBody = "Before taking any action, ensure mutual understanding using `send_message`:\n" +
-		"- Summarize what you'll do in concrete terms, including an open question\n" +
-		"  that requires them to explain what they expect will happen. Like a senior\n" +
-		"  checking a junior understands: \"What do you expect will change when I do\n" +
-		"  this?\" If their answer reveals a gap, catch it before acting.\n" +
-		"- NEVER use other tools to ask questions — user cannot see the TUI — use `send_message`.\n" +
-		"- ALL confirmation must go through `send_message`.\n" +
-		"- `send_progress` before proceeding.\n" +
-		"\nWhen doing tasks\n" +
-		"- call check_messages between steps.\n" +
-		"\nUser cannot see TUI — never ask questions there. send_message to wait for further instructions. send_progress for non-blocking updates."
+	replyInstructionsBody = "The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_message` or `send_progress`. Plain text in your response is never seen by the user.\n\n" +
+		"- If the request is ambiguous, risky, or destructive, confirm with `send_message` BEFORE acting. Otherwise just proceed.\n" +
+		"- Use `send_progress` for non-blocking status updates during long work.\n" +
+		"- When the task is done, deliver the result with `send_message` and wait. NEVER end your turn without calling `send_message` — going silent looks like a crash to the user.\n" +
+		"- For long-running multi-step work, call `check_messages` between steps to stay responsive."
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
-		"Before taking any action, ensure mutual understanding using `send_verbal_reply`:\n" +
-		"- Summarize what you'll do in concrete terms, including an open question\n" +
-		"  that requires them to explain what they expect will happen. Like a senior\n" +
-		"  checking a junior understands: \"What do you expect will change when I do\n" +
-		"  this?\" If their answer reveals a gap, catch it before acting.\n" +
-		"- NEVER use other tools to ask questions — user cannot see the TUI — use `send_verbal_reply`.\n" +
-		"- ALL confirmation must go through `send_verbal_reply`.\n" +
-		"- `send_verbal_progress` before proceeding.\n" +
-		"\nWhen doing tasks\n" +
-		"- call check_messages between steps.\n" +
-		"\nUser cannot see TUI — never ask questions there. send_verbal_reply to wait for further instructions. send_verbal_progress for non-blocking updates."
+		"The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_verbal_reply` or `send_verbal_progress`. Plain text in your response is never seen by the user.\n\n" +
+		"- If the request is ambiguous, risky, or destructive, confirm with `send_verbal_reply` BEFORE acting. Otherwise just proceed.\n" +
+		"- Use `send_verbal_progress` for non-blocking status updates during long work.\n" +
+		"- When the task is done, deliver the result with `send_verbal_reply` and wait. NEVER end your turn without calling `send_verbal_reply` — going silent looks like a crash to the user.\n" +
+		"- For long-running multi-step work, call `check_messages` between steps to stay responsive."
 )
 
 func TestFormatMessagesPlainText(t *testing.T) {
@@ -46,8 +34,7 @@ func TestFormatMessagesPlainText(t *testing.T) {
 func TestFormatMessagesVoice(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red"}}
 	got := FormatMessages(msgs)
-	want := "Decoded user's speech to text (may be inaccurate): turn the box red\n\n" +
-		"IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding."
+	want := "Decoded user's speech to text (may be inaccurate): turn the box red"
 	if got != want {
 		t.Errorf("FormatMessages voice:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -167,7 +154,6 @@ func TestComposedResultVoiceMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 make it blue"}}
 	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
 	want := "User responded: Decoded user's speech to text (may be inaccurate): make it blue\n\n" +
-		"IMPORTANT: Confirm your understanding with the user before taking action. Present a brief summary of what you understood and ask the user to confirm yes or no before proceeding.\n\n" +
 		replyInstructionsVoiceBody
 	if got != want {
 		t.Errorf("composed result (voice):\ngot:  %q\nwant: %q", got, want)

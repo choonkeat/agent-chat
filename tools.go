@@ -32,7 +32,7 @@ func voiceSuffix(msgs []UserMessage) string {
 // MessageParams are the parameters for the send_message tool.
 type MessageParams struct {
 	Text             string   `json:"text"`
-	QuickReply       string   `json:"quick_reply"`
+	QuickReply       string   `json:"first_quick_reply"`
 	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 	ImageURLs        []string `json:"image_urls,omitempty"`
 }
@@ -40,7 +40,7 @@ type MessageParams struct {
 // VerbalReplyParams are the parameters for the send_verbal_reply tool.
 type VerbalReplyParams struct {
 	Text             string   `json:"text"`
-	QuickReply       string   `json:"quick_reply"`
+	QuickReply       string   `json:"first_quick_reply"`
 	MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 	ImageURLs        []string `json:"image_urls,omitempty"`
 }
@@ -101,7 +101,7 @@ func resolveImageFiles(paths []string) []FileRef {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a text message to the whiteboard chat and wait for viewer response. Use this to respond conversationally to viewer feedback (e.g., acknowledging 'Slower pace' or answering a question). Blocks until the viewer responds, like draw. IMPORTANT: The user can send messages at any time. Call check_messages periodically between tasks to see if the user has sent you anything. The user does not see your text replies in the TUI — always reply via send_message so they can see it in the chat UI.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
+		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds. Always end a task by calling send_message with the result and waiting; never end your turn silently. Call check_messages periodically during long work to stay responsive to incoming user input.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
 		if bus.LastVoice() {
@@ -144,7 +144,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
 			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+			text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -163,7 +163,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}
 
 		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+		text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -177,7 +177,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_verbal_reply",
-		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\nThe `quick_reply` field is the primary reply option shown to the user. Use `more_quick_replies` for additional options.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
+		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings. Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -207,7 +207,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
 			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+			text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -226,7 +226,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}
 
 		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+		text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -242,7 +242,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 	type DrawParams struct {
 		Text             string   `json:"text"`
 		Instructions     []any    `json:"instructions"`
-		QuickReply       string   `json:"quick_reply"`
+		QuickReply       string   `json:"first_quick_reply"`
 		MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
 	}
 
@@ -268,7 +268,7 @@ COMMON TYPES: moveTo, lineTo, drawRect, drawCircle, writeText, setColor
 Read whiteboard://instructions for all instruction types with parameters.
 Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
-The ` + "`quick_reply`" + ` field is the primary reply option shown to the viewer. Use ` + "`more_quick_replies`" + ` for additional options.`,
+` + "`first_quick_reply`" + ` is a SINGLE plain string — the primary reply option shown to the viewer. ` + "`more_quick_replies`" + ` is an array of additional option strings. Do NOT pass a JSON-encoded array as ` + "`first_quick_reply`" + `; it must be a plain string.`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
