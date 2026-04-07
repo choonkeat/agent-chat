@@ -1989,7 +1989,13 @@ document.getElementById('btn-download').addEventListener('click', function () {
     + '});'
     + '})(btns[i]);}'
     + '})();'
-    + '</script></body></html>';
+    // IMPORTANT: keep the closing </script> literal SPLIT. When this app.js
+    // is inlined into an outer <script>...</script> block by a host page
+    // (e.g. swe-swe playback), the HTML parser scans for the literal byte
+    // sequence "</script" regardless of JS string context, and would
+    // prematurely terminate the outer script tag. The split survives both
+    // external-script loading and inline embedding.
+    + '</' + 'script></body></html>';
 
   var blob = new Blob([html], { type: 'text/html' });
   var url = URL.createObjectURL(blob);
