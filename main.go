@@ -725,41 +725,74 @@ func builtinFilepathComplete(root, query string) ([]string, bool) {
 	return results, hasMore
 }
 
-// fuzzyScorePath checks if all query characters appear in s in order (case-insensitive)
-// and returns a score indicating match quality. Lower scores are better matches.
+// fuzzyScorePath checks if all query characters appear in s in order
+// (case-insensitive) and returns a composite score indicating match quality.
+// Lower scores are better matches.
 //
-// Scoring: the score is the total distance (character span) of the match in the string.
-// A contiguous substring match like "task" in "tasks/foo.md" scores len(query),
-// while scattered matches score higher. An additional bonus (score halved) is applied
-// when the query appears as a contiguous substring anywhere in the path.
+// Tiers (lower = better) are encoded into the high bits of the score so a
+// single int comparison ranks by tier first, then within-tier by
+// (longestRun desc, span asc, length asc):
+//
+//	tier 0 = path contains query as a contiguous substring
+//	tier 1 = path fuzzy-matches (subsequence) only
+//
+// Within a tier, longestRun (longest block of query chars landing on
+// consecutive positions in the path) wins, then a tighter span, then a
+// shorter overall path. This is the conventional fzf-style heuristic.
 func fuzzyScorePath(s, query string) (int, bool) {
 	if query == "" {
 		return 0, true
 	}
 	ls := strings.ToLower(s)
 	lq := strings.ToLower(query)
+	qLen := len(lq)
+	sLen := len(ls)
 	qi := 0
 	first := -1
 	last := -1
-	for i := 0; i < len(ls) && qi < len(lq); i++ {
+	longest := 0
+	current := 0
+	lastMatch := -2
+	for i := 0; i < sLen && qi < qLen; i++ {
 		if ls[i] == lq[qi] {
-			if qi == 0 {
+			if first < 0 {
 				first = i
 			}
 			last = i
+			if i == lastMatch+1 {
+				current++
+			} else {
+				current = 1
+			}
+			if current > longest {
+				longest = current
+			}
+			lastMatch = i
 			qi++
 		}
 	}
-	if qi < len(lq) {
+	if qi < qLen {
 		return 0, false
 	}
-	score := last - first + 1 // span of the match
-	// Bonus: if query is a contiguous substring, halve the score.
+	span := last - first
+	tier := 1
 	if strings.Contains(ls, lq) {
-		score = score / 2
+		tier = 0
+		// Contiguous match: longestRun and span are determined by qLen.
+		longest = qLen
+		span = qLen - 1
 	}
-	// Early-position bonus: prefer matches closer to the start of the string.
-	score += first
+	// Encode (tier, -longestRun, span, sLen) into a single comparable int.
+	// Caps below are loose upper bounds; sLen is bounded by walkCapped paths.
+	const (
+		spanRange = 1 << 16
+		runRange  = 1 << 12
+		lenRange  = 1 << 16
+	)
+	score := tier*runRange*spanRange*lenRange +
+		(runRange-1-min(longest, runRange-1))*spanRange*lenRange +
+		min(span, spanRange-1)*lenRange +
+		min(sLen, lenRange-1)
 	return score, true
 }
 

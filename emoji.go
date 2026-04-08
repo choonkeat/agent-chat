@@ -1784,77 +1784,116 @@ func builtinEmojiComplete(query string) ([]autocompleteItem, bool) {
 		return items, true
 	}
 
+	// Tiers (lower = better):
+	//   0 = keyword exactly equals query
+	//   1 = keyword has query as a prefix
+	//   2 = keyword contains query as a contiguous substring
+	//   3 = keyword fuzzy-matches (subsequence only)
+	// Within a tier, ranking is by (longestRun desc, span asc, kwLen asc, kwIdx asc).
+	// longestRun is the longest block of query chars that landed on consecutive
+	// positions in the keyword — a tight run beats a sparse match. This is the
+	// conventional fuzzy-finder heuristic (fzf, VSCode, Helm).
 	type scored struct {
-		emoji   string
-		keyword string
-		score   int
-		kwIdx   int // keyword index (lower = primary keyword)
+		emoji      string
+		keyword    string
+		tier       int
+		longestRun int // longer is better (negate when sorting)
+		span       int // last - first; smaller is better
+		kwLen      int // shorter is better
+		kwIdx      int // primary keyword index; lower is better
 	}
 
 	var results []scored
 
 	for _, entry := range emojiList {
-		bestScore := -1
-		bestKW := entry.keywords[0]
-		bestIdx := 0
+		var best scored
+		bestSet := false
+		better := func(a, b scored) bool {
+			if a.tier != b.tier {
+				return a.tier < b.tier
+			}
+			if a.longestRun != b.longestRun {
+				return a.longestRun > b.longestRun
+			}
+			if a.span != b.span {
+				return a.span < b.span
+			}
+			if a.kwLen != b.kwLen {
+				return a.kwLen < b.kwLen
+			}
+			return a.kwIdx < b.kwIdx
+		}
 		for ki, kw := range entry.keywords {
 			kwLower := strings.ToLower(kw)
+			kwLen := len(kwLower)
+			qLen := len(query)
+			var cand scored
+			candSet := false
 			if kwLower == query {
-				if bestScore < 0 || 0 < bestScore {
-					bestScore = 0
-					bestKW = kw
-					bestIdx = ki
-				}
+				cand = scored{entry.emoji, kw, 0, qLen, qLen - 1, kwLen, ki}
+				candSet = true
 			} else if strings.HasPrefix(kwLower, query) {
-				s := 1
-				if bestScore < 0 || s < bestScore {
-					bestScore = s
-					bestKW = kw
-					bestIdx = ki
-				}
-			} else if strings.Contains(kwLower, query) {
-				s := 2
-				if bestScore < 0 || s < bestScore {
-					bestScore = s
-					bestKW = kw
-					bestIdx = ki
-				}
-			} else if bestScore < 0 {
-				// fuzzy: check if all query chars appear in order
+				cand = scored{entry.emoji, kw, 1, qLen, qLen - 1, kwLen, ki}
+				candSet = true
+			} else if idx := strings.Index(kwLower, query); idx >= 0 {
+				cand = scored{entry.emoji, kw, 2, qLen, qLen - 1, kwLen, ki}
+				candSet = true
+			} else {
+				// Fuzzy subsequence with longest-run analysis.
 				qi := 0
 				first := -1
 				last := -1
-				for ci := 0; ci < len(kwLower) && qi < len(query); ci++ {
+				longest := 0
+				current := 0
+				lastMatch := -2
+				for ci := 0; ci < kwLen && qi < qLen; ci++ {
 					if kwLower[ci] == query[qi] {
 						if first < 0 {
 							first = ci
 						}
 						last = ci
+						if ci == lastMatch+1 {
+							current++
+						} else {
+							current = 1
+						}
+						if current > longest {
+							longest = current
+						}
+						lastMatch = ci
 						qi++
 					}
 				}
-				if qi == len(query) {
-					span := last - first
-					s := 3 + span + first // early-position bonus
-					if bestScore < 0 || s < bestScore {
-						bestScore = s
-						bestKW = kw
-						bestIdx = ki
-					}
+				if qi == qLen {
+					cand = scored{entry.emoji, kw, 3, longest, last - first, kwLen, ki}
+					candSet = true
 				}
 			}
+			if candSet && (!bestSet || better(cand, best)) {
+				best = cand
+				bestSet = true
+			}
 		}
-		if bestScore >= 0 {
-			results = append(results, scored{entry.emoji, bestKW, bestScore, bestIdx})
+		if bestSet {
+			results = append(results, best)
 		}
 	}
 
 	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].score != results[j].score {
-			return results[i].score < results[j].score
+		a, b := results[i], results[j]
+		if a.tier != b.tier {
+			return a.tier < b.tier
 		}
-		// Tiebreaker: prefer match on primary keyword (lower index).
-		return results[i].kwIdx < results[j].kwIdx
+		if a.longestRun != b.longestRun {
+			return a.longestRun > b.longestRun
+		}
+		if a.span != b.span {
+			return a.span < b.span
+		}
+		if a.kwLen != b.kwLen {
+			return a.kwLen < b.kwLen
+		}
+		return a.kwIdx < b.kwIdx
 	})
 
 	limit := 50

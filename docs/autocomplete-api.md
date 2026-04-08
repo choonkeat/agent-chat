@@ -219,6 +219,61 @@ the built-in chat UI.
   (with debounce) for better matches.
 - **Fuzzy matching**: Candidates are matched greedily left-to-right against the
   query characters (case-insensitive).
+
+### Ranking pipeline (match → filter → sort)
+
+Providers **should** apply the three-stage pipeline below so that ranking stays
+consistent with the client's cache-filter path. The built-in chat client
+performs **only the match + filter steps** (no re-sort) and inherits the
+provider's order; for that inheritance to be sound, providers must keep
+step 1's match rule identical to the client's.
+
+1. **Match** — a candidate qualifies if the query's characters appear, in
+   order, as a subsequence of the candidate's `value` **OR** as a subsequence
+   of the candidate's `hint` (case-insensitive, greedy left-to-right). The
+   match must be satisfied by **one field alone** — the client does NOT
+   accept matches that span both fields. Hint matching is a deliberate
+   discovery aid (users can find a command by typing words from its
+   description); the strict in-one-field rule keeps highlighted output
+   honest.
+2. **Filter** — drop candidates that do not match either field.
+3. **Sort** — stable-sort by match quality, with all **value-match tiers
+   strictly above all hint-match tiers** so a hint hit never outranks a
+   real value hit. Recommended tiers, best → worst:
+
+   | Tier | Meaning |
+   |------|---------|
+   | 5 | value equals query |
+   | 4 | value has query as a prefix |
+   | 3 | value contains query as a contiguous substring |
+   | 2 | value fuzzy-matches (non-contiguous) |
+   | 1 | hint contains query as a contiguous substring |
+   | 0 | hint fuzzy-matches only |
+
+   Within a tier, ranking is by **(longestRun desc, span asc, length asc)**:
+
+   - `longestRun` is the longest block of query characters that landed on
+     consecutive positions in the matched field. A candidate where the
+     query chars form a tight run beats one where the same characters are
+     sparsely scattered. This is the conventional fuzzy-finder heuristic
+     used by fzf, VSCode, Helm, etc.
+   - `span` is the distance from the first matched character to the last.
+     A tighter span wins as a secondary tiebreaker.
+   - Overall field length is only the final fallback.
+
+The client is not required to re-score cached results on each keystroke:
+it can **build on** the server's order from the original query, because
+the server returned the candidate set pre-ranked and the client's filter
+step only narrows that set without re-introducing lower-ranked candidates.
+For this guarantee to hold, the client's matcher **must** apply the same
+strict in-one-field match rule as the server; otherwise the cache refilter
+can drop candidates the server would have kept (or vice versa) and the
+inherited order becomes meaningless.
+
+The bundled providers `builtin:emoji` (`emoji.go:builtinEmojiComplete`) and
+`builtin:filepath` (`main.go:fuzzyScorePath`) implement this scoring; the
+client matcher and highlighter live in `client-dist/app.js:acFuzzyMatch`
+and `acHighlightCombined`.
 - **Selection**: When the user picks a candidate, the trigger character plus the
   selected value replace the text from the trigger position to the cursor.
   If the provider set `replace_trigger: true`, the trigger character is omitted

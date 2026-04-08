@@ -749,14 +749,18 @@ func TestFuzzyScorePath(t *testing.T) {
 		t.Error("expected 'README.md' not to match 'xyz'")
 	}
 
-	// Early-position bonus: same span but earlier match should score lower
-	earlyScore, ok3 := fuzzyScorePath("abc_xyz", "abc")
-	lateScore, ok4 := fuzzyScorePath("xyz_abc", "abc")
+	// Longest-run beats sparse run within the same fuzzy tier.
+	// Both paths have the same length, same span (0..4), and neither
+	// contains "abcd" contiguously, so the only difference is run length:
+	//   "aXbcd" → matches at 0,2,3,4; longest run = 3 (b,c,d consecutive)
+	//   "abXcd" → matches at 0,1,3,4; longest run = 2 (a,b) and (c,d)
+	tightScore, ok3 := fuzzyScorePath("aXbcd", "abcd")
+	sparseScore, ok4 := fuzzyScorePath("abXcd", "abcd")
 	if !ok3 || !ok4 {
-		t.Fatal("both should match 'abc'")
+		t.Fatal("both should match 'abcd'")
 	}
-	if earlyScore >= lateScore {
-		t.Errorf("early match (%d) should score lower than late match (%d)", earlyScore, lateScore)
+	if tightScore >= sparseScore {
+		t.Errorf("tight-run match (%d) should score lower than sparse-run match (%d)", tightScore, sparseScore)
 	}
 }
 

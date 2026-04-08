@@ -338,7 +338,7 @@ test.describe('Autocomplete :emoji', () => {
     expect(hintHighlightCount).toBeGreaterThan(0);
   });
 
-  test('early-position bonus ranks earlier matches higher', async ({ page }) => {
+  test('primary keyword ranks above secondary keyword on tie', async ({ page }) => {
     const autocompleteResponses = [];
     page.on('response', async (res) => {
       if (res.url().includes('/autocomplete')) {
@@ -347,9 +347,10 @@ test.describe('Autocomplete :emoji', () => {
     });
 
     const textarea = await setupPage(page, server.url);
-    // "heart" is the first keyword for ❤️ but a later keyword for 💌
-    // (love_letter, email, envelope, heart). With early-position bonus
-    // and keyword-index tiebreaker, ❤️ should rank first.
+    // "heart" is the PRIMARY keyword for ❤️ but a SECONDARY keyword for 💌
+    // (love_letter, email, envelope, heart). Both score identically on
+    // tier/longestRun/span/length (the keyword "heart" is identical), so
+    // the primary-vs-secondary tiebreaker (kwIdx) decides — ❤️ should win.
     await typeAndWait(page, textarea, ':heart');
 
     const dropdown = page.locator('#autocomplete-dropdown');
