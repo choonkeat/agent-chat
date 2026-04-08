@@ -329,6 +329,13 @@ test.describe('Autocomplete :emoji', () => {
     // The thumbsup emoji should be in the results
     const options = await dropdown.locator('.ac-option').allTextContents();
     expect(options.some(opt => opt.includes('👍'))).toBe(true);
+
+    // Hint chars that satisfied the fuzzy match should be highlighted —
+    // not just the value chars. Find the option containing 👍 and check
+    // its .ac-hint span has at least one .ac-highlight inside it.
+    const thumbsOption = dropdown.locator('.ac-option').filter({ hasText: '👍' }).first();
+    const hintHighlightCount = await thumbsOption.locator('.ac-hint .ac-highlight').count();
+    expect(hintHighlightCount).toBeGreaterThan(0);
   });
 
   test('early-position bonus ranks earlier matches higher', async ({ page }) => {

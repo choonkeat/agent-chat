@@ -809,11 +809,12 @@ function acShow(options, query) {
     div.className = 'ac-option';
     div.dataset.index = i;
     div.dataset.value = opt.v;
-    div.innerHTML = acHighlight(opt.v, query);
+    var hl = acHighlightCombined(opt.v, opt.h, query);
+    div.innerHTML = hl.valueHtml;
     if (opt.h) {
       var hint = document.createElement('span');
       hint.className = 'ac-hint';
-      hint.textContent = opt.h;
+      hint.innerHTML = hl.hintHtml;
       div.appendChild(hint);
     }
     acDropdown.appendChild(div);
@@ -877,6 +878,38 @@ function acHighlight(option, query) {
     }
   }
   return result;
+}
+
+// Highlight matched chars across the value AND its hint, mirroring the
+// matcher in acFuzzyMatch which runs over (value + ' ' + hint). The greedy
+// left-to-right match is performed once on the combined string and the
+// resulting HTML is sliced back into separate {valueHtml, hintHtml} so the
+// existing two-span layout (.ac-option for value, .ac-hint for hint) renders
+// unchanged. Both halves are HTML-escaped per character.
+function acHighlightCombined(value, hint, query) {
+  if (!query) {
+    return { valueHtml: escapeHTML(value), hintHtml: escapeHTML(hint || '') };
+  }
+  var combined = hint ? value + ' ' + hint : value;
+  var lowerCombined = combined.toLowerCase();
+  var lowerQuery = query.toLowerCase();
+  var qi = 0;
+  var valueHtml = '';
+  var hintHtml = '';
+  for (var i = 0; i < combined.length; i++) {
+    var ch = combined[i];
+    var inValue = i < value.length;
+    var isSeparator = !inValue && i === value.length; // the joining space
+    var matched = qi < lowerQuery.length && lowerCombined[i] === lowerQuery[qi];
+    if (matched) qi++;
+    if (isSeparator) continue; // separator never appears in either span
+    var rendered = matched
+      ? '<span class="ac-highlight">' + escapeHTML(ch) + '</span>'
+      : escapeHTML(ch);
+    if (inValue) valueHtml += rendered;
+    else hintHtml += rendered;
+  }
+  return { valueHtml: valueHtml, hintHtml: hintHtml };
 }
 
 function escapeHTML(s) {
