@@ -1,7 +1,7 @@
 # Fuzzy Matching with Match Quality Scoring
 
 **Date:** 2026-03-08
-**Status:** Accepted
+**Status:** Partially superseded by [2026-04-08-strict-match-and-longest-run-scoring](2026-04-08-strict-match-and-longest-run-scoring.md) — the within-fuzzy scoring formula was replaced; the high-level decision to use greedy left-to-right matching with quality-based ranking still stands.
 
 ## Context
 
