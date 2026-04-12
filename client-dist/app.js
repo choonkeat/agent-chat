@@ -39,10 +39,15 @@ var isUserScrolledUp = false;
 var pendingAckId = null;
 var pendingNotifyParent = false;
 var pendingInterrupt = false;
+var pendingClear = false; // awaiting "yes" to confirm /clear context
 var firstMessageSent = false;
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null, ref: FileRef|null, uploading: bool, uploadFailed: bool, abortController: AbortController|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
+var clearContextPhrase = 'clear context';
+var clearConfirmPhrase = 'yes';
+var clearCancelPhrase = 'no';
+var clearQuickReplies = ['Yes', 'No'];
 var warningShown = false; // show "type check_messages" warning only once
 
 // --- Voice mode state ---
@@ -706,6 +711,64 @@ function sendMessage(text, files) {
 }
 
 
+function normalizePhrase(text) {
+  return text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+}
+
+// Render the initial "Clear agent context?" prompt as an agent message so it
+// inherits all chat features (TTS in voice mode, quick-reply chips, scroll).
+function showClearContextPrompt() {
+  var prompt = 'Clear agent context? This cannot be undone.';
+  if (voiceMode) {
+    addAgentMessage(prompt, null, 'voice lmk', Date.now());
+    speakVerbalReply(prompt, clearQuickReplies);
+  } else {
+    addAgentMessage(prompt, null, null, Date.now());
+    enableInput(clearQuickReplies);
+  }
+}
+
+// Handles the "clear context" confirmation flow. Returns true if the message
+// was intercepted (caller must not forward it to the agent).
+function maybeHandleClearContext(rawText, echoUserBubble) {
+  var norm = normalizePhrase(rawText);
+  var voiceClass = voiceMode ? 'voice' : null;
+  if (!pendingClear) {
+    if (norm !== clearContextPhrase) return false;
+    pendingClear = true;
+    if (echoUserBubble) addBubble(rawText, 'user', null, voiceClass);
+    showClearContextPrompt();
+    return true;
+  }
+  // Awaiting confirmation — accept case-insensitive "Yes" or "No" only.
+  var isConfirm = norm === clearConfirmPhrase;
+  var isCancel = norm === clearCancelPhrase;
+  if (isConfirm) {
+    pendingClear = false;
+    freezeCurrentReplies(rawText);
+    if (echoUserBubble) addBubble(rawText, 'user', null, voiceClass);
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'agent-chat-clear' }, '*');
+      addAgentMessage('Clearing agent context...', null, null, Date.now());
+    } else {
+      addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
+    }
+    return true;
+  }
+  if (isCancel) {
+    pendingClear = false;
+    freezeCurrentReplies(rawText);
+    if (echoUserBubble) addBubble(rawText, 'user', null, voiceClass);
+    addAgentMessage('Clear context cancelled.', null, null, Date.now());
+    return true;
+  }
+  // Anything else cancels pending confirm and falls through as a normal message.
+  pendingClear = false;
+  freezeCurrentReplies('');
+  addAgentMessage('Clear context cancelled.', null, null, Date.now());
+  return false;
+}
+
 function handleSend() {
   var text = chatInput.value.trim();
   var fileRefs = [];
@@ -713,6 +776,15 @@ function handleSend() {
     if (stagedFiles[i].ref) fileRefs.push(stagedFiles[i].ref);
   }
   if (!text && fileRefs.length === 0) return;
+
+  // Clear-context flow is handled purely client-side — intercept before any
+  // sending/loading state changes so the input stays interactive.
+  if (text && fileRefs.length === 0 && maybeHandleClearContext(text, true)) {
+    chatInput.value = '';
+    autoGrow();
+    updateSendButton();
+    return;
+  }
 
   // Don't display the bubble yet — wait for the server to broadcast it back.
   // Use readOnly instead of disabled to preserve focus and keep mobile keyboard up.
@@ -733,7 +805,7 @@ function handleSend() {
 
   pendingNotifyParent = true;
   // Detect interrupt phrases for typed messages (exact match only)
-  var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+  var lowerText = normalizePhrase(text);
   if (interruptPhrases.indexOf(lowerText) !== -1) {
     pendingInterrupt = true;
   }
@@ -1151,6 +1223,8 @@ quickReplies.addEventListener('click', function (e) {
 
   var message = chip.dataset.message || '';
   if (!message) return;
+  // Intercept clear-context confirmation chips — handled purely client-side.
+  if (maybeHandleClearContext(message, true)) return;
   // Don't display bubble — wait for server broadcast (same as handleSend).
   pendingNotifyParent = true;
   freezeCurrentReplies(message);
@@ -1479,8 +1553,12 @@ function setupSpeechRecognition() {
       return;
     }
 
+    // Clear-context flow — intercept purely client-side. Echo the spoken
+    // phrase as a user bubble so the user sees their voice was heard.
+    if (maybeHandleClearContext(text, true)) return;
+
     // Detect interrupt phrases (stop, wait, cancel, hold on, etc.)
-    var lowerText = text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+    var lowerText = normalizePhrase(text);
     var isInterrupt = interruptPhrases.some(function(phrase) {
       return lowerText === phrase || lowerText.indexOf(phrase + ' ') === 0;
     });
