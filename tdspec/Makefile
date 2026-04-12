@@ -40,7 +40,7 @@ docs: build
 # Generate static docs and serve them
 www-and-serve: docs
 	@echo "Serving tdspec docs at http://localhost:$(PORT)"
-	cd $(WWW) && python3 -m http.server $(PORT) --bind 0.0.0.0
+	cd $(WWW) && npx @choonkeat/md-serve -dir . -addr :$(PORT)
 
 clean:
 	rm -rf elm-stuff

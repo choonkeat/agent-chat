@@ -175,17 +175,84 @@ func (ci *channelInterceptor) HandleUserResponse(text string) bool {
 }
 
 // prettyJSON re-indents a JSON string with 2-space indent. If the input isn't
-// valid JSON, the original string is returned unchanged.
+// valid JSON, prettyJSON attempts to repair a truncated tail (the harness may
+// cut input_preview mid-string) by closing the open string and any unbalanced
+// brackets/braces, then re-parsing. If repair fails, the original string is
+// returned unchanged.
 func prettyJSON(s string) string {
+	if out, ok := tryFormat(s); ok {
+		return out
+	}
+	if repaired, ok := repairTruncatedJSON(s); ok {
+		if out, ok := tryFormat(repaired); ok {
+			return out
+		}
+	}
+	return s
+}
+
+func tryFormat(s string) (string, bool) {
 	var v any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
-		return s
+		return "", false
 	}
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return s
+		return "", false
 	}
-	return string(out)
+	return string(out), true
+}
+
+// repairTruncatedJSON makes a best-effort attempt to close a JSON value that
+// was cut off mid-stream. It tracks string/escape state and a stack of open
+// '{'/'[' containers, then appends the minimum suffix needed to balance them.
+// A truncation marker ("…") is inserted into the trailing string/value so the
+// reader can tell the content was cut.
+func repairTruncatedJSON(s string) (string, bool) {
+	var stack []byte
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escape {
+			escape = false
+			continue
+		}
+		if inString {
+			switch c {
+			case '\\':
+				escape = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			stack = append(stack, '}')
+		case '[':
+			stack = append(stack, ']')
+		case '}', ']':
+			if len(stack) == 0 || stack[len(stack)-1] != c {
+				return "", false
+			}
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if !inString && len(stack) == 0 {
+		return "", false // nothing to repair
+	}
+	var b strings.Builder
+	b.WriteString(s)
+	if inString {
+		b.WriteString("…\"")
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		b.WriteByte(stack[i])
+	}
+	return b.String(), true
 }
 
 // sendVerdict writes a permission verdict notification directly to stdout.
