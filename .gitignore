@@ -3,3 +3,12 @@ npm-platforms
 node_modules
 tdspec/elm-stuff
 tdspec/docs.json
+
+# local dev artifacts
+/agent-chat
+/agent-chat-test
+.playwright-mcp/
+.swe-swe/
+playwright-report/
+test-results/
+/*.png
