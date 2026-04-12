@@ -224,9 +224,11 @@ the built-in chat UI.
 
 Providers **should** apply the three-stage pipeline below so that ranking stays
 consistent with the client's cache-filter path. The built-in chat client
-performs **only the match + filter steps** (no re-sort) and inherits the
-provider's order; for that inheritance to be sound, providers must keep
-step 1's match rule identical to the client's.
+performs all three steps — match, filter, **and re-sort** — when extending a
+cached query, using the same tier/longestRun/span/length comparator as the
+server (`acSortByQuery` in `app.js`). Empty-query caches are never extended:
+the first real keystroke always triggers a fresh server fetch because the
+empty-query response arrives in arbitrary provider/discovery order.
 
 1. **Match** — a candidate qualifies if the query's characters appear, in
    order, as a subsequence of the candidate's `value` **OR** as a subsequence
@@ -261,14 +263,18 @@ step 1's match rule identical to the client's.
      A tighter span wins as a secondary tiebreaker.
    - Overall field length is only the final fallback.
 
-The client is not required to re-score cached results on each keystroke:
-it can **build on** the server's order from the original query, because
-the server returned the candidate set pre-ranked and the client's filter
-step only narrows that set without re-introducing lower-ranked candidates.
-For this guarantee to hold, the client's matcher **must** apply the same
+When the client extends a cached query it re-ranks the filtered results
+using `acSortByQuery`, which mirrors the server's tier/longestRun/span/
+length comparator.  This is necessary because the tier and tiebreaker
+values computed for the original (shorter) query may no longer be correct
+for the extended query.  The client's matcher **must** apply the same
 strict in-one-field match rule as the server; otherwise the cache refilter
-can drop candidates the server would have kept (or vice versa) and the
-inherited order becomes meaningless.
+can drop candidates the server would have kept (or vice versa).
+
+Empty-query caches are special-cased: the client forces a fresh server
+fetch on the first real keystroke because the empty-query response arrives
+in unranked provider/discovery order.  This seeds the cache with a properly
+ranked result set that subsequent extensions can build on.
 
 The bundled providers `builtin:emoji` (`emoji.go:builtinEmojiComplete`) and
 `builtin:filepath` (`main.go:fuzzyScorePath`) implement this scoring; the
