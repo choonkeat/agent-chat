@@ -49,6 +49,7 @@ var clearConfirmPhrase = 'yes';
 var clearCancelPhrase = 'no';
 var clearQuickReplies = ['Yes', 'No'];
 var warningShown = false; // show "type check_messages" warning only once
+var motdShown = false; // show MOTD tip only once per page load
 
 // --- Voice mode state ---
 var voiceMode = false;
@@ -748,7 +749,8 @@ function maybeHandleClearContext(rawText, echoUserBubble) {
     freezeCurrentReplies(rawText);
     if (echoUserBubble) addBubble(rawText, 'user', null, voiceClass);
     if (window.parent !== window) {
-      window.parent.postMessage({ type: 'agent-chat-clear' }, '*');
+      window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
+      firstMessageSent = false;
       addAgentMessage('Clearing agent context...', null, null, Date.now());
     } else {
       addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
@@ -1913,6 +1915,10 @@ function connect() {
     console.log('[' + ts() + '] WebSocket onopen');
     setStatus('connected');
     backoffDelay = BACKOFF_INITIAL;
+    if (!motdShown && window.parent !== window) {
+      motdShown = true;
+      addBubble('Tip: say **stop** to interrupt, or **clear context** to reset the agent context.', 'system');
+    }
   };
 
   ws.onmessage = function (event) {
