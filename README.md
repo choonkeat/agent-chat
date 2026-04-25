@@ -25,6 +25,7 @@ Same conversation, two views. The terminal shows MCP tool calls and code diffs. 
 - **Canvas drawing** — agents can draw diagrams and visualizations on an interactive canvas
 - **Voice conversation** — speak to your agent and hear responses via text-to-speech
 - **Quick replies** — agents can offer clickable response buttons for common actions
+- **Permission prompts in chat** — when Claude Code is launched with `--dangerously-load-development-channels server:swe-swe-agent-chat`, tool-use permission prompts are intercepted from stdin and surfaced as Allow/Deny quick replies in the chat UI (and spoken aloud in voice mode), instead of blocking on a TUI prompt
 
 ## How it works
 
