@@ -241,6 +241,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.Handle("/mcp/orchestrator", orchHandler)
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/upload", handleUpload)
+	mux.HandleFunc("/api/export", handleExport)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
@@ -334,6 +335,43 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(refs)
 }
 
+// maxExportBytes caps the size of a posted export to prevent abuse.
+const maxExportBytes = 200 << 20 // 200MB
+
+// handleExport receives a rendered HTML export from a connected browser and
+// resolves the matching pending export. The browser sends the bytes as the
+// raw request body, with the token in the query string. If the browser
+// reports a render error instead, it sets ?error=1 and the body is the error
+// message.
+func handleExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "missing token", http.StatusBadRequest)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxExportBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	result := ExportResult{}
+	if r.URL.Query().Get("error") == "1" {
+		result.Error = string(body)
+	} else {
+		result.HTML = body
+	}
+	if !bus.ResolveExport(token, result) {
+		http.Error(w, "unknown or already-resolved token", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func saveUploadedFile(fh *multipart.FileHeader) (FileRef, error) {
 	src, err := fh.Open()
 	if err != nil {
@@ -417,6 +455,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// writeCh allows the read loop to send messages back to the client.
 	// Only the writer goroutine writes to the WebSocket connection.
 	writeCh := make(chan any, 16)
+
+	// Register writeCh as a transient broadcast sink so non-logged messages
+	// (e.g. exportRequest) reach this connection.
+	bus.SubscribeTransient(writeCh)
+	defer bus.UnsubscribeTransient(writeCh)
 
 	// Forward events to WebSocket client
 	done := make(chan struct{})

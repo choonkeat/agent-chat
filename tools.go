@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -407,6 +408,100 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 				&mcp.TextContent{Text: result},
 			},
 		}, nil, nil
+	})
+
+	type ExportChatHTMLParams struct {
+		TargetPath     string `json:"target_path" jsonschema:"Destination file path. Must resolve to a path inside the current working directory; absolute paths outside cwd are refused."`
+		TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the browser to render and POST the HTML back. Default 60s."`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "export_chat_html",
+		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines all uploaded images as base64 data URIs, and POSTs the result back to the server, which writes it to target_path. Requires at least one connected browser tab. Path safety: target_path is resolved against the agent's cwd; any path that escapes cwd is rejected.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatHTMLParams) (*mcp.CallToolResult, any, error) {
+		if err := ensureHTTPServer(); err != nil {
+			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
+		}
+		if params.TargetPath == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: target_path is required"}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, nil, fmt.Errorf("get cwd: %w", err)
+		}
+		// Resolve the target relative to cwd if not absolute, then verify it
+		// stays inside cwd. We use filepath.Abs followed by a prefix check on
+		// cleaned paths so that ".." segments are normalised away.
+		abs := params.TargetPath
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		abs = filepath.Clean(abs)
+		cwdClean := filepath.Clean(cwd)
+		rel, err := filepath.Rel(cwdClean, abs)
+		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: target_path %q is outside the current working directory %q", params.TargetPath, cwdClean)}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		if bus.TransientSubscriberCount() == 0 {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: no browser connected to render the export. Open the chat UI in a browser and retry."}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		timeout := time.Duration(params.TimeoutSeconds) * time.Second
+		if timeout <= 0 {
+			timeout = 60 * time.Second
+		}
+
+		handle := bus.CreateExport()
+		defer bus.CancelExport(handle.Token)
+
+		delivered := bus.PublishTransient(map[string]any{
+			"type":  "exportRequest",
+			"token": handle.Token,
+		})
+		if delivered == 0 {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: failed to dispatch export request to any connected browser (queues full)."}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		select {
+		case res := <-handle.Ch:
+			if res.Error != "" {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: "error: browser reported render failure: " + res.Error}},
+					IsError: true,
+				}, nil, nil
+			}
+			if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+				return nil, nil, fmt.Errorf("create parent dir: %w", err)
+			}
+			if err := os.WriteFile(abs, res.HTML, 0644); err != nil {
+				return nil, nil, fmt.Errorf("write file: %w", err)
+			}
+			summary := fmt.Sprintf("Exported chat to %s (%d bytes).", abs, len(res.HTML))
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
+			}, nil, nil
+		case <-time.After(timeout):
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: browser did not return export within %s", timeout)}},
+				IsError: true,
+			}, nil, nil
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
 	})
 }
 

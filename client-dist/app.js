@@ -2032,6 +2032,12 @@ function connect() {
         scrollToBottom(true);
         break;
 
+      case 'exportRequest':
+        // Server is requesting a self-contained HTML export. Build it and
+        // POST back; the server writes it to the agent's target path.
+        handleExportRequest(data.token);
+        break;
+
       case 'messageQueued':
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
@@ -2082,7 +2088,36 @@ function connect() {
 
 // --- Export / Download ---
 
-document.getElementById('btn-download').addEventListener('click', function () {
+// Fetch every <img> inside `root` whose src is not already a data: URI and
+// rewrite the src in-place to a base64 data URI. Used to make exports
+// self-contained — uploaded images live at /uploads/... and don't survive
+// outside the server.
+async function inlineImagesIn(root) {
+  var imgs = root.querySelectorAll('img');
+  await Promise.all(Array.from(imgs).map(async function (img) {
+    var src = img.getAttribute('src');
+    if (!src || src.indexOf('data:') === 0) return;
+    try {
+      var resp = await fetch(src);
+      if (!resp.ok) return;
+      var blob = await resp.blob();
+      var dataUrl = await new Promise(function (resolve, reject) {
+        var fr = new FileReader();
+        fr.onload = function () { resolve(fr.result); };
+        fr.onerror = function () { reject(fr.error); };
+        fr.readAsDataURL(blob);
+      });
+      img.setAttribute('src', dataUrl);
+    } catch (e) {
+      console.warn('inlineImagesIn: failed for', src, e);
+    }
+  }));
+}
+
+// Walk the live messages DOM and produce a self-contained HTML export. All
+// non-data: <img> srcs are fetched and inlined as base64. Returns the full
+// HTML string.
+async function buildExportHtml() {
   var children = messages.children;
   var items = [];
 
@@ -2107,12 +2142,21 @@ document.getElementById('btn-download').addEventListener('click', function () {
     if (b.classList.contains('canvas-bubble')) {
       var img = b.querySelector('img');
       if (img) {
-        items.push('<div class="bubble agent canvas-bubble"><img src="' + img.src + '" style="width:100%;height:auto;display:block;border-radius:8px;"></div>');
+        // Canvas bubbles are already rasterized to data: URIs by canvas-bundle,
+        // but inline defensively in case that ever changes.
+        var clone = document.createElement('div');
+        clone.innerHTML = '<div class="bubble agent canvas-bubble"><img src="' + img.src + '" style="width:100%;height:auto;display:block;border-radius:8px;"></div>';
+        await inlineImagesIn(clone);
+        items.push(clone.innerHTML);
       }
     } else {
       var role = b.classList.contains('user') ? 'user' : b.classList.contains('system') ? 'system' : 'agent';
       var voice = b.classList.contains('voice') ? ' voice' : '';
-      items.push('<div class="bubble ' + role + voice + '">' + b.innerHTML + '</div>');
+      // Clone before inlining so we don't bloat the live DOM with multi-MB
+      // data URIs.
+      var bubbleClone = b.cloneNode(true);
+      await inlineImagesIn(bubbleClone);
+      items.push('<div class="bubble ' + role + voice + '">' + bubbleClone.innerHTML + '</div>');
     }
   }
 
@@ -2183,17 +2227,56 @@ document.getElementById('btn-download').addEventListener('click', function () {
     // either, otherwise it self-defeats when inlined.
     + '</' + 'script></body></html>';
 
-  var blob = new Blob([html], { type: 'text/html' });
-  var url = URL.createObjectURL(blob);
-  var filename = 'chat-export-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.html';
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  return html;
+}
+
+document.getElementById('btn-download').addEventListener('click', async function () {
+  var btn = this;
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    var html = await buildExportHtml();
+    var blob = new Blob([html], { type: 'text/html' });
+    var url = URL.createObjectURL(blob);
+    var filename = 'chat-export-' + new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-') + '.html';
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  } catch (e) {
+    console.error('export failed', e);
+  } finally {
+    btn.disabled = false;
+  }
 });
+
+// Handle a server-driven export request: build the HTML and POST it back to
+// /api/export so the agent-chat server can write it to the agent's target path.
+async function handleExportRequest(token) {
+  if (!token) return;
+  try {
+    var html = await buildExportHtml();
+    await fetch('/api/export?token=' + encodeURIComponent(token), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: html,
+    });
+  } catch (e) {
+    console.error('exportRequest failed', e);
+    try {
+      await fetch('/api/export?token=' + encodeURIComponent(token) + '&error=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: String((e && e.message) || e || 'unknown error'),
+      });
+    } catch (e2) {
+      // best effort; the server-side request will time out if we can't report.
+    }
+  }
+}
 
 // --- Playback mode ---
 

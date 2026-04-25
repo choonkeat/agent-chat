@@ -46,6 +46,20 @@ type AckHandle struct {
 	Ch chan string // receives "ack" or "ack:<message>"
 }
 
+// ExportResult carries the bytes a browser POSTed back for an export request,
+// or an error string if the browser reported failure.
+type ExportResult struct {
+	HTML  []byte
+	Error string
+}
+
+// ExportHandle is returned by CreateExport. Read from Ch to wait for the
+// browser to POST the rendered HTML back to /api/export.
+type ExportHandle struct {
+	Token string
+	Ch    chan ExportResult
+}
+
 // EventBus fans out events to WebSocket subscribers, tracks pending acks,
 // and maintains an in-memory event log for browser reconnect.
 type EventBus struct {
@@ -58,6 +72,12 @@ type EventBus struct {
 	ackMu   sync.Mutex
 	pending map[string]chan string // ack_id -> channel
 
+	exportMu        sync.Mutex
+	pendingExports  map[string]chan ExportResult // export token -> channel
+
+	transientMu   sync.RWMutex
+	transientSubs map[chan any]struct{} // per-connection writeCh sinks for non-logged broadcasts
+
 	msgQueue  chan UserMessage // queued user messages from browser
 	lastVoice bool            // whether the last consumed user message was voice
 
@@ -68,9 +88,11 @@ type EventBus struct {
 // NewEventBus creates a new EventBus.
 func NewEventBus() *EventBus {
 	return &EventBus{
-		subscribers: make(map[chan Event]struct{}),
-		pending:     make(map[string]chan string),
-		msgQueue:    make(chan UserMessage, 256),
+		subscribers:    make(map[chan Event]struct{}),
+		pending:        make(map[string]chan string),
+		pendingExports: make(map[string]chan ExportResult),
+		transientSubs:  make(map[chan any]struct{}),
+		msgQueue:       make(chan UserMessage, 256),
 	}
 }
 
@@ -88,6 +110,8 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 	return &EventBus{
 		subscribers:      make(map[chan Event]struct{}),
 		pending:          make(map[string]chan string),
+		pendingExports:   make(map[string]chan ExportResult),
+		transientSubs:    make(map[chan any]struct{}),
 		msgQueue:         make(chan UserMessage, 256),
 		logFile:          f,
 		eventLog:         events,
@@ -412,4 +436,86 @@ func (eb *EventBus) ResolveAck(id, result string) bool {
 	default:
 	}
 	return true
+}
+
+// SubscribeTransient registers a per-connection sink for transient (non-logged,
+// non-replayed) broadcasts. The caller is responsible for unsubscribing on
+// disconnect.
+func (eb *EventBus) SubscribeTransient(ch chan any) {
+	eb.transientMu.Lock()
+	eb.transientSubs[ch] = struct{}{}
+	eb.transientMu.Unlock()
+}
+
+// UnsubscribeTransient removes a transient sink.
+func (eb *EventBus) UnsubscribeTransient(ch chan any) {
+	eb.transientMu.Lock()
+	delete(eb.transientSubs, ch)
+	eb.transientMu.Unlock()
+}
+
+// PublishTransient fans out a payload to every transient subscriber. Skipped
+// silently if a subscriber's buffer is full — transient messages are a "best
+// effort" channel by design.
+func (eb *EventBus) PublishTransient(payload any) int {
+	eb.transientMu.RLock()
+	defer eb.transientMu.RUnlock()
+	delivered := 0
+	for ch := range eb.transientSubs {
+		select {
+		case ch <- payload:
+			delivered++
+		default:
+		}
+	}
+	return delivered
+}
+
+// TransientSubscriberCount returns the number of currently connected transient
+// sinks (≈ number of browser tabs).
+func (eb *EventBus) TransientSubscriberCount() int {
+	eb.transientMu.RLock()
+	defer eb.transientMu.RUnlock()
+	return len(eb.transientSubs)
+}
+
+// CreateExport registers a pending export request and returns a handle whose
+// Ch will receive the rendered HTML once a browser POSTs to /api/export.
+func (eb *EventBus) CreateExport() ExportHandle {
+	token := uuid.New().String()
+	ch := make(chan ExportResult, 1)
+
+	eb.exportMu.Lock()
+	eb.pendingExports[token] = ch
+	eb.exportMu.Unlock()
+
+	return ExportHandle{Token: token, Ch: ch}
+}
+
+// ResolveExport completes a pending export with the given result. Returns true
+// if the token matched a pending export.
+func (eb *EventBus) ResolveExport(token string, result ExportResult) bool {
+	eb.exportMu.Lock()
+	ch, ok := eb.pendingExports[token]
+	if ok {
+		delete(eb.pendingExports, token)
+	}
+	eb.exportMu.Unlock()
+
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- result:
+	default:
+	}
+	return true
+}
+
+// CancelExport removes a pending export without delivering a result. Use this
+// in defer to clean up after timeout/error paths in the caller.
+func (eb *EventBus) CancelExport(token string) {
+	eb.exportMu.Lock()
+	delete(eb.pendingExports, token)
+	eb.exportMu.Unlock()
 }
