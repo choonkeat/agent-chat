@@ -2266,14 +2266,25 @@ async function buildExportHtml(opts) {
     + 'speak(btn.parentElement.innerText,function(){btn.classList.remove("playing");});'
     + '});'
     + '})(btns[i]);}'
-    // Click any image thumbnail to open it standalone in a new tab — mirrors
-    // the live UI behaviour without duplicating the data URI bytes inside an
-    // <a href="data:..."> wrapper.
+    // Click any image thumbnail to view it full-size in an in-page lightbox
+    // overlay. We can't use `window.open(dataURI)` here: modern browsers block
+    // top-frame navigation to data: URLs as an XSS/origin-spoof mitigation, so
+    // a "new tab" approach silently fails for the inlined images in this export.
     + 'document.addEventListener("click",function(e){'
     + 'var t=e.target;'
-    + 'if(t&&t.tagName==="IMG"&&t.classList.contains("file-thumb")){'
-    + 'window.open(t.src,"_blank","noopener");'
+    + 'if(!(t&&t.tagName==="IMG"&&t.classList.contains("file-thumb")))return;'
+    + 'var lb=document.getElementById("lb-overlay");'
+    + 'if(!lb){'
+    + 'lb=document.createElement("div");lb.id="lb-overlay";'
+    + 'lb.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,0.88);display:none;align-items:center;justify-content:center;z-index:9999;cursor:zoom-out;";'
+    + 'var lbImg=document.createElement("img");lbImg.id="lb-img";'
+    + 'lbImg.style.cssText="max-width:95vw;max-height:95vh;box-shadow:0 4px 32px rgba(0,0,0,0.5);";'
+    + 'lb.appendChild(lbImg);document.body.appendChild(lb);'
+    + 'lb.addEventListener("click",function(){lb.style.display="none";});'
+    + 'document.addEventListener("keydown",function(ev){if(ev.key==="Escape"){lb.style.display="none";}});'
     + '}'
+    + 'document.getElementById("lb-img").src=t.src;'
+    + 'lb.style.display="flex";'
     + '});'
     + '})();'
     // IMPORTANT: keep the closing script tag literal SPLIT (see line below).
