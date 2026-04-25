@@ -20,3 +20,4 @@ serve the HTML report from the last run.
 - View the report in the Preview tab
 
 Example: `SLOW_MO=500 make e2e-test && make e2e-report`
+See .swe-swe/docs/AGENTS.md (if it exists) for context of this current environment

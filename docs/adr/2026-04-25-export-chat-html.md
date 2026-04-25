@@ -107,13 +107,21 @@ projects can encode a preference in their own conventions
 
 - **`fullsize`** (default) — inline the original bytes once.  Each
   thumbnail is clickable in the export and opens the underlying
-  data URI in a new tab.  We deliberately do *not* duplicate the
-  bytes inside an `<a href="data:..."><img src="data:..."></a>`
-  wrapper — for a 5 MB screenshot that would double disk usage per
-  image.  Instead, the export's existing inline `<script>` block
-  (already required for TTS playback) gains a delegated click
-  handler that calls `window.open(img.src)`.  Single copy of
-  bytes, identical user affordance.
+  image in an in-page lightbox overlay.  We deliberately do *not*
+  duplicate the bytes inside an `<a href="data:..."><img
+  src="data:..."></a>` wrapper — for a 5 MB screenshot that would
+  double disk usage per image.  Instead, the export's existing
+  inline `<script>` block (already required for TTS playback)
+  gains a delegated click handler that lazy-creates a fixed
+  `position:fixed; inset:0; z-index:9999` overlay containing an
+  `<img>` capped at 95vw × 95vh and points its `src` at the
+  thumbnail's own `src` (same data URI — no byte duplication).
+  Click-anywhere or Esc dismisses.  We tried `window.open(img.src,
+  "_blank")` first, but Chrome ≥60, Firefox ≥59 and Safari block
+  top-frame navigation to `data:` URLs as an XSS/origin-spoof
+  mitigation, so the popup silently never materialised — clicks
+  looked dead.  The in-page overlay sidesteps that block while
+  staying fully self-contained (no external assets).
 - **`thumbnail`** — each non-`data:` `<img>` is rendered into a
   300×200 `<canvas>` and re-encoded as JPEG at quality 0.85 before
   inlining.  Compact for archival use but lossy.  No click handler:

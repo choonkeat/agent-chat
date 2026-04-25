@@ -13,8 +13,10 @@ All notable changes to agent-chat are documented in this file.
   on same-day collision.
 - `image_mode` controls image fidelity: `fullsize` (default) keeps
   the original bytes and makes thumbnails clickable in the export
-  to open in a new tab; `thumbnail` downsamples each image to a
-  small JPEG via canvas for a compact archive.
+  to open in an in-page lightbox overlay (data: URIs can't be
+  navigated to as a top-frame in modern browsers); `thumbnail`
+  downsamples each image to a small JPEG via canvas for a compact
+  archive.
 - Non-image attachments render as plain filename text in exports
   (their `/uploads/*` href is dropped because it won't resolve
   outside the server).
