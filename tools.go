@@ -99,6 +99,49 @@ func resolveImageFiles(paths []string) []FileRef {
 	return refs
 }
 
+// slugifyTitle normalises an agent-supplied title into a filesystem-safe
+// kebab-case slug: lowercased, with each run of non-[a-z0-9] characters
+// collapsed to a single dash, and leading/trailing dashes trimmed.
+func slugifyTitle(title string) string {
+	var b strings.Builder
+	prevDash := true // treat start as if preceded by a dash so we trim leading dashes
+	for _, r := range title {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+			prevDash = false
+		default:
+			if !prevDash {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	out := b.String()
+	for strings.HasSuffix(out, "-") {
+		out = out[:len(out)-1]
+	}
+	return out
+}
+
+// nextAvailableExportPath returns dir/base.html if it does not exist, otherwise
+// dir/base-2.html, dir/base-3.html, etc. — never silently overwrites.
+func nextAvailableExportPath(dir, base string) string {
+	candidate := filepath.Join(dir, base+".html")
+	if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		return candidate
+	}
+	for i := 2; ; i++ {
+		candidate = filepath.Join(dir, fmt.Sprintf("%s-%d.html", base, i))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+	}
+}
+
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
@@ -411,43 +454,50 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 	})
 
 	type ExportChatHTMLParams struct {
-		TargetPath     string `json:"target_path" jsonschema:"Destination file path. Must resolve to a path inside the current working directory; absolute paths outside cwd are refused."`
+		Title          string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
+		TargetPath     string `json:"target_path,omitempty" jsonschema:"Optional override path. If set, must resolve inside the current working directory."`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the browser to render and POST the HTML back. Default 60s."`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "export_chat_html",
-		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines all uploaded images as base64 data URIs, and POSTs the result back to the server, which writes it to target_path. Requires at least one connected browser tab. Path safety: target_path is resolved against the agent's cwd; any path that escapes cwd is rejected.",
+		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines all uploaded images as base64 data URIs, and POSTs the result back to the server, which writes the file. Default location: ./agent-chats/YYYY-MM-DD-{title}.html (auto-suffixed -2/-3 on collision). Pass `target_path` only to override that default. Requires at least one connected browser tab. Path safety: any target_path that escapes the agent's cwd is refused.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatHTMLParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
-		}
-		if params.TargetPath == "" {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "error: target_path is required"}},
-				IsError: true,
-			}, nil, nil
 		}
 
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, nil, fmt.Errorf("get cwd: %w", err)
 		}
-		// Resolve the target relative to cwd if not absolute, then verify it
-		// stays inside cwd. We use filepath.Abs followed by a prefix check on
-		// cleaned paths so that ".." segments are normalised away.
-		abs := params.TargetPath
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(cwd, abs)
-		}
-		abs = filepath.Clean(abs)
 		cwdClean := filepath.Clean(cwd)
-		rel, err := filepath.Rel(cwdClean, abs)
-		if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: target_path %q is outside the current working directory %q", params.TargetPath, cwdClean)}},
-				IsError: true,
-			}, nil, nil
+
+		var abs string
+		if params.TargetPath != "" {
+			// Override path: validate it stays inside cwd.
+			abs = params.TargetPath
+			if !filepath.IsAbs(abs) {
+				abs = filepath.Join(cwd, abs)
+			}
+			abs = filepath.Clean(abs)
+			rel, err := filepath.Rel(cwdClean, abs)
+			if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: target_path %q is outside the current working directory %q", params.TargetPath, cwdClean)}},
+					IsError: true,
+				}, nil, nil
+			}
+		} else {
+			slug := slugifyTitle(params.Title)
+			if slug == "" {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: "error: title is required (a short kebab-case slug, e.g. 'auth-bug-fix')"}},
+					IsError: true,
+				}, nil, nil
+			}
+			date := time.Now().Format("2006-01-02")
+			abs = nextAvailableExportPath(filepath.Join(cwd, "agent-chats"), date+"-"+slug)
 		}
 
 		if bus.TransientSubscriberCount() == 0 {

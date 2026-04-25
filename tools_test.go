@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -181,5 +183,53 @@ func TestComposedResultWithFiles(t *testing.T) {
 		replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (files):\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestSlugifyTitle(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"auth bug fix", "auth-bug-fix"},
+		{"Fix Auth Bug!", "fix-auth-bug"},
+		{"  leading and trailing  ", "leading-and-trailing"},
+		{"already-kebab-case", "already-kebab-case"},
+		{"under_score/slash", "under-score-slash"},
+		{"unicode—dash", "unicode-dash"},
+		{"multiple   spaces", "multiple-spaces"},
+		{"v1.2.3 release", "v1-2-3-release"},
+		{"!!!", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := slugifyTitle(c.in)
+		if got != c.want {
+			t.Errorf("slugifyTitle(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestNextAvailableExportPath(t *testing.T) {
+	dir := t.TempDir()
+
+	first := nextAvailableExportPath(dir, "2026-04-25-test")
+	if filepath.Base(first) != "2026-04-25-test.html" {
+		t.Errorf("first call: got %q, want base 2026-04-25-test.html", first)
+	}
+	if err := os.WriteFile(first, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	second := nextAvailableExportPath(dir, "2026-04-25-test")
+	if filepath.Base(second) != "2026-04-25-test-2.html" {
+		t.Errorf("second call: got %q, want suffix -2", second)
+	}
+	if err := os.WriteFile(second, []byte("x"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	third := nextAvailableExportPath(dir, "2026-04-25-test")
+	if filepath.Base(third) != "2026-04-25-test-3.html" {
+		t.Errorf("third call: got %q, want suffix -3", third)
 	}
 }
