@@ -99,6 +99,42 @@ the tool enforces — anything inside cwd is allowed because the agent
 already has full filesystem access in that directory through other
 tools.
 
+## Image fidelity vs. archive size
+
+Two `image_mode` modes, controlled by an optional tool parameter so
+projects can encode a preference in their own conventions
+(CLAUDE.md / memory) rather than recompiling the server:
+
+- **`fullsize`** (default) — inline the original bytes once.  Each
+  thumbnail is clickable in the export and opens the underlying
+  data URI in a new tab.  We deliberately do *not* duplicate the
+  bytes inside an `<a href="data:..."><img src="data:..."></a>`
+  wrapper — for a 5 MB screenshot that would double disk usage per
+  image.  Instead, the export's existing inline `<script>` block
+  (already required for TTS playback) gains a delegated click
+  handler that calls `window.open(img.src)`.  Single copy of
+  bytes, identical user affordance.
+- **`thumbnail`** — each non-`data:` `<img>` is rendered into a
+  300×200 `<canvas>` and re-encoded as JPEG at quality 0.85 before
+  inlining.  Compact for archival use but lossy.  No click handler:
+  the thumbnail *is* the image.
+
+Canvas drawings are always inlined full-size regardless of mode —
+they are agent-authored diagrams, not user uploads, and downscaling
+them would defeat the reason the agent drew them.
+
+## Non-image attachments
+
+`<a class="file-attachment-link" href="/uploads/...">filename</a>`
+elements are stripped of their `href` in exports and replaced with
+plain `<span>` carrying the same filename text.  The original href
+points at a server-relative URL that won't resolve outside the
+agent-chat process, so leaving the link in place would render as a
+silently broken click target.  We considered base64-inlining the
+binary bytes but rejected it: most non-image attachments would
+trigger a download prompt rather than a useful preview, and the
+archival use case for arbitrary binaries is thin.
+
 ## Failure modes
 
 - **No browser connected** — `TransientSubscriberCount() == 0` → fail

@@ -5,11 +5,19 @@ All notable changes to agent-chat are documented in this file.
 ## [0.5.0] — 2026-04-25
 
 ### Features
-- New MCP tool `export_chat_html(title, target_path?)`: ask a connected
-  browser to render the current chat as a self-contained HTML file
-  (uploaded images inlined as base64 data URIs) and have the server
-  write it to disk. Default location: `./agent-chats/YYYY-MM-DD-{title}.html`,
-  auto-suffixed `-2`/`-3` on same-day collision.
+- New MCP tool `export_chat_html(title, target_path?, image_mode?)`:
+  ask a connected browser to render the current chat as a
+  self-contained HTML file (uploaded images inlined as base64 data
+  URIs) and have the server write it to disk. Default location:
+  `./agent-chats/YYYY-MM-DD-{title}.html`, auto-suffixed `-2`/`-3`
+  on same-day collision.
+- `image_mode` controls image fidelity: `fullsize` (default) keeps
+  the original bytes and makes thumbnails clickable in the export
+  to open in a new tab; `thumbnail` downsamples each image to a
+  small JPEG via canvas for a compact archive.
+- Non-image attachments render as plain filename text in exports
+  (their `/uploads/*` href is dropped because it won't resolve
+  outside the server).
 - Top-right download button now also inlines `/uploads/*` images so
   the saved HTML is portable outside the agent-chat server.
 

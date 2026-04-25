@@ -2035,7 +2035,7 @@ function connect() {
       case 'exportRequest':
         // Server is requesting a self-contained HTML export. Build it and
         // POST back; the server writes it to the agent's target path.
-        handleExportRequest(data.token);
+        handleExportRequest(data.token, data.image_mode);
         break;
 
       case 'messageQueued':
@@ -2088,11 +2088,41 @@ function connect() {
 
 // --- Export / Download ---
 
+// Convert a Blob to a base64 data URI.
+function blobToDataURL(blob) {
+  return new Promise(function (resolve, reject) {
+    var fr = new FileReader();
+    fr.onload = function () { resolve(fr.result); };
+    fr.onerror = function () { reject(fr.error); };
+    fr.readAsDataURL(blob);
+  });
+}
+
+// Render `blob` (an image) into a JPEG thumbnail capped at maxW x maxH and
+// return a data URI. Used by image_mode="thumbnail" to keep exports compact.
+async function blobToThumbnailDataURL(blob, maxW, maxH) {
+  var bitmap = typeof createImageBitmap === 'function'
+    ? await createImageBitmap(blob)
+    : await new Promise(function (resolve, reject) {
+        var img = new Image();
+        img.onload = function () { resolve(img); };
+        img.onerror = reject;
+        img.src = URL.createObjectURL(blob);
+      });
+  var ratio = Math.min(maxW / bitmap.width, maxH / bitmap.height, 1);
+  var w = Math.max(1, Math.round(bitmap.width * ratio));
+  var h = Math.max(1, Math.round(bitmap.height * ratio));
+  var canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
 // Fetch every <img> inside `root` whose src is not already a data: URI and
-// rewrite the src in-place to a base64 data URI. Used to make exports
-// self-contained — uploaded images live at /uploads/... and don't survive
-// outside the server.
-async function inlineImagesIn(root) {
+// rewrite the src in-place. mode="fullsize" inlines the original bytes;
+// mode="thumbnail" downsamples to a small JPEG via canvas.
+async function inlineImagesIn(root, mode) {
   var imgs = root.querySelectorAll('img');
   await Promise.all(Array.from(imgs).map(async function (img) {
     var src = img.getAttribute('src');
@@ -2101,12 +2131,12 @@ async function inlineImagesIn(root) {
       var resp = await fetch(src);
       if (!resp.ok) return;
       var blob = await resp.blob();
-      var dataUrl = await new Promise(function (resolve, reject) {
-        var fr = new FileReader();
-        fr.onload = function () { resolve(fr.result); };
-        fr.onerror = function () { reject(fr.error); };
-        fr.readAsDataURL(blob);
-      });
+      var dataUrl;
+      if (mode === 'thumbnail') {
+        dataUrl = await blobToThumbnailDataURL(blob, 300, 200);
+      } else {
+        dataUrl = await blobToDataURL(blob);
+      }
       img.setAttribute('src', dataUrl);
     } catch (e) {
       console.warn('inlineImagesIn: failed for', src, e);
@@ -2114,10 +2144,26 @@ async function inlineImagesIn(root) {
   }));
 }
 
+// Replace .file-attachment-link <a> elements (non-image attachments) with a
+// plain <span> carrying the same filename text. The original href points to
+// /uploads/... which won't resolve outside the agent-chat server, so leaving
+// the link in place would render as a broken click target.
+function dehrefFileLinks(root) {
+  var links = root.querySelectorAll('a.file-attachment-link');
+  for (var i = 0; i < links.length; i++) {
+    var a = links[i];
+    var span = document.createElement('span');
+    span.className = 'file-attachment-link';
+    span.textContent = a.textContent;
+    a.parentNode.replaceChild(span, a);
+  }
+}
+
 // Walk the live messages DOM and produce a self-contained HTML export. All
 // non-data: <img> srcs are fetched and inlined as base64. Returns the full
-// HTML string.
-async function buildExportHtml() {
+// HTML string. opts.imageMode = "fullsize" (default) | "thumbnail".
+async function buildExportHtml(opts) {
+  var imageMode = (opts && opts.imageMode) || 'fullsize';
   var children = messages.children;
   var items = [];
 
@@ -2143,10 +2189,13 @@ async function buildExportHtml() {
       var img = b.querySelector('img');
       if (img) {
         // Canvas bubbles are already rasterized to data: URIs by canvas-bundle,
-        // but inline defensively in case that ever changes.
+        // but inline defensively in case that ever changes. We always keep
+        // canvas drawings full-size because they're the agent's drawings, not
+        // user uploads — thumbnailing them would lose the diagram detail that
+        // motivated drawing them in the first place.
         var clone = document.createElement('div');
         clone.innerHTML = '<div class="bubble agent canvas-bubble"><img src="' + img.src + '" style="width:100%;height:auto;display:block;border-radius:8px;"></div>';
-        await inlineImagesIn(clone);
+        await inlineImagesIn(clone, 'fullsize');
         items.push(clone.innerHTML);
       }
     } else {
@@ -2155,7 +2204,8 @@ async function buildExportHtml() {
       // Clone before inlining so we don't bloat the live DOM with multi-MB
       // data URIs.
       var bubbleClone = b.cloneNode(true);
-      await inlineImagesIn(bubbleClone);
+      dehrefFileLinks(bubbleClone);
+      await inlineImagesIn(bubbleClone, imageMode);
       items.push('<div class="bubble ' + role + voice + '">' + bubbleClone.innerHTML + '</div>');
     }
   }
@@ -2216,6 +2266,15 @@ async function buildExportHtml() {
     + 'speak(btn.parentElement.innerText,function(){btn.classList.remove("playing");});'
     + '});'
     + '})(btns[i]);}'
+    // Click any image thumbnail to open it standalone in a new tab — mirrors
+    // the live UI behaviour without duplicating the data URI bytes inside an
+    // <a href="data:..."> wrapper.
+    + 'document.addEventListener("click",function(e){'
+    + 'var t=e.target;'
+    + 'if(t&&t.tagName==="IMG"&&t.classList.contains("file-thumb")){'
+    + 'window.open(t.src,"_blank","noopener");'
+    + '}'
+    + '});'
     + '})();'
     // IMPORTANT: keep the closing script tag literal SPLIT (see line below).
     // When this app.js is inlined into an outer script block by a host page
@@ -2255,10 +2314,10 @@ document.getElementById('btn-download').addEventListener('click', async function
 
 // Handle a server-driven export request: build the HTML and POST it back to
 // /api/export so the agent-chat server can write it to the agent's target path.
-async function handleExportRequest(token) {
+async function handleExportRequest(token, imageMode) {
   if (!token) return;
   try {
-    var html = await buildExportHtml();
+    var html = await buildExportHtml({ imageMode: imageMode });
     await fetch('/api/export?token=' + encodeURIComponent(token), {
       method: 'POST',
       headers: { 'Content-Type': 'text/html; charset=utf-8' },

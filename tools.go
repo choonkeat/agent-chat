@@ -456,12 +456,13 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 	type ExportChatHTMLParams struct {
 		Title          string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
 		TargetPath     string `json:"target_path,omitempty" jsonschema:"Optional override path. If set, must resolve inside the current working directory."`
+		ImageMode      string `json:"image_mode,omitempty" jsonschema:"How to embed user-uploaded images: 'fullsize' (default) keeps original bytes and makes thumbnails clickable; 'thumbnail' downsamples to a small JPEG for a compact archive."`
 		TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the browser to render and POST the HTML back. Default 60s."`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "export_chat_html",
-		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines all uploaded images as base64 data URIs, and POSTs the result back to the server, which writes the file. Default location: ./agent-chats/YYYY-MM-DD-{title}.html (auto-suffixed -2/-3 on collision). Pass `target_path` only to override that default. Requires at least one connected browser tab. Path safety: any target_path that escapes the agent's cwd is refused.",
+		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines uploaded images as base64 data URIs, and POSTs the result back to the server, which writes the file. Default location: ./agent-chats/YYYY-MM-DD-{title}.html (auto-suffixed -2/-3 on collision). Pass `target_path` only to override that default. `image_mode` controls image fidelity: 'fullsize' (default) keeps the original bytes, 'thumbnail' downsamples to small JPEGs. Requires at least one connected browser tab. Path safety: any target_path that escapes the agent's cwd is refused.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatHTMLParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -500,6 +501,19 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 			abs = nextAvailableExportPath(filepath.Join(cwd, "agent-chats"), date+"-"+slug)
 		}
 
+		imageMode := params.ImageMode
+		switch imageMode {
+		case "", "fullsize":
+			imageMode = "fullsize"
+		case "thumbnail":
+			// ok
+		default:
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: image_mode %q is invalid; expected 'fullsize' or 'thumbnail'", params.ImageMode)}},
+				IsError: true,
+			}, nil, nil
+		}
+
 		if bus.TransientSubscriberCount() == 0 {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "error: no browser connected to render the export. Open the chat UI in a browser and retry."}},
@@ -516,8 +530,9 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		defer bus.CancelExport(handle.Token)
 
 		delivered := bus.PublishTransient(map[string]any{
-			"type":  "exportRequest",
-			"token": handle.Token,
+			"type":       "exportRequest",
+			"token":      handle.Token,
+			"image_mode": imageMode,
 		})
 		if delivered == 0 {
 			return &mcp.CallToolResult{

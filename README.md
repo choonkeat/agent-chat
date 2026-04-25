@@ -49,7 +49,7 @@ Agent (Claude, etc.)
 | `send_progress` | Send a non-blocking progress update. |
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |
-| `export_chat_html` | Export the current chat as a self-contained HTML file. The browser walks its DOM and inlines uploaded images as base64; the server writes the file to `./agent-chats/YYYY-MM-DD-{title}.html`. Requires a connected browser tab. |
+| `export_chat_html` | Export the current chat as a self-contained HTML file. The browser walks its DOM and inlines uploaded images as base64 (clickable for full-size, or downsampled with `image_mode='thumbnail'`); the server writes the file to `./agent-chats/YYYY-MM-DD-{title}.html`. Requires a connected browser tab. |
 
 ## Installation
 
