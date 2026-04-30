@@ -5,7 +5,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func mustParseTime(t *testing.T, s string) time.Time {
+	t.Helper()
+	tt, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse time %q: %v", s, err)
+	}
+	return tt
+}
 
 // Common expected substrings for reply instructions (shared across tests).
 const (
@@ -209,27 +219,165 @@ func TestSlugifyTitle(t *testing.T) {
 	}
 }
 
-func TestNextAvailableExportPath(t *testing.T) {
+func TestNextDailyIndexGapTolerantAndSlugDigits(t *testing.T) {
 	dir := t.TempDir()
 
-	first := nextAvailableExportPath(dir, "2026-04-25-test")
-	if filepath.Base(first) != "2026-04-25-test.html" {
-		t.Errorf("first call: got %q, want base 2026-04-25-test.html", first)
-	}
-	if err := os.WriteFile(first, []byte("x"), 0644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	second := nextAvailableExportPath(dir, "2026-04-25-test")
-	if filepath.Base(second) != "2026-04-25-test-2.html" {
-		t.Errorf("second call: got %q, want suffix -2", second)
-	}
-	if err := os.WriteFile(second, []byte("x"), 0644); err != nil {
-		t.Fatalf("write: %v", err)
+	// Pre-populate with files that have gaps and a slug starting with digits.
+	for _, name := range []string{
+		"2026-04-25-01-foo.html",
+		"2026-04-25-03-bar.html",                  // gap at 02
+		"2026-04-25-1234567890-numeric-slug.html", // not an index — slug starts with digits
+		"2026-04-25-99-other.md",                  // markdown counts toward the daily index
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
 	}
 
-	third := nextAvailableExportPath(dir, "2026-04-25-test")
-	if filepath.Base(third) != "2026-04-25-test-3.html" {
-		t.Errorf("third call: got %q, want suffix -3", third)
+	if got := nextDailyIndex(dir, "2026-04-25"); got != 100 {
+		t.Errorf("nextDailyIndex with gaps + .md = %d, want 100", got)
+	}
+}
+
+func TestRunChatMarkdownExportFreshDir(t *testing.T) {
+	dir := t.TempDir()
+	now := mustParseTime(t, "2026-04-30T10:00:00Z")
+	events := []Event{
+		{Type: "userMessage", Text: "hello"},
+		{Type: "agentMessage", Text: "hi there"},
+		{Type: "userMessage", Text: "thanks"},
+	}
+	mdPath, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", now)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	wantBase := "2026-04-30-01-test-chat.md"
+	if filepath.Base(mdPath) != wantBase {
+		t.Errorf("md path = %s, want base %s", mdPath, wantBase)
+	}
+
+	// .md file must exist with expected structure.
+	md, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("read md: %v", err)
+	}
+	mdStr := string(md)
+	wantContains := []string{
+		"<!-- agent-chat export",
+		"title: Test Chat",
+		"date: 2026-04-30",
+		"index: 01",
+		"slug: test-chat",
+		"agent: claude",
+		"version: v0.5.0 (abc123)",
+		"-->",
+		"**Test Chat**",
+		"2026-04-30 · 01 · claude · agent-chat v0.5.0 (abc123)",
+		`<table style="border-collapse:collapse;width:100%;border:0">`,
+		`<td style="border:0;width:20%">&nbsp;</td>`, // user turn left-empty cell
+		"hello",
+		"hi there",
+		"thanks",
+	}
+	for _, w := range wantContains {
+		if !strings.Contains(mdStr, w) {
+			t.Errorf("md missing %q\n--- md ---\n%s", w, mdStr)
+		}
+	}
+
+	// Viewer assets must exist.
+	for _, name := range []string{"viewer.css", "viewer.js"} {
+		if _, err := os.Stat(filepath.Join(dir, "assets", name)); err != nil {
+			t.Errorf("expected %s in assets: %v", name, err)
+		}
+	}
+
+	// index.html must exist with manifest entry.
+	idx, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	idxStr := string(idx)
+	wantIdx := []string{
+		`{ md: './2026-04-30-01-test-chat.md', date: '2026-04-30', idx: '01', title: 'Test Chat' },`,
+		"agent-chat:manifest-insert",
+	}
+	for _, w := range wantIdx {
+		if !strings.Contains(idxStr, w) {
+			t.Errorf("index.html missing %q", w)
+		}
+	}
+}
+
+func TestRunChatMarkdownExportPrependsToExistingIndex(t *testing.T) {
+	dir := t.TempDir()
+	now1 := mustParseTime(t, "2026-04-30T10:00:00Z")
+	now2 := mustParseTime(t, "2026-04-30T11:00:00Z") // same day → idx 02
+
+	if _, err := runChatMarkdownExport(dir, "first", []Event{{Type: "userMessage", Text: "a"}}, "claude", "v1", now1); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, err := runChatMarkdownExport(dir, "second", []Event{{Type: "userMessage", Text: "b"}}, "claude", "v1", now2); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+
+	idx, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	idxStr := string(idx)
+	posSecond := strings.Index(idxStr, "2026-04-30-02-second.md")
+	posFirst := strings.Index(idxStr, "2026-04-30-01-first.md")
+	if posSecond < 0 || posFirst < 0 {
+		t.Fatalf("missing entries; second=%d first=%d", posSecond, posFirst)
+	}
+	if posSecond > posFirst {
+		t.Errorf("second entry should appear before first (newest first); got second=%d first=%d", posSecond, posFirst)
+	}
+}
+
+func TestRenderChatMarkdownAlternates(t *testing.T) {
+	events := []Event{
+		{Type: "userMessage", Text: "U1"},
+		{Type: "agentMessage", Text: "A1"},
+		{Type: "userMessage", Text: "U2"},
+		{Type: "agentMessage", Text: "A2"},
+	}
+	md := renderChatMarkdown(events, chatExportMeta{
+		Title: "T", Date: "2026-04-30", Index: "01", Slug: "t",
+	}, nil)
+
+	// User turns: empty cell on LEFT, content cell on RIGHT.
+	// Agent turns: content cell on LEFT, empty cell on RIGHT.
+	// Order in source: U-empty-left, A-empty-right, U, A.
+	posU1 := strings.Index(md, "U1")
+	posA1 := strings.Index(md, "A1")
+	posU2 := strings.Index(md, "U2")
+	posA2 := strings.Index(md, "A2")
+	if !(posU1 < posA1 && posA1 < posU2 && posU2 < posA2) {
+		t.Errorf("turns out of order: U1=%d A1=%d U2=%d A2=%d", posU1, posA1, posU2, posA2)
+	}
+
+	// Spot-check an empty-cell shape per turn type.
+	if !strings.Contains(md, `<td style="border:0;width:20%">&nbsp;</td>`) {
+		t.Errorf("expected user-turn empty left-cell shape; got:\n%s", md)
+	}
+
+	// Skip whitespace-only events.
+	mdEmpty := renderChatMarkdown([]Event{{Type: "userMessage", Text: "   "}}, chatExportMeta{Title: "x", Date: "d", Index: "01"}, nil)
+	if strings.Contains(mdEmpty, `width:20%">&nbsp;`) {
+		t.Errorf("empty user message should not emit a turn table")
+	}
+}
+
+func TestUpsertIndexHTMLMissingSentinelFails(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(bad, []byte("<html><body>no sentinel here</body></html>"), 0644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := upsertIndexHTML(bad, manifestEntry{MD: "./a.md", Date: "d", Index: "01", Title: "T"})
+	if err == nil || !strings.Contains(err.Error(), "manifest opening line not found") {
+		t.Errorf("expected manifest-opening-line-not-found error, got: %v", err)
 	}
 }

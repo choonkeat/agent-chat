@@ -8,6 +8,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,19 +128,41 @@ func slugifyTitle(title string) string {
 	return out
 }
 
-// nextAvailableExportPath returns dir/base.html if it does not exist, otherwise
-// dir/base-2.html, dir/base-3.html, etc. — never silently overwrites.
-func nextAvailableExportPath(dir, base string) string {
-	candidate := filepath.Join(dir, base+".html")
-	if _, err := os.Stat(candidate); os.IsNotExist(err) {
-		return candidate
+// nextDailyIndex returns the next per-day running index for dir. It looks for
+// files named `{date}-NN-…` where NN is 2 or 3 digits and returns max(NN)+1,
+// or 1 if no matching file exists.
+func nextDailyIndex(dir, date string) int {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 1
 	}
-	for i := 2; ; i++ {
-		candidate = filepath.Join(dir, fmt.Sprintf("%s-%d.html", base, i))
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			return candidate
+	prefix := date + "-"
+	maxIdx := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		rest := name[len(prefix):]
+		dash := strings.IndexByte(rest, '-')
+		// Require NN to be 2 or 3 digits followed by '-'; this avoids treating
+		// a slug like "1234567890-foo" as an index.
+		if dash != 2 && dash != 3 {
+			continue
+		}
+		nStr := rest[:dash]
+		n, err := strconv.Atoi(nStr)
+		if err != nil || n < 1 {
+			continue
+		}
+		if n > maxIdx {
+			maxIdx = n
 		}
 	}
+	return maxIdx + 1
 }
 
 func registerTools(server *mcp.Server, bus *EventBus) {
@@ -453,120 +476,58 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}, nil, nil
 	})
 
-	type ExportChatHTMLParams struct {
-		Title          string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
-		TargetPath     string `json:"target_path,omitempty" jsonschema:"Optional override path. If set, must resolve inside the current working directory."`
-		ImageMode      string `json:"image_mode,omitempty" jsonschema:"How to embed user-uploaded images: 'fullsize' (default) keeps original bytes and makes thumbnails clickable; 'thumbnail' downsamples to a small JPEG for a compact archive."`
-		TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"How long to wait for the browser to render and POST the HTML back. Default 60s."`
+	type ExportChatMDParams struct {
+		Title      string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
+		TargetDir  string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "export_chat_html",
-		Description: "Export the current chat as a self-contained HTML file. The browser walks its DOM (so the rendered output matches what the user sees), inlines uploaded images as base64 data URIs, and POSTs the result back to the server, which writes the file. Default location: ./agent-chats/YYYY-MM-DD-{title}.html (auto-suffixed -2/-3 on collision). Pass `target_path` only to override that default. `image_mode` controls image fidelity: 'fullsize' (default) keeps the original bytes, 'thumbnail' downsamples to small JPEGs. Requires at least one connected browser tab. Path safety: any target_path that escapes the agent's cwd is refused.",
-	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatHTMLParams) (*mcp.CallToolResult, any, error) {
-		if err := ensureHTTPServer(); err != nil {
-			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
-		}
-
+		Name:        "export_chat_md",
+		Description: "Export the current chat as a markdown file (variant-C HTML-table format) for review on GitHub/GitLab and viewing in a sibling bubble UI. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies any user-uploaded image attachments into ./agent-chats/assets/YYYY-MM-DD-NN-N.{ext} (relative-path links from the .md), and upserts ./agent-chats/index.html — the chat-archive landing page — by prepending a manifest entry on top (newest first). On the first export, also writes ./agent-chats/assets/viewer.css and viewer.js (idempotent: never overwritten on subsequent calls). Path safety: target_dir cannot escape cwd.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, nil, fmt.Errorf("get cwd: %w", err)
 		}
 		cwdClean := filepath.Clean(cwd)
 
-		var abs string
-		if params.TargetPath != "" {
-			// Override path: validate it stays inside cwd.
-			abs = params.TargetPath
-			if !filepath.IsAbs(abs) {
-				abs = filepath.Join(cwd, abs)
+		slug := slugifyTitle(params.Title)
+		if slug == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: title is required (a short kebab-case slug, e.g. 'auth-bug-fix')"}},
+				IsError: true,
+			}, nil, nil
+		}
+
+		var rootDir string
+		if params.TargetDir != "" {
+			rootDir = params.TargetDir
+			if !filepath.IsAbs(rootDir) {
+				rootDir = filepath.Join(cwd, rootDir)
 			}
-			abs = filepath.Clean(abs)
-			rel, err := filepath.Rel(cwdClean, abs)
+			rootDir = filepath.Clean(rootDir)
+			rel, err := filepath.Rel(cwdClean, rootDir)
 			if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
 				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: target_path %q is outside the current working directory %q", params.TargetPath, cwdClean)}},
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: target_dir %q is outside the current working directory %q", params.TargetDir, cwdClean)}},
 					IsError: true,
 				}, nil, nil
 			}
 		} else {
-			slug := slugifyTitle(params.Title)
-			if slug == "" {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: "error: title is required (a short kebab-case slug, e.g. 'auth-bug-fix')"}},
-					IsError: true,
-				}, nil, nil
-			}
-			date := time.Now().Format("2006-01-02")
-			abs = nextAvailableExportPath(filepath.Join(cwd, "agent-chats"), date+"-"+slug)
+			rootDir = filepath.Join(cwd, "agent-chats")
 		}
 
-		imageMode := params.ImageMode
-		switch imageMode {
-		case "", "fullsize":
-			imageMode = "fullsize"
-		case "thumbnail":
-			// ok
-		default:
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: image_mode %q is invalid; expected 'fullsize' or 'thumbnail'", params.ImageMode)}},
-				IsError: true,
-			}, nil, nil
+		events, _ := bus.History()
+		mdPath, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", time.Now())
+		if err != nil {
+			return nil, nil, err
 		}
 
-		if bus.TransientSubscriberCount() == 0 {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "error: no browser connected to render the export. Open the chat UI in a browser and retry."}},
-				IsError: true,
-			}, nil, nil
-		}
-
-		timeout := time.Duration(params.TimeoutSeconds) * time.Second
-		if timeout <= 0 {
-			timeout = 60 * time.Second
-		}
-
-		handle := bus.CreateExport()
-		defer bus.CancelExport(handle.Token)
-
-		delivered := bus.PublishTransient(map[string]any{
-			"type":       "exportRequest",
-			"token":      handle.Token,
-			"image_mode": imageMode,
-		})
-		if delivered == 0 {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "error: failed to dispatch export request to any connected browser (queues full)."}},
-				IsError: true,
-			}, nil, nil
-		}
-
-		select {
-		case res := <-handle.Ch:
-			if res.Error != "" {
-				return &mcp.CallToolResult{
-					Content: []mcp.Content{&mcp.TextContent{Text: "error: browser reported render failure: " + res.Error}},
-					IsError: true,
-				}, nil, nil
-			}
-			if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-				return nil, nil, fmt.Errorf("create parent dir: %w", err)
-			}
-			if err := os.WriteFile(abs, res.HTML, 0644); err != nil {
-				return nil, nil, fmt.Errorf("write file: %w", err)
-			}
-			summary := fmt.Sprintf("Exported chat to %s (%d bytes).", abs, len(res.HTML))
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: summary}},
-			}, nil, nil
-		case <-time.After(timeout):
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: browser did not return export within %s", timeout)}},
-				IsError: true,
-			}, nil, nil
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		}
+		summary := fmt.Sprintf("Exported chat to %s. Open %s in a browser to browse the archive.",
+			mdPath, filepath.Join(rootDir, "index.html"))
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: summary}},
+		}, nil, nil
 	})
 }
 

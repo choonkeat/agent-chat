@@ -50,7 +50,7 @@ Agent (Claude, etc.)
 | `send_progress` | Send a non-blocking progress update. |
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |
-| `export_chat_html` | Export the current chat as a self-contained HTML file. The browser walks its DOM and inlines uploaded images as base64 (clickable for full-size, or downsampled with `image_mode='thumbnail'`); the server writes the file to `./agent-chats/YYYY-MM-DD-{title}.html`. Requires a connected browser tab. |
+| `export_chat_md` | Export the current chat as a markdown file (HTML-table format that renders as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies image attachments to `./agent-chats/assets/`, and upserts the chat-archive `index.html`. First export also writes embedded `viewer.css` / `viewer.js` into the assets directory. |
 
 ## Installation
 
