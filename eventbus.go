@@ -324,6 +324,35 @@ func (eb *EventBus) HasQueuedMessages() bool {
 	return len(eb.msgQueue) > 0
 }
 
+// RemoveFromQueue atomically pulls every queued message, drops the one with
+// the matching ID, and re-enqueues the rest in their original order. Returns
+// true if the target ID was found and removed. Used by the "unsend" flow so
+// the agent never sees a withdrawn message. Distinct from drain: nothing is
+// "consumed" here — withdrawn messages should fire userMessageDeleted, not
+// userMessagesConsumed.
+func (eb *EventBus) RemoveFromQueue(targetID string) bool {
+	if targetID == "" {
+		return false
+	}
+	var keep []UserMessage
+	found := false
+	for {
+		select {
+		case msg := <-eb.msgQueue:
+			if msg.ID == targetID {
+				found = true
+				continue
+			}
+			keep = append(keep, msg)
+		default:
+			for _, m := range keep {
+				eb.msgQueue <- m
+			}
+			return found
+		}
+	}
+}
+
 // FormatMessages joins user messages into a single string with file attachment info.
 func FormatMessages(msgs []UserMessage) string {
 	data := formatMessagesData{}

@@ -362,11 +362,33 @@ function addBubble(text, role, files, extraClass, timestamp, messageId) {
     div.dataset.msgId = messageId;
     div.classList.add('pending-agent');
     div.title = "Agent hasn't seen this yet";
+    var unsend = document.createElement('button');
+    unsend.type = 'button';
+    unsend.className = 'bubble-unsend';
+    unsend.title = 'Unsend — pull this back before the agent reads it';
+    unsend.textContent = '×';
+    unsend.addEventListener('click', function (e) {
+      e.stopPropagation();
+      sendUnsend(messageId);
+    });
+    div.appendChild(unsend);
     appendAfterLoader(div);
   } else {
     appendMessage(div);
   }
   scrollToBottom(false);
+}
+
+// Tell the server to drop a pending message from the agent's queue.
+// Optimistically remove the bubble locally so the click feels responsive;
+// the server's userMessageDeleted broadcast will reconcile other tabs.
+function sendUnsend(messageId) {
+  if (!messageId) return;
+  if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+    activeWs.send(JSON.stringify({ type: 'unsend', id: messageId }));
+  }
+  var bubble = messages.querySelector('.bubble.user[data-msg-id="' + messageId + '"]');
+  if (bubble) bubble.remove();
 }
 
 function addAgentMessage(text, files, extraClass, timestamp) {
@@ -733,7 +755,8 @@ function removeLoading() {
 
 // Clear the "pending" state on user bubbles whose IDs the agent has just
 // consumed. Re-parents them above the loader so the conversation reads
-// chronologically again.
+// chronologically again, and strips the × control (unsend no longer applies
+// once the agent has read the message).
 function markMessagesConsumed(ids) {
   if (!ids || ids.length === 0) return;
   var loader = document.getElementById('loading-bubble');
@@ -743,6 +766,8 @@ function markMessagesConsumed(ids) {
     if (!bubble) continue;
     bubble.classList.remove('pending-agent');
     bubble.removeAttribute('title');
+    var unsendBtn = bubble.querySelector('.bubble-unsend');
+    if (unsendBtn) unsendBtn.remove();
     if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
       // bubble currently sits after the loader; move it above.
       messages.insertBefore(bubble, loader);
@@ -1881,6 +1906,22 @@ function replayHistory(history) {
   console.log('[' + ts() + '] Replaying ' + history.length + ' history events');
   clearMessages();
 
+  // First pass: find which user-message IDs were withdrawn (userMessageDeleted)
+  // or consumed (userMessagesConsumed). Withdrawn IDs are skipped entirely;
+  // consumed IDs render as normal bubbles (no .pending-agent class).
+  var deletedIds = {};
+  var consumedIds = {};
+  for (var k = 0; k < history.length; k++) {
+    var hev = history[k];
+    if (hev.type === 'userMessageDeleted' && hev.id) {
+      deletedIds[hev.id] = true;
+    } else if (hev.type === 'userMessagesConsumed' && hev.ids) {
+      for (var ki = 0; ki < hev.ids.length; ki++) {
+        consumedIds[hev.ids[ki]] = true;
+      }
+    }
+  }
+
   var pendingReplies = null; // quick_replies from the most recent agent/verbal/draw event
 
   for (var i = 0; i < history.length; i++) {
@@ -1893,6 +1934,11 @@ function replayHistory(history) {
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
       case 'userMessage':
+        if (event.id && deletedIds[event.id]) {
+          // Message was unsent before the agent ever saw it \u2014 skip the bubble
+          // entirely so reconnecting tabs match live state.
+          break;
+        }
         // Freeze unchosen quick replies from the preceding agent message
         if (pendingReplies) {
           var chosenText = event.text || '';
@@ -1910,7 +1956,11 @@ function replayHistory(history) {
         if (event.text || (event.files && event.files.length > 0)) {
           var isVoiceMsg = event.text && event.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? event.text.replace('\ud83c\udfa4 ', '') : event.text;
-          addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts);
+          // Only pass the ID when the message is still pending in history \u2014
+          // otherwise rendering as a normal (consumed) bubble matches what
+          // every other tab is showing.
+          var stillPending = event.id && !consumedIds[event.id];
+          addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts, stillPending ? event.id : undefined);
         }
         break;
       case 'draw':
@@ -2094,6 +2144,22 @@ function connect() {
         // the permission / ack path). Flip the matching bubbles out of the
         // "pending" state and re-parent them above the loader.
         markMessagesConsumed(data.ids || []);
+        break;
+
+      case 'userMessageDeleted':
+        // Some tab (or this one) unsent a pending message before the agent
+        // saw it — drop the bubble everywhere.
+        if (data.id) {
+          var deleted = messages.querySelector('.bubble.user[data-msg-id="' + data.id + '"]');
+          if (deleted) deleted.remove();
+        }
+        break;
+
+      case 'unsendFailed':
+        // The agent had already drained the message before our unsend
+        // request reached the server. The matching bubble has either
+        // already flipped to consumed or is about to — log and leave it.
+        console.log('[' + ts() + '] unsend failed for id=' + data.id + ' (agent already read it)');
         break;
 
       case 'exportRequest':

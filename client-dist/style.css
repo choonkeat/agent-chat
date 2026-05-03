@@ -428,10 +428,41 @@ body {
 
 /* User bubble awaiting agent receipt — dimmed and rendered below the loader
    until the matching userMessagesConsumed event clears it. cursor:help nudges
-   users to hover for the tooltip. */
+   users to hover for the tooltip. position:relative anchors the × control. */
 .bubble.user.pending-agent {
   opacity: 0.55;
   cursor: help;
+  position: relative;
+}
+
+/* The × unsend control rides in the bubble's upper-left corner. Subtle at
+   rest, fully opaque on hover. Only ever exists on .pending-agent bubbles —
+   we don't render it for consumed ones. */
+.bubble-unsend {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 14px;
+  line-height: 18px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.bubble.user.pending-agent:hover .bubble-unsend,
+.bubble-unsend:focus {
+  opacity: 1;
+}
+
+.bubble-unsend:hover {
+  background: #dc2626;
 }
 
 /* --- Sticky footer (input bar) --- */

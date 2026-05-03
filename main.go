@@ -551,6 +551,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				// immediately too.
 				bus.PublishConsumedUserMessage(m.Message, nil)
 			}
+		case "unsend":
+			// User clicked × on a pending bubble — withdraw it from the queue
+			// before the agent sees it. Broadcast deletion so every tab drops
+			// the bubble; if the message was already drained, tell the sender.
+			if m.ID == "" {
+				break
+			}
+			if bus.RemoveFromQueue(m.ID) {
+				bus.Publish(Event{Type: "userMessageDeleted", ID: m.ID})
+			} else {
+				select {
+				case writeCh <- map[string]any{"type": "unsendFailed", "id": m.ID}:
+				default:
+				}
+			}
 		}
 	}
 }
