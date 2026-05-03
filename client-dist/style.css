@@ -426,6 +426,14 @@ body {
   40% { opacity: 1; transform: scale(1.1); }
 }
 
+/* User bubble awaiting agent receipt — dimmed and rendered below the loader
+   until the matching userMessagesConsumed event clears it. cursor:help nudges
+   users to hover for the tooltip. */
+.bubble.user.pending-agent {
+  opacity: 0.55;
+  cursor: help;
+}
+
 /* --- Sticky footer (input bar) --- */
 
 #chat-footer {
@@ -848,6 +856,16 @@ body {
 #btn-send:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Yolo orange while the agent is busy (loading bubble visible) — signals
+   "your next message will queue behind work in progress". */
+#btn-send.agent-busy {
+  background: #f97316;
+}
+
+#btn-send.agent-busy:hover {
+  background: #ea580c;
 }
 
 #btn-send.loading,

@@ -522,14 +522,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					consumed = channelInterceptorRef.HandleUserResponse(m.Text)
 				}
 				if consumed {
-					// Permission response handled — broadcast as userMessage for display
-					// but don't push to agent's message queue.
-					bus.Publish(Event{Type: "userMessage", Text: m.Text})
+					// Permission response handled — broadcast as userMessage for
+					// display, then immediately mark consumed (the message never
+					// hits the agent's queue).
+					bus.PublishConsumedUserMessage(m.Text, nil)
 				} else {
-					bus.PushMessage(m.Text, m.Files)
-					// Broadcast userMessage to all connected browsers (including sender)
-					// so every tab shows the bubble. Also appends to event log for reconnect replay.
-					bus.Publish(Event{Type: "userMessage", Text: m.Text, Files: m.Files})
+					// ReceiveUserMessage publishes the userMessage event BEFORE
+					// queuing so browsers always see the bubble before any
+					// consumption signal that the agent may race-fire.
+					bus.ReceiveUserMessage(m.Text, m.Files)
 					// Notify browser that message is queued — it waits for this
 					// before telling the parent frame to call check_messages.
 					select {
@@ -545,8 +546,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					result = "ack:" + m.Message
 				}
 				bus.ResolveAck(m.ID, result)
-				// Broadcast ack reply as a userMessage to all browsers.
-				bus.Publish(Event{Type: "userMessage", Text: m.Message})
+				// Broadcast ack reply as a userMessage to all browsers; the ack
+				// itself is the "agent received it" signal, so emit consumed
+				// immediately too.
+				bus.PublishConsumedUserMessage(m.Message, nil)
 			}
 		}
 	}

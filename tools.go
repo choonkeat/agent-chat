@@ -548,8 +548,7 @@ func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 				IsError: true,
 			}, nil, nil
 		}
-		bus.PushMessage(params.Text, nil)
-		bus.Publish(Event{Type: "userMessage", Text: params.Text})
+		bus.ReceiveUserMessage(params.Text, nil)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "message pushed"}},
 		}, nil, nil

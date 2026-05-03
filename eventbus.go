@@ -23,15 +23,26 @@ type FileRef struct {
 }
 
 // UserMessage is a text message with optional file attachments from the browser.
+// ID is assigned when the message enters the system (via ReceiveUserMessage) and
+// is echoed back on the matching userMessagesConsumed event so the browser can
+// flip the bubble's "pending" state once the agent has actually drained it.
 type UserMessage struct {
+	ID    string    `json:"id,omitempty"`
 	Text  string    `json:"text"`
 	Files []FileRef `json:"files,omitempty"`
 }
 
 // Event represents a chat event sent to browser clients.
+//
+// For userMessage events, ID is the message's unique ID (so the browser can
+// tag the bubble). For userMessagesConsumed events, IDs lists the message IDs
+// the agent has just drained from the queue (or that the server consumed
+// inline via the permission/ack paths).
 type Event struct {
-	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "draw"
+	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "draw"
 	Seq          int64     `json:"seq"`                    // monotonic sequence number
+	ID           string    `json:"id,omitempty"`           // userMessage: the message's unique ID
+	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed: which IDs were consumed
 	Text         string    `json:"text,omitempty"`
 	AckID        string    `json:"ack_id,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
@@ -181,9 +192,20 @@ func (eb *EventBus) Close() {
 	}
 }
 
-// PushMessage queues a user message from the browser.
+// PushMessage queues a user message from the browser. The ID will be assigned
+// automatically; callers that need to broadcast the userMessage event with the
+// matching ID should use ReceiveUserMessage instead.
 func (eb *EventBus) PushMessage(text string, files []FileRef) {
-	msg := UserMessage{Text: text, Files: files}
+	eb.pushUserMessage(UserMessage{ID: uuid.New().String(), Text: text, Files: files})
+}
+
+// pushUserMessage enqueues a pre-built UserMessage (used by ReceiveUserMessage,
+// which generates the ID up front so the broadcast and the queue carry the
+// same ID).
+func (eb *EventBus) pushUserMessage(msg UserMessage) {
+	if msg.ID == "" {
+		msg.ID = uuid.New().String()
+	}
 	select {
 	case eb.msgQueue <- msg:
 	default:
@@ -196,6 +218,48 @@ func (eb *EventBus) PushMessage(text string, files []FileRef) {
 	}
 }
 
+// ReceiveUserMessage is the canonical entry point for a user-originated
+// message: it publishes the userMessage event first (so every browser sees the
+// bubble before any consumption signal) and then queues the message for the
+// agent. The returned ID is the same one carried by the userMessage event and
+// the eventual userMessagesConsumed event.
+func (eb *EventBus) ReceiveUserMessage(text string, files []FileRef) string {
+	id := uuid.New().String()
+	eb.Publish(Event{Type: "userMessage", ID: id, Text: text, Files: files})
+	eb.pushUserMessage(UserMessage{ID: id, Text: text, Files: files})
+	return id
+}
+
+// PublishConsumedUserMessage is for paths where the server itself consumes a
+// message without ever putting it in the agent queue (the permission-prompt
+// interceptor and the ack-reply path). It broadcasts the userMessage event,
+// then immediately broadcasts userMessagesConsumed for the same ID so the
+// browser never shows a stuck "pending" bubble.
+func (eb *EventBus) PublishConsumedUserMessage(text string, files []FileRef) string {
+	id := uuid.New().String()
+	eb.Publish(Event{Type: "userMessage", ID: id, Text: text, Files: files})
+	eb.Publish(Event{Type: "userMessagesConsumed", IDs: []string{id}})
+	return id
+}
+
+// publishConsumed fans out a userMessagesConsumed event for the given message
+// IDs. No-op when the slice is empty.
+func (eb *EventBus) publishConsumed(msgs []UserMessage) {
+	if len(msgs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	eb.Publish(Event{Type: "userMessagesConsumed", IDs: ids})
+}
+
 // DrainMessages returns all currently queued messages, or nil if none are queued.
 // Non-blocking. Text from multiple messages is joined with "\n\n"; files are aggregated.
 func (eb *EventBus) DrainMessages() []UserMessage {
@@ -205,6 +269,7 @@ func (eb *EventBus) DrainMessages() []UserMessage {
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
+			eb.publishConsumed(msgs)
 			return msgs
 		}
 	}
@@ -226,6 +291,7 @@ func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) 
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
+			eb.publishConsumed(msgs)
 			return msgs, nil
 		}
 	}

@@ -245,6 +245,13 @@ function renderMarkdown(text) {
   // Italic (*text* or _text_)
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   html = html.replace(/(?<!\w)_(.+?)_(?!\w)/g, '<em>$1</em>');
+  // Images ![alt](url) — accept absolute (http/https) AND relative URLs since
+  // chat content often embeds images by path. Block `javascript:` for safety.
+  // Must run before the link rule so the leading "!" is consumed.
+  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function(_, alt, url) {
+    if (/^\s*javascript:/i.test(url)) return alt;
+    return '<img src="' + url + '" alt="' + alt + '">';
+  });
   // Links [text](url)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   // Bare URLs
@@ -320,7 +327,7 @@ function formatElapsed(ms) {
   return mins + 'm ' + remSecs + 's';
 }
 
-function addBubble(text, role, files, extraClass, timestamp) {
+function addBubble(text, role, files, extraClass, timestamp, messageId) {
   // Show elapsed time before agent messages (how long the agent took to reply)
   if (role !== 'user' && timestamp && lastBubbleTs) {
     var delta = timestamp - lastBubbleTs;
@@ -346,7 +353,19 @@ function addBubble(text, role, files, extraClass, timestamp) {
   if (role === 'agent') {
     div.appendChild(createTtsButton(div));
   }
-  appendMessage(div);
+  // User bubbles arriving with a server-assigned ID start in the "pending"
+  // state — dimmed and rendered after the loader so they're visually
+  // disconnected from the conversation until the agent has actually read
+  // them (via check_messages or send_message). Cleared by the
+  // userMessagesConsumed event.
+  if (role === 'user' && messageId) {
+    div.dataset.msgId = messageId;
+    div.classList.add('pending-agent');
+    div.title = "Agent hasn't seen this yet";
+    appendAfterLoader(div);
+  } else {
+    appendMessage(div);
+  }
   scrollToBottom(false);
 }
 
@@ -679,6 +698,14 @@ function appendMessage(el) {
   }
 }
 
+// Insert element AFTER the loading bubble (i.e. just before #quick-replies,
+// which is the last child). Used for pending user bubbles so they sit visually
+// "below" the agent typing indicator until consumed. With no loader present
+// this degenerates to the same position as appendMessage.
+function appendAfterLoader(el) {
+  messages.insertBefore(el, quickReplies);
+}
+
 function showLoading() {
   removeLoading();
   quickReplies.classList.remove('visible'); // loading and quick replies are mutually exclusive
@@ -686,13 +713,41 @@ function showLoading() {
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
   div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  messages.insertBefore(div, quickReplies);
+  // Insert the loader BEFORE any trailing pending user bubbles so the
+  // "agent is busy" indicator stays anchored at the consumed/pending boundary.
+  var firstPending = messages.querySelector('.bubble.user.pending-agent');
+  if (firstPending) {
+    messages.insertBefore(div, firstPending);
+  } else {
+    messages.insertBefore(div, quickReplies);
+  }
+  sendBtn.classList.add('agent-busy');
   scrollToBottom(false);
 }
 
 function removeLoading() {
   var el = document.getElementById('loading-bubble');
   if (el) el.remove();
+  sendBtn.classList.remove('agent-busy');
+}
+
+// Clear the "pending" state on user bubbles whose IDs the agent has just
+// consumed. Re-parents them above the loader so the conversation reads
+// chronologically again.
+function markMessagesConsumed(ids) {
+  if (!ids || ids.length === 0) return;
+  var loader = document.getElementById('loading-bubble');
+  for (var i = 0; i < ids.length; i++) {
+    var id = ids[i];
+    var bubble = messages.querySelector('.bubble.user[data-msg-id="' + id + '"]');
+    if (!bubble) continue;
+    bubble.classList.remove('pending-agent');
+    bubble.removeAttribute('title');
+    if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
+      // bubble currently sits after the loader; move it above.
+      messages.insertBefore(bubble, loader);
+    }
+  }
 }
 
 // --- Send ---
@@ -2016,7 +2071,9 @@ function connect() {
         if (data.text || (data.files && data.files.length > 0)) {
           var isVoiceMsg = data.text && data.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
-          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts);
+          // Pass the server-assigned ID so addBubble can mark this bubble
+          // "pending" until userMessagesConsumed clears it.
+          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id);
         }
         // Re-enable input and clear the text now that the message is confirmed
         chatInput.value = '';
@@ -2030,6 +2087,13 @@ function connect() {
         // Also ensures correct state after replay for new/reconnecting browsers.
         showLoading();
         scrollToBottom(true);
+        break;
+
+      case 'userMessagesConsumed':
+        // Agent has drained the queue (or the server consumed inline via
+        // the permission / ack path). Flip the matching bubbles out of the
+        // "pending" state and re-parent them above the loader.
+        markMessagesConsumed(data.ids || []);
         break;
 
       case 'exportRequest':
