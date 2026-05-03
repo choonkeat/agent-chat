@@ -2,6 +2,46 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.6.0] — 2026-05-03
+
+### Features
+- New MCP tool `export_chat_md(title, target_dir?)` replaces
+  `export_chat_html`: server writes a script-style markdown file
+  (`**USER**` / `**AGENT**` markers with `> `-blockquoted bodies) to
+  `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies user-attached
+  images to `./agent-chats/assets/`, and upserts an `index.html`
+  archive landing page that re-renders each chat as speech bubbles
+  matching the `[download chat]` HTML look. NN is a per-day index.
+- Each agent turn carries an elapsed-time prefix
+  (`<small>took 26.5s</small><br>`) computed against the previous
+  bubble's timestamp, plus a trailing `[Quick replies]` bullet block
+  when the original `send_message` supplied one.
+- User-attached image attachments live inside the user blockquote,
+  wrapped in a flex `<div>` so md-serve / our viewer tile them
+  three-up; each thumbnail is `<a href>`-wrapped for click-to-open
+  and middle-click-to-new-tab. GitHub's HTML sanitiser strips the
+  inline `style=...`, gracefully degrading to one-image-per-row.
+- Bundled chat-archive viewer in `chatlog-viewer/` (embedded via
+  `//go:embed`, written on first export). The viewer auto-detects
+  legacy table-format exports and the new heading-marker format,
+  and renders both as bubbles. Markdown fetches use
+  `Accept: text/markdown, text/plain` so md-serve 0.4.0+ returns
+  raw bytes via content negotiation.
+
+### Fixes
+- Parser hardened with `(?!>)` lookaheads on the turn-marker and
+  elapsed-time regexes — turn detection is now blockquote-aware by
+  construction, so literal `**USER**` / `<small>took …</small>`
+  strings inside chat content can never false-trigger a split.
+- Image flex layout now applies to the `<a>` link wrapping each
+  thumbnail (the actual flex item) instead of the inner `<img>`,
+  fixing the regression where attachments stacked one per row.
+
+### Docs
+- `agent-chats/index.html` is the live, browseable archive of every
+  chat exported through `export_chat_md`, with a sidebar filter and
+  a raw `.md ↗` link per chat.
+
 ## [0.5.0] — 2026-04-25
 
 ### Features
