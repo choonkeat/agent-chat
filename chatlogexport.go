@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"os"
@@ -26,19 +27,18 @@ type chatExportMeta struct {
 	Version string // agent-chat version + commit
 }
 
-// renderChatMarkdown produces the variant-C markdown content for a chat export.
-// Each user/agent event becomes one 2-cell <table>. User turns put content in
-// the right cell (left empty, 20%/80%). Agent turns put content in the left
-// cell (right empty, 80%/20%). A 1-cell system row at the top carries the
-// title + metadata.
-//
-// imageMap maps original file paths to relative URLs (e.g. "./assets/2026-04-30-01-1.png")
-// so user-attached images render with the rewritten path.
+// renderChatMarkdown produces script-style markdown for a chat export. Each
+// turn is delimited by a `**USER**` or `**AGENT**` marker on its own line; the
+// body follows as a `> ` blockquote. Before each agent turn (except the first)
+// a `<small>took NN.Ns</small><br>` line records the elapsed time since the
+// previous bubble. Quick replies sent with an agent turn are listed as a
+// trailing `[Quick replies]` bullet block. User-attached images render inline
+// within the user blockquote, wrapped in a flex `<div>` so md-serve / our
+// viewer tile them three-up while GitHub's sanitizer (which strips inline
+// styles) gracefully degrades to one-per-row.
 func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string]string) string {
 	var b strings.Builder
 
-	// Hidden metadata block — invisible in any markdown renderer; preserved
-	// for tooling that wants to read it programmatically.
 	b.WriteString("<!-- agent-chat export\n")
 	fmt.Fprintf(&b, "title: %s\n", meta.Title)
 	fmt.Fprintf(&b, "date: %s\n", meta.Date)
@@ -52,69 +52,184 @@ func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string
 	}
 	b.WriteString("-->\n\n")
 
-	// Visible system row at top: bold title + small muted metadata line.
-	b.WriteString(`<table style="border-collapse:collapse;width:100%;border:0"><tr>` + "\n")
-	b.WriteString(`<td style="border:0;text-align:center;color:#888;font-size:0.85em">` + "\n\n")
-	fmt.Fprintf(&b, "**%s**\n\n", meta.Title)
-	headerBits := []string{meta.Date, meta.Index}
+	fmt.Fprintf(&b, "# %s\n\n", meta.Title)
+
+	bylineBits := []string{meta.Date, meta.Index}
 	if meta.Agent != "" {
-		headerBits = append(headerBits, meta.Agent)
+		bylineBits = append(bylineBits, meta.Agent)
 	}
 	if meta.Version != "" {
-		headerBits = append(headerBits, "agent-chat "+meta.Version)
+		bylineBits = append(bylineBits, "agent-chat "+meta.Version)
 	}
-	fmt.Fprintf(&b, "%s\n\n", strings.Join(headerBits, " · "))
-	b.WriteString("</td>\n</tr></table>\n\n")
+	fmt.Fprintf(&b, "_%s_\n\n", strings.Join(bylineBits, " · "))
 
+	var lastTs int64
 	for _, e := range events {
 		switch e.Type {
 		case "userMessage":
-			body := e.Text
-			for _, f := range e.Files {
-				rel := imageMap[f.Path]
-				if rel == "" {
-					continue
-				}
+			body := strings.TrimSpace(e.Text)
+			imgBlock := imageBlock(e.Files, imageMap)
+			if body == "" && imgBlock == "" {
+				continue
+			}
+			b.WriteString("**USER**\n\n")
+			if body != "" {
+				b.WriteString(blockquoteText(body))
+				b.WriteString("\n")
+			}
+			if imgBlock != "" {
 				if body != "" {
-					body += "\n\n"
+					b.WriteString(">\n")
 				}
-				body += fmt.Sprintf("![%s](%s)", strings.ReplaceAll(f.Name, "]", ""), rel)
+				b.WriteString(imgBlock)
+				b.WriteString("\n")
 			}
-			if strings.TrimSpace(body) == "" {
+			b.WriteString("\n")
+			if e.Timestamp > 0 {
+				lastTs = e.Timestamp
+			}
+		case "agentMessage", "verbalReply":
+			body := strings.TrimSpace(e.Text)
+			if body == "" {
 				continue
 			}
-			writeUserTurn(&b, body)
-		case "agentMessage":
-			if strings.TrimSpace(e.Text) == "" {
-				continue
+			// Mirror client-dist/app.js:323-333: any previous bubble (user or
+			// agent) sets lastTs; if a delta is computable, emit it.
+			if lastTs > 0 && e.Timestamp > lastTs {
+				fmt.Fprintf(&b, "<small>took %s</small><br>\n", formatElapsed(e.Timestamp-lastTs))
 			}
-			writeAgentTurn(&b, e.Text)
+			b.WriteString("**AGENT**\n\n")
+			b.WriteString(blockquoteText(body))
+			b.WriteString("\n\n")
+			if qr := quickRepliesBlock(e.QuickReplies); qr != "" {
+				b.WriteString(qr)
+			}
+			if e.Timestamp > 0 {
+				lastTs = e.Timestamp
+			}
 		}
 	}
 
 	return b.String()
 }
 
-func writeUserTurn(b *strings.Builder, body string) {
-	b.WriteString(`<table style="border-collapse:collapse;width:100%;border:0"><tr>` + "\n")
-	b.WriteString(`<td style="border:0;width:20%">&nbsp;</td>` + "\n")
-	b.WriteString(`<td style="border:0;width:80%">` + "\n\n")
-	b.WriteString(strings.TrimSpace(body))
-	b.WriteString("\n\n</td>\n</tr></table>\n\n")
+// blockquoteText prefixes every line of s with `> `, matching CommonMark
+// blockquote semantics. A line that is already `>`-prefixed nests deeper
+// (e.g. `> foo` becomes `> > foo`), preserving the author's intent.
+func blockquoteText(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		if l == "" {
+			out[i] = ">"
+		} else {
+			out[i] = "> " + l
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
-func writeAgentTurn(b *strings.Builder, body string) {
-	b.WriteString(`<table style="border-collapse:collapse;width:100%;border:0"><tr>` + "\n")
-	b.WriteString(`<td style="border:0;width:80%">` + "\n\n")
-	b.WriteString(strings.TrimSpace(body))
-	b.WriteString("\n\n</td>\n")
-	b.WriteString(`<td style="border:0;width:20%">&nbsp;</td>` + "\n")
-	b.WriteString("</tr></table>\n\n")
+// quickRepliesBlock formats a list of quick replies as the trailing bullet
+// block emitted at the end of an agent turn. Returns "" if the slice is empty
+// or contains only blanks.
+func quickRepliesBlock(replies []string) string {
+	var nonEmpty []string
+	for _, r := range replies {
+		if strings.TrimSpace(r) != "" {
+			nonEmpty = append(nonEmpty, r)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("[Quick replies]\n")
+	for _, r := range nonEmpty {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
-// writeImageAttachments copies user-uploaded images from their server-side
+// imageBlock renders user-attached files as an inline flex `<div>` of
+// `<a><img></a>` tags, each line prefixed with `> ` so it lives inside the
+// user-turn blockquote. Non-image attachments are emitted as plain links
+// instead of `<img>`. Returns "" if no displayable attachments.
+func imageBlock(files []FileRef, imageMap map[string]string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var imgs, others []string
+	for _, f := range files {
+		rel := imageMap[f.Path]
+		if rel == "" {
+			continue
+		}
+		if isImage(f) {
+			// Flex constraints go on the <a> (the direct flex item) so each
+			// link-wrapped thumbnail occupies a third of the row. Without
+			// this the <a> would shrink to its content and stack 1 per row.
+			imgs = append(imgs, fmt.Sprintf(
+				`<a href="%s" style="flex:0 1 calc(33%% - 8px);max-width:calc(33%% - 8px);"><img src="%s" alt="%s" style="width:100%%;height:auto;display:block;border-radius:6px;"></a>`,
+				rel, rel, html.EscapeString(f.Name)))
+		} else {
+			others = append(others, fmt.Sprintf("[%s](%s)", strings.ReplaceAll(f.Name, "]", ""), rel))
+		}
+	}
+	if len(imgs) == 0 && len(others) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, link := range others {
+		lines = append(lines, "> "+link)
+	}
+	if len(imgs) > 0 {
+		if len(others) > 0 {
+			lines = append(lines, ">")
+		}
+		lines = append(lines, `> <div style="display:flex;flex-wrap:wrap;gap:8px;">`)
+		for _, img := range imgs {
+			lines = append(lines, "> "+img)
+		}
+		lines = append(lines, `> </div>`)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// isImage returns true if f looks like an image based on MIME type or
+// extension. Used to decide whether to render a `<img>` tag (with flex layout)
+// or a plain markdown link.
+func isImage(f FileRef) bool {
+	if strings.HasPrefix(f.Type, "image/") {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(f.Name)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".heic":
+		return true
+	}
+	return false
+}
+
+// formatElapsed mirrors the JS-side formatter (client-dist/app.js:314): under
+// a second -> "Nms", under a minute -> "N.Ns", otherwise "Nm Ns".
+func formatElapsed(ms int64) string {
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	secs := float64(ms) / 1000
+	if secs < 60 {
+		return fmt.Sprintf("%.1fs", secs)
+	}
+	mins := int(secs) / 60
+	rem := int(secs) % 60
+	return fmt.Sprintf("%dm %ds", mins, rem)
+}
+
+// writeImageAttachments copies user-uploaded files from their server-side
 // upload paths to assetsDir/{date}-{NN}-N.{ext}. Returns a map from each
-// source path to the relative URL the .md should reference.
+// source path to the relative URL the .md should reference. Non-image files
+// are also copied (renderChatMarkdown emits them as plain links rather than
+// `<img>` tags, but the relative-path link still points to a real file).
 func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[string]string, error) {
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir assets: %w", err)
@@ -130,7 +245,7 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 				continue
 			}
 			if _, ok := out[f.Path]; ok {
-				continue // dedupe — same upload referenced twice
+				continue
 			}
 			ext := filepath.Ext(f.Name)
 			if ext == "" && f.Type != "" {
@@ -246,7 +361,6 @@ func upsertIndexHTML(path string, entry manifestEntry) error {
 	if loc == nil {
 		return fmt.Errorf("manifest opening line not found in %s — cannot prepend entry", path)
 	}
-	// Insert immediately after the `const MANIFEST = [\n` line.
 	insertAt := loc[1]
 	newLine := entry.jsLine() + "\n"
 	out := make([]byte, 0, len(data)+len(newLine))

@@ -243,9 +243,9 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 	dir := t.TempDir()
 	now := mustParseTime(t, "2026-04-30T10:00:00Z")
 	events := []Event{
-		{Type: "userMessage", Text: "hello"},
-		{Type: "agentMessage", Text: "hi there"},
-		{Type: "userMessage", Text: "thanks"},
+		{Type: "userMessage", Text: "hello", Timestamp: 1000},
+		{Type: "agentMessage", Text: "hi there", Timestamp: 4500, QuickReplies: []string{"more", "stop"}},
+		{Type: "userMessage", Text: "thanks", Timestamp: 5000},
 	}
 	mdPath, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", now)
 	if err != nil {
@@ -271,18 +271,23 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 		"agent: claude",
 		"version: v0.5.0 (abc123)",
 		"-->",
-		"**Test Chat**",
-		"2026-04-30 · 01 · claude · agent-chat v0.5.0 (abc123)",
-		`<table style="border-collapse:collapse;width:100%;border:0">`,
-		`<td style="border:0;width:20%">&nbsp;</td>`, // user turn left-empty cell
-		"hello",
-		"hi there",
-		"thanks",
+		"# Test Chat",
+		"_2026-04-30 · 01 · claude · agent-chat v0.5.0 (abc123)_",
+		"**USER**\n\n> hello",
+		"**AGENT**\n\n> hi there",
+		"**USER**\n\n> thanks",
+		"[Quick replies]\n- more\n- stop",
 	}
 	for _, w := range wantContains {
 		if !strings.Contains(mdStr, w) {
 			t.Errorf("md missing %q\n--- md ---\n%s", w, mdStr)
 		}
+	}
+	// User at ts=1000, agent at ts=4500 → 3.5s elapsed before the first agent
+	// turn. Mirrors the JS viewer logic which emits elapsed before any
+	// non-user bubble whose preceding bubble has a timestamp.
+	if !strings.Contains(mdStr, "<small>took 3.5s</small><br>\n**AGENT**") {
+		t.Errorf("expected elapsed-time prefix before first agent turn; md:\n%s", mdStr)
 	}
 
 	// Viewer assets must exist.
@@ -338,35 +343,66 @@ func TestRunChatMarkdownExportPrependsToExistingIndex(t *testing.T) {
 
 func TestRenderChatMarkdownAlternates(t *testing.T) {
 	events := []Event{
-		{Type: "userMessage", Text: "U1"},
-		{Type: "agentMessage", Text: "A1"},
-		{Type: "userMessage", Text: "U2"},
-		{Type: "agentMessage", Text: "A2"},
+		{Type: "userMessage", Text: "U1", Timestamp: 1000},
+		{Type: "agentMessage", Text: "A1", Timestamp: 5000},
+		{Type: "userMessage", Text: "U2", Timestamp: 6000},
+		{Type: "agentMessage", Text: "A2", Timestamp: 38000},
 	}
 	md := renderChatMarkdown(events, chatExportMeta{
 		Title: "T", Date: "2026-04-30", Index: "01", Slug: "t",
 	}, nil)
 
-	// User turns: empty cell on LEFT, content cell on RIGHT.
-	// Agent turns: content cell on LEFT, empty cell on RIGHT.
-	// Order in source: U-empty-left, A-empty-right, U, A.
-	posU1 := strings.Index(md, "U1")
-	posA1 := strings.Index(md, "A1")
-	posU2 := strings.Index(md, "U2")
-	posA2 := strings.Index(md, "A2")
+	posU1 := strings.Index(md, "> U1")
+	posA1 := strings.Index(md, "> A1")
+	posU2 := strings.Index(md, "> U2")
+	posA2 := strings.Index(md, "> A2")
 	if !(posU1 < posA1 && posA1 < posU2 && posU2 < posA2) {
 		t.Errorf("turns out of order: U1=%d A1=%d U2=%d A2=%d", posU1, posA1, posU2, posA2)
 	}
-
-	// Spot-check an empty-cell shape per turn type.
-	if !strings.Contains(md, `<td style="border:0;width:20%">&nbsp;</td>`) {
-		t.Errorf("expected user-turn empty left-cell shape; got:\n%s", md)
+	if !strings.Contains(md, "**USER**\n\n> U1") {
+		t.Errorf("expected user marker + blockquoted body; got:\n%s", md)
+	}
+	if !strings.Contains(md, "**AGENT**\n\n> A1") {
+		t.Errorf("expected agent marker + blockquoted body; got:\n%s", md)
 	}
 
-	// Skip whitespace-only events.
+	// Second agent turn (A2) follows U2 with a 32s gap → elapsed prefix.
+	if !strings.Contains(md, "<small>took 32.0s</small><br>\n**AGENT**\n\n> A2") {
+		t.Errorf("expected `took 32.0s` elapsed-time prefix before A2; got:\n%s", md)
+	}
+
+	// Whitespace-only user message produces no turn.
 	mdEmpty := renderChatMarkdown([]Event{{Type: "userMessage", Text: "   "}}, chatExportMeta{Title: "x", Date: "d", Index: "01"}, nil)
-	if strings.Contains(mdEmpty, `width:20%">&nbsp;`) {
-		t.Errorf("empty user message should not emit a turn table")
+	if strings.Contains(mdEmpty, "**USER**") {
+		t.Errorf("empty user message should not emit a turn marker")
+	}
+}
+
+func TestRenderChatMarkdownBlockquoteEscape(t *testing.T) {
+	// Body with leading `> ` should nest one level deeper, not overwrite the
+	// turn's blockquote prefix.
+	events := []Event{
+		{Type: "userMessage", Text: "regular line\n> already quoted\nback to normal"},
+	}
+	md := renderChatMarkdown(events, chatExportMeta{Title: "T", Date: "d", Index: "01"}, nil)
+	want := "**USER**\n\n> regular line\n> > already quoted\n> back to normal"
+	if !strings.Contains(md, want) {
+		t.Errorf("blockquote nesting wrong:\nwant substring: %q\ngot:\n%s", want, md)
+	}
+}
+
+func TestFormatElapsed(t *testing.T) {
+	cases := []struct{ ms int64; want string }{
+		{500, "500ms"},
+		{1500, "1.5s"},
+		{37900, "37.9s"},
+		{75000, "1m 15s"},
+		{134000, "2m 14s"},
+	}
+	for _, c := range cases {
+		if got := formatElapsed(c.ms); got != c.want {
+			t.Errorf("formatElapsed(%d) = %q, want %q", c.ms, got, c.want)
+		}
 	}
 }
 

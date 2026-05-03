@@ -1,14 +1,20 @@
-// Tiny markdown→bubbles renderer. Splits on `## Role` headings and renders
-// each turn as a chat bubble. Uses marked.js (CDN) for the body markdown.
+// Tiny markdown→bubbles renderer. Splits on `**Role**` or `## Role` markers
+// and renders each turn as a chat bubble. Uses marked.js (CDN) for the body
+// markdown.
 
-// Role markers we recognize. A turn starts on a line that is either a `## <role>`
-// H2 heading OR a standalone `**<role>**` paragraph.
 const ROLE_MAP = {
   user: 'user', you: 'user',
   agent: 'agent', claude: 'agent',
   system: 'system',
 };
-const TURN_RE = /^(?:## ([A-Za-z]+)|\*\*([A-Za-z]+)\*\*)\s*$/;
+// Turn markers and elapsed-time markers live OUTSIDE the `> ` blockquote that
+// wraps every user/agent body. The `(?!>)` lookahead makes that contract
+// explicit: even if the markdown were corrupted to put a marker-like literal
+// inside a blockquoted body, the regex won't false-match. Combined with
+// `^…$` anchoring this also protects against marker text inside fenced code
+// blocks (which gets blockquoted alongside the surrounding body).
+const TURN_RE = /^(?!>)(?:## ([A-Za-z]+)|\*\*([A-Za-z]+)\*\*)\s*$/;
+const ELAPSED_RE = /^(?!>)<small>\s*(?:took\s+)?([^<]+?)\s*<\/small><br\s*\/?>?\s*$/i;
 
 function unblockquote(s) {
   return s.split('\n').map(line => line.replace(/^> ?/, '')).join('\n');
@@ -28,8 +34,8 @@ function stripFrontmatter(md) {
   return { meta, body };
 }
 
-// Table-format parser (Variant C / C′). Each turn is a 2-cell <table>; role is
-// determined by which cell holds content (left-cell = agent, right-cell = user).
+// Legacy variant-C parser — each turn is a 2-cell <table> (left/right empty
+// indicates the role). Kept so old `agent-chats/*.md` still render.
 function splitTurnsFromTables(body) {
   const tableRE = /<table[^>]*>[\s\S]*?<\/table>/g;
   const tdRE = /<td[^>]*>([\s\S]*?)<\/td>/g;
@@ -44,8 +50,6 @@ function splitTurnsFromTables(body) {
   while ((m = tableRE.exec(body)) !== null) {
     const between = body.slice(lastEnd, m.index).trim();
     if (between) {
-      // Text outside any table — treat as system/preamble. Append to preamble
-      // if no turns yet, otherwise as a system turn.
       if (turns.length === 0) preamble += (preamble ? '\n\n' : '') + between;
       else turns.push({ role: 'system', body: between });
     }
@@ -60,17 +64,13 @@ function splitTurnsFromTables(body) {
       if (isEmpty(left) && !isEmpty(right))      { role = 'user';   content = right; }
       else if (isEmpty(right) && !isEmpty(left)) { role = 'agent';  content = left;  }
       else                                       { role = 'system'; content = left || right; }
-      // Strip the leading **You** / **Claude** label (it's the in-bubble role
-      // marker for the GitHub view; the bubble color already conveys this).
       content = content.replace(/^\s*\*\*(You|Claude|Agent|User|System)\*\*\s*\n*/, '');
       turns.push({ role, body: content.trim() });
     } else if (cells.length === 1) {
-      // 1-cell table → centered system row.
       turns.push({ role: 'system', body: cells[0].trim() });
     }
     lastEnd = m.index + m[0].length;
   }
-  // Trailing content after last table.
   const tail = body.slice(lastEnd).trim();
   if (tail) {
     if (turns.length === 0) preamble += (preamble ? '\n\n' : '') + tail;
@@ -79,41 +79,72 @@ function splitTurnsFromTables(body) {
   return { preamble: preamble.trim(), turns };
 }
 
-// Heading / bold-line parser (Variants A, B, D). Splits on `## Role` or
-// standalone `**Role**` lines. User-turn bodies have `> ` blockquote prefixes
-// stripped.
+// Heading / bold-line parser. A turn starts on a line matching TURN_RE
+// (`## Role` or `**Role**`). Two pieces of metadata may appear adjacent to
+// turn markers and are extracted into structured fields rather than left in
+// the bubble body:
+//   - Pre-marker `<small>took NN.Ns</small><br>` line  → turn.elapsed
+//   - Trailing `[Quick replies]\n- A\n- B\n` block      → turn.replies
 function splitTurnsFromHeadings(body) {
   const lines = body.split('\n');
   const turns = [];
-  let preamble = [];
+  const preamble = [];
   let current = null;
+  let pendingElapsed = null;
+
   for (const line of lines) {
-    const m = line.match(TURN_RE);
-    const rawRole = m && (m[1] || m[2]);
+    const turnMatch = line.match(TURN_RE);
+    const rawRole = turnMatch && (turnMatch[1] || turnMatch[2]);
     const role = rawRole && ROLE_MAP[rawRole.toLowerCase()];
     if (role) {
       if (current) turns.push(current);
-      current = { role, lines: [] };
-    } else if (current) {
+      current = { role, lines: [], elapsed: pendingElapsed };
+      pendingElapsed = null;
+      continue;
+    }
+    const elapsedMatch = line.match(ELAPSED_RE);
+    if (elapsedMatch) {
+      // Buffer it — applies to the *next* turn, not the current one.
+      pendingElapsed = elapsedMatch[1].trim();
+      continue;
+    }
+    if (current) {
       current.lines.push(line);
     } else {
       preamble.push(line);
     }
   }
   if (current) turns.push(current);
+
   return {
     preamble: preamble.join('\n').trim(),
     turns: turns.map(t => {
       let bodyText = t.lines.join('\n').trim();
-      if (t.role === 'user') bodyText = unblockquote(bodyText);
-      return { role: t.role, body: bodyText };
+      bodyText = unblockquote(bodyText);
+      const { body: stripped, replies } = extractQuickReplies(bodyText);
+      return { role: t.role, body: stripped.trim(), elapsed: t.elapsed, replies };
     }),
   };
 }
 
-// Blockquote-prefix parser (Variants E, F). Lines like `> **You:** …` or
+// Pull a trailing `[Quick replies]\n- A\n- B\n…` block off the end of body.
+// The block lives outside the `> ` blockquote, so a body line `> [Quick
+// replies]` (a literal one inside the speech bubble) won't false-trigger:
+// after `unblockquote` strips the `> ` we see `[Quick replies]` at column 0,
+// but only at the *very end* of the body — and any text *after* the bullets
+// (e.g. continued conversation prose) breaks the match.
+function extractQuickReplies(body) {
+  const m = body.match(/(?:^|\n)\[Quick replies\]\s*\n((?:[ \t]*-[^\n]*\n?)+)\s*$/);
+  if (!m) return { body, replies: [] };
+  const replies = m[1].split('\n')
+    .map(line => line.replace(/^[ \t]*-\s*/, '').trim())
+    .filter(Boolean);
+  return { body: body.slice(0, m.index), replies };
+}
+
+// Blockquote-prefix parser (variants E/F). Lines like `> **You:** …` or
 // `> **Claude:** …` start a new turn; bare content between them is the OTHER
-// role. The "blockquote role" is whichever role appears first as `> **X:**`.
+// role. Kept for backward-compat with that variant.
 function splitTurnsFromPrefix(body) {
   const lines = body.split('\n');
   const PREFIX_RE = /^> \*\*(You|Claude|Agent|User):\*\*\s?(.*)$/;
@@ -139,7 +170,6 @@ function splitTurnsFromPrefix(body) {
       if (qm) { current.body += qm[1] + '\n'; continue; }
       flush();
     }
-    // Bare line — belongs to the "other" role
     if (!current) {
       if (blockquoteRole === null) { preamble.push(line); continue; }
       const otherRole = blockquoteRole === 'user' ? 'agent' : 'user';
@@ -150,13 +180,15 @@ function splitTurnsFromPrefix(body) {
   flush();
   return {
     preamble: preamble.join('\n').trim(),
-    turns: turns.map(t => ({ role: t.role, body: t.body.trim() })),
+    turns: turns.map(t => ({ role: t.role, body: t.body.trim(), elapsed: null, replies: [] })),
   };
 }
 
 function splitTurns(body) {
-  // Auto-detect format and dispatch. Order matters: tables first (most specific),
-  // then heading/bold markers, then blockquote-prefix.
+  // Order matters. The new script-style format and old table format both
+  // include `**Role**` markers (the table parser strips them from inside
+  // cells, so seeing `**USER**` at top level means new format). Detect the
+  // table format first by its distinctive `<table>` shape.
   if (/<table[^>]*>[\s\S]*?<\/table>/.test(body)) {
     return splitTurnsFromTables(body);
   }
@@ -166,7 +198,6 @@ function splitTurns(body) {
   if (/^> \*\*(You|Claude|Agent|User):\*\*/m.test(body)) {
     return splitTurnsFromPrefix(body);
   }
-  // Last resort — entire body as preamble.
   return { preamble: body.trim(), turns: [] };
 }
 
@@ -174,14 +205,21 @@ async function loadChat(mdPath, container) {
   container = container || document.querySelector('.chat');
   container.innerHTML = '';
   try {
-    const resp = await fetch(mdPath, { cache: 'no-cache' });
+    // Ask for raw markdown via Accept content-negotiation. md-serve
+    // (>= the Accept-header release) sees no `text/html` in the list and
+    // returns the source bytes; vanilla static servers ignore Accept and
+    // serve the file as-is, which is also fine.
+    const resp = await fetch(mdPath, {
+      cache: 'no-cache',
+      headers: { 'Accept': 'text/markdown, text/plain' },
+    });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const md = await resp.text();
     const { meta, body } = stripFrontmatter(md);
     const { preamble, turns } = splitTurns(body);
 
-    // Strip HTML comments (e.g. our `<!-- agent-chat export … -->` header) so
-    // they don't create an empty system bubble at the top.
+    // Strip HTML comments (e.g. `<!-- agent-chat export … -->`) so they don't
+    // create an empty system bubble.
     const preambleClean = preamble.replace(/<!--[\s\S]*?-->/g, '').trim();
     if (preambleClean) {
       const pre = document.createElement('div');
@@ -190,10 +228,27 @@ async function loadChat(mdPath, container) {
       container.appendChild(pre);
     }
     for (const turn of turns) {
+      if (turn.elapsed) {
+        const el = document.createElement('div');
+        el.className = 'elapsed-time';
+        el.textContent = turn.elapsed;
+        container.appendChild(el);
+      }
       const bubble = document.createElement('div');
       bubble.className = 'bubble ' + turn.role;
       bubble.innerHTML = marked.parse(turn.body);
       container.appendChild(bubble);
+      if (turn.replies && turn.replies.length) {
+        const fr = document.createElement('div');
+        fr.className = 'frozen-replies';
+        for (const r of turn.replies) {
+          const chip = document.createElement('span');
+          chip.className = 'chip frozen';
+          chip.textContent = r;
+          fr.appendChild(chip);
+        }
+        container.appendChild(fr);
+      }
     }
     return meta;
   } catch (e) {

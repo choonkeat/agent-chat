@@ -483,7 +483,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "export_chat_md",
-		Description: "Export the current chat as a markdown file (variant-C HTML-table format) for review on GitHub/GitLab and viewing in a sibling bubble UI. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies any user-uploaded image attachments into ./agent-chats/assets/YYYY-MM-DD-NN-N.{ext} (relative-path links from the .md), and upserts ./agent-chats/index.html — the chat-archive landing page — by prepending a manifest entry on top (newest first). On the first export, also writes ./agent-chats/assets/viewer.css and viewer.js (idempotent: never overwritten on subsequent calls). Path safety: target_dir cannot escape cwd.",
+		Description: "Export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies any user-uploaded image attachments into ./agent-chats/assets/YYYY-MM-DD-NN-N.{ext} (relative-path links from the .md), and upserts ./agent-chats/index.html — the chat-archive landing page — by prepending a manifest entry on top (newest first). On the first export, also writes ./agent-chats/assets/viewer.css and viewer.js (idempotent: never overwritten on subsequent calls). Path safety: target_dir cannot escape cwd.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
 		cwd, err := os.Getwd()
 		if err != nil {

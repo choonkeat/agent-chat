@@ -93,6 +93,18 @@ body {
   margin: 0.3rem 0;
 }
 
+.bubble p {
+  margin: 0.3rem 0;
+}
+
+.bubble p:first-child {
+  margin-top: 0;
+}
+
+.bubble p:last-child {
+  margin-bottom: 0;
+}
+
 .bubble pre code {
   background: none;
   padding: 0;
@@ -128,6 +140,36 @@ body {
   border-radius: 6px;
   margin-top: 0.3rem;
   display: block;
+}
+
+.elapsed-time {
+  align-self: center;
+  color: #666;
+  font-size: 0.65rem;
+  padding: 0.15rem 0.5rem;
+  opacity: 0.6;
+}
+
+.frozen-replies {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.2rem 0;
+  flex-wrap: wrap;
+  align-self: flex-end;
+  max-width: 80%;
+}
+
+.frozen-replies .chip {
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  background: transparent;
+  color: #999;
+  cursor: default;
 }
 
 .error {
@@ -325,6 +367,20 @@ body.archive .chat {
 
 body.archive .chat > * {
   max-width: 800px;
+}
+
+/* Bubbles, elapsed-time markers, and frozen-reply chip rows size themselves
+   (or already cap at 80%); they must not be force-stretched to 100% or the
+   user/agent left/right alignment collapses. */
+body.archive .chat > .bubble.user,
+body.archive .chat > .bubble.agent,
+body.archive .chat > .elapsed-time,
+body.archive .chat > .frozen-replies {
+  width: auto;
+}
+
+body.archive .chat > .bubble.system,
+body.archive .chat > :not(.bubble):not(.elapsed-time):not(.frozen-replies) {
   width: 100%;
 }
 
