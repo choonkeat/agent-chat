@@ -222,8 +222,11 @@ test.describe('Autocomplete @filepath', () => {
     // Should contain the query and path info from the server
     expect(statusText).toContain('xyz');
 
-    // Assert response: server returned empty results with info
-    const noResultResponse = autocompleteResponses.find(
+    // Assert response: server returned empty results with info.
+    // Use findLast — under fast typing, an intermediate query (e.g. just
+    // "x") can also hit the no-results path. We want the response for the
+    // final "xyz" query, which is the most recent matching one.
+    const noResultResponse = autocompleteResponses.findLast(
       r => r && r.results && r.results.length === 0 && r.info
     );
     expect(noResultResponse).toBeDefined();
