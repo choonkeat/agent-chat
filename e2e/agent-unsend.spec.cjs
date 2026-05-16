@@ -59,10 +59,18 @@ const test = base.extend({
     const browser = await chromium.connectOverCDP(CDP_ENDPOINT, {
       ...(SLOW_MO > 0 && { slowMo: SLOW_MO }),
     });
-    const contexts = browser.contexts();
-    const pages = contexts.flatMap(c => c.pages());
-    const page = pages[0] || (await browser.newContext()).newPage();
-    await use(page);
+    // Fresh context + page per test. Eliminates cross-test state bleed
+    // in the shared CDP browser (every spec used to grab pages[0], so 22
+    // tests across 5 files all ran in the same tab — leftover navigation,
+    // fetches, and event listeners caused intermittent flake). Trade-off:
+    // tests no longer reuse the pre-existing tab visible in Agent View.
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    try {
+      await use(page);
+    } finally {
+      await context.close().catch(() => {});
+    }
   },
 });
 
