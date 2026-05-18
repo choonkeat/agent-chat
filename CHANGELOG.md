@@ -2,6 +2,52 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.7.0] — 2026-05-18
+
+### Features
+- Pending-receipt state for user bubbles: messages render dim and
+  below the typing loader with an "Agent hasn't seen this yet"
+  tooltip until the agent actually drains them (via `check_messages`
+  or `send_message`), then flip above the loader and revert to normal
+  styling. The Send button takes yolo-orange whenever the loading
+  indicator is visible, signalling that the next message will queue
+  behind in-progress work. `eventbus.go` carries IDs on
+  `UserMessage`/`Event`; new `ReceiveUserMessage` /
+  `PublishConsumedUserMessage` helpers guarantee
+  publish-before-queue ordering, and `DrainMessages` /
+  `WaitForMessages` emit `userMessagesConsumed` with the drained IDs.
+- Unsend × control on every pending user bubble. Click withdraws the
+  message before the agent reads it: the server atomically
+  drain-filter-requeues the queue and broadcasts
+  `userMessageDeleted` so every tab removes the bubble; the agent's
+  next `check_messages` never sees it. Consumed bubbles do not
+  expose × — once the model has read the text, "unsend" would be
+  misleading. History replay builds a deleted-IDs set and skips
+  withdrawn user messages.
+
+### Tests
+- New `e2e/markdown-images.spec.cjs` drives client-side
+  `renderMarkdown()` via Playwright to cover `![alt](url)`, empty
+  alt, relative paths, `javascript:` URL rejection, plain-link
+  regression, and mixed image+link. Companion visual side-by-side
+  bubble screenshot spec (`markdown-images-visual.spec.cjs`) is
+  skipped from the default suite; run manually.
+- Each Playwright test now runs in its own isolated
+  `browser.newContext().newPage()` instead of reusing `pages[0]`,
+  eliminating cross-test state bleed (stale autocomplete dropdowns,
+  leftover navigations, `ERR_ABORTED` first-of-describe failures)
+  that produced 0–4 intermittent failures per run. Trade-off: tests
+  no longer ride in the pre-existing Agent View tab.
+- `@xyz` autocomplete debounce race fixed by switching the
+  no-result-response lookup from `.find()` to `.findLast()`, so the
+  final query's response is asserted against even when an
+  intermediate query (e.g. just `x`) slips through debounce
+  coalescing under CPU pressure.
+
+### Docs
+- Exported chat session capturing the TDD-driven implementation of
+  the pending-receipt UX and the unsend × control.
+
 ## [0.6.0] — 2026-05-03
 
 ### Features

@@ -21,17 +21,15 @@ func mustParseTime(t *testing.T, s string) time.Time {
 const (
 	replyInstructionsBody = "The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_message` or `send_progress`. Plain text in your response is never seen by the user.\n\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_message` BEFORE acting. Otherwise just proceed.\n" +
-		"- Use `send_progress` for non-blocking status updates during long work.\n" +
-		"- When the task is done, deliver the result with `send_message` and wait. NEVER end your turn without calling `send_message` — going silent looks like a crash to the user.\n" +
-		"- For long-running multi-step work, call `check_messages` between steps to stay responsive."
+		"- Use `send_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
+		"- When the task is done, deliver the result with `send_message` and wait. NEVER end your turn without calling `send_message` — going silent looks like a crash to the user."
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
 		"The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_verbal_reply` or `send_verbal_progress`. Plain text in your response is never seen by the user.\n\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_verbal_reply` BEFORE acting. Otherwise just proceed.\n" +
-		"- Use `send_verbal_progress` for non-blocking status updates during long work.\n" +
-		"- When the task is done, deliver the result with `send_verbal_reply` and wait. NEVER end your turn without calling `send_verbal_reply` — going silent looks like a crash to the user.\n" +
-		"- For long-running multi-step work, call `check_messages` between steps to stay responsive."
+		"- Use `send_verbal_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_verbal_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
+		"- When the task is done, deliver the result with `send_verbal_reply` and wait. NEVER end your turn without calling `send_verbal_reply` — going silent looks like a crash to the user."
 )
 
 func TestFormatMessagesPlainText(t *testing.T) {
@@ -155,8 +153,8 @@ func TestIsVoiceMessage(t *testing.T) {
 
 func TestComposedResultSendMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "looks good"}}
-	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
-	want := "User responded: looks good\n\n" + replyInstructionsBody
+	got := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	want := "User responded: looks good\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (text):\ngot:  %q\nwant: %q", got, want)
 	}
@@ -164,9 +162,9 @@ func TestComposedResultSendMessage(t *testing.T) {
 
 func TestComposedResultVoiceMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 make it blue"}}
-	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+	got := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 	want := "User responded: Decoded user's speech to text (may be inaccurate): make it blue\n\n" +
-		replyInstructionsVoiceBody
+		executeNotEchoGuidance + "\n\n" + replyInstructionsVoiceBody
 	if got != want {
 		t.Errorf("composed result (voice):\ngot:  %q\nwant: %q", got, want)
 	}
@@ -174,10 +172,60 @@ func TestComposedResultVoiceMessage(t *testing.T) {
 
 func TestComposedResultCheckMessages(t *testing.T) {
 	msgs := []UserMessage{{Text: "update please"}}
-	got := "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
-	want := "User said: update please\n\n" + replyInstructionsBody
+	got := "User said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	want := "User said: update please\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (check_messages):\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestEmptyQueueGuidance(t *testing.T) {
+	// Preserve the machine-parseable {"queue":"empty"} prefix so any existing
+	// programmatic check still works, AND include guidance against echoing the
+	// empty state back as a send_message reply.
+	if !strings.HasPrefix(emptyQueueGuidance, `{"queue":"empty"}`) {
+		t.Errorf("emptyQueueGuidance must start with {\"queue\":\"empty\"} for backward-compat; got: %q", emptyQueueGuidance)
+	}
+	if !strings.Contains(emptyQueueGuidance, "Do NOT call send_message") {
+		t.Errorf("emptyQueueGuidance must warn against sending a user-visible reply; got: %q", emptyQueueGuidance)
+	}
+}
+
+func TestAppendBargeInEmptyQueueNoOp(t *testing.T) {
+	bus := NewEventBus()
+	got := appendBargeIn(bus, "Progress sent.")
+	want := "Progress sent."
+	if got != want {
+		t.Errorf("appendBargeIn empty queue:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestAppendBargeInPicksUpQueuedMessage(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("skip e2e, just unit tests", nil)
+	got := appendBargeIn(bus, "Progress sent.")
+	if !strings.Contains(got, "---BARGE-IN---") {
+		t.Errorf("appendBargeIn missing sentinel:\n%s", got)
+	}
+	if !strings.Contains(got, "skip e2e, just unit tests") {
+		t.Errorf("appendBargeIn missing message body:\n%s", got)
+	}
+	if !strings.HasPrefix(got, "Progress sent.") {
+		t.Errorf("appendBargeIn must preserve original text prefix:\n%s", got)
+	}
+	if !strings.Contains(got, executeNotEchoGuidance) {
+		t.Errorf("appendBargeIn missing execute-not-echo guidance:\n%s", got)
+	}
+}
+
+func TestAppendBargeInDrainsQueue(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("first", nil)
+	_ = appendBargeIn(bus, "Progress sent.")
+	// Second call should now be a no-op because the first drained the queue.
+	got := appendBargeIn(bus, "Progress sent.")
+	if got != "Progress sent." {
+		t.Errorf("appendBargeIn did not drain queue; second call returned:\n%s", got)
 	}
 }
 
@@ -188,9 +236,9 @@ func TestComposedResultWithFiles(t *testing.T) {
 			{Name: "main.go", Path: "/tmp/main.go", Type: "text/x-go", Size: 4096},
 		},
 	}}
-	got := "User responded: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+	got := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 	want := "User responded: review this\n\nAttached files:\n  /tmp/main.go (text/x-go, 4KB)\n\n" +
-		replyInstructionsBody
+		executeNotEchoGuidance + "\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (files):\ngot:  %q\nwant: %q", got, want)
 	}

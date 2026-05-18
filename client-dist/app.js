@@ -40,7 +40,24 @@ var pendingAckId = null;
 var pendingNotifyParent = false;
 var pendingInterrupt = false;
 var pendingClear = false; // awaiting "yes" to confirm /clear context
-var firstMessageSent = false;
+// firstMessageSent gates the bootstrap nudge sent to the parent terminal on
+// the very first user message of a chat. Persisted in sessionStorage so an
+// iframe reload doesn't cause the nudge text (`check_messages; reply me with
+// a send_message`) to be re-typed into the agent terminal — that re-type was
+// observed making agents call check_messages after a real user message had
+// already been delivered, producing a vacuous "Queue is empty." reply.
+var FIRST_MESSAGE_SENT_KEY = 'agent-chat-first-message-sent';
+function readFirstMessageSent() {
+  try { return sessionStorage.getItem(FIRST_MESSAGE_SENT_KEY) === '1'; }
+  catch (_) { return false; }
+}
+function writeFirstMessageSent(value) {
+  try {
+    if (value) sessionStorage.setItem(FIRST_MESSAGE_SENT_KEY, '1');
+    else sessionStorage.removeItem(FIRST_MESSAGE_SENT_KEY);
+  } catch (_) { /* sessionStorage unavailable — fall back to in-memory only */ }
+}
+var firstMessageSent = readFirstMessageSent();
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null, ref: FileRef|null, uploading: bool, uploadFailed: bool, abortController: AbortController|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
@@ -831,6 +848,7 @@ function maybeHandleClearContext(rawText, echoUserBubble) {
     if (window.parent !== window) {
       window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
       firstMessageSent = false;
+      writeFirstMessageSent(false);
       addAgentMessage('Clearing agent context...', null, null, Date.now());
     } else {
       addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
@@ -2186,6 +2204,7 @@ function connect() {
               if (!firstMessageSent) {
                 msg.text = nudgeText;
                 firstMessageSent = true;
+                writeFirstMessageSent(true);
               }
               window.parent.postMessage(msg, '*');
             }

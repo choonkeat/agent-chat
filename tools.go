@@ -31,6 +31,34 @@ func voiceSuffix(msgs []UserMessage) string {
 	return execTemplate("reply-instructions", replyInstructionsData{IsVoice: isVoiceMessage(msgs)})
 }
 
+// executeNotEchoGuidance is appended after every user message delivered to the
+// agent (via send_message return, send_verbal_reply return, check_messages, or
+// barge-in append) so the framing is uniform regardless of delivery path. The
+// wording was added after observing the agent reply "OK." to substantive user
+// requests; uniform delivery prevents the bypass where a path-specific wrapper
+// is missing.
+const executeNotEchoGuidance = "This IS the user's message — execute the request, do not echo it back as an acknowledgment. When the requested work is done, call send_message (or send_verbal_reply in voice mode) to deliver the result — never end your turn without sending a user-visible message."
+
+// emptyQueueGuidance is returned from check_messages when the queue is empty.
+// The literal `{"queue":"empty"}` shape is kept so any programmatic check still
+// works, but extra guidance is appended to stop the agent from sending a
+// vacuous "Queue is empty." reply to the user — which was observed when an
+// agent treated the empty-queue payload as the body of a send_message reply.
+const emptyQueueGuidance = `{"queue":"empty"} — no user message is pending. Do NOT call send_message just to report this; the user did not ask anything. Return to your previous task, or stay silent and wait for the next user message.`
+
+// appendBargeIn drains any queued user messages and appends them to text with a
+// sentinel header so the agent reads them as a fresh user instruction without
+// having to poll via check_messages. Returns text unchanged when the queue is
+// empty.
+func appendBargeIn(bus *EventBus, text string) string {
+	msgs := bus.DrainMessages()
+	if len(msgs) == 0 {
+		return text
+	}
+	bus.SetLastVoice(isVoiceMessage(msgs))
+	return text + "\n\n---BARGE-IN---\nUser said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+}
+
 // MessageParams are the parameters for the send_message tool.
 type MessageParams struct {
 	Text             string   `json:"text"`
@@ -168,7 +196,7 @@ func nextDailyIndex(dir, date string) int {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds. Always end a task by calling send_message with the result and waiting; never end your turn silently. Call check_messages periodically during long work to stay responsive to incoming user input.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
+		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds; the user's reply is RETURNED by this call as `User responded: …` — that IS the message. Always end a task by calling send_message with the result and waiting; never end your turn silently. You do NOT need to poll for user messages — any barge-in the user sends while you are working will be appended to the next send_progress (or draw) return after a `---BARGE-IN---` sentinel.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
 		if bus.LastVoice() {
@@ -211,7 +239,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
 			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
+			text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -230,7 +258,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}
 
 		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
+		text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -274,7 +302,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
 			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
+			text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -293,7 +321,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		}
 
 		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\nAddress this response now. When your work is done, call send_message (or send_verbal_reply in voice mode) again to deliver the result — never end your turn without sending a user-visible message.\n\n" + voiceSuffix(msgs)
+		text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -363,7 +391,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 				Type:         "draw",
 				Instructions: params.Instructions,
 			})
-			text := "Draw displayed. User has pending messages — call check_messages."
+			text := appendBargeIn(bus, "Draw displayed.")
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -415,7 +443,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_progress",
-		Description: "Send a progress update to the chat UI without blocking. Use this for status updates (e.g., 'Working on it...', 'Found 3 matching files') when you want to keep the user informed but don't need a response. Unlike send_message, this returns immediately.",
+		Description: "Send a progress update to the chat UI without blocking. Use this for status updates (e.g., 'Working on it...', 'Found 3 matching files') when you want to keep the user informed but don't need a response. Unlike send_message, this returns immediately. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ProgressParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -424,9 +452,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		files := resolveImageFiles(params.ImageURLs)
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files})
 
+		ack := appendBargeIn(bus, "Progress sent. If you've finished your task, use send_message to present final results and wait for the user's next request.")
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: "Progress sent. If you've finished your task, use send_message to present final results and wait for the user's next request."},
+				&mcp.TextContent{Text: ack},
 			},
 		}, nil, nil
 	})
@@ -439,7 +468,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_verbal_progress",
-		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links.",
+		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalProgressParams) (*mcp.CallToolResult, any, error) {
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -448,9 +477,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		files := resolveImageFiles(params.ImageURLs)
 		bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files})
 
+		ack := appendBargeIn(bus, "Verbal progress sent. If you've finished your task, use send_verbal_reply to present final results and wait for the user's next request.")
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
-				&mcp.TextContent{Text: "Verbal progress sent. If you've finished your task, use send_verbal_reply to present final results and wait for the user's next request."},
+				&mcp.TextContent{Text: ack},
 			},
 		}, nil, nil
 	})
@@ -459,15 +489,15 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_messages",
-		Description: "Non-blocking check for user messages. Returns any queued messages from the chat UI, or 'No new messages.' if the queue is empty. Call this periodically between tasks to stay responsive to user input. The user cannot see your TUI output — always use send_message or send_progress to communicate.",
+		Description: "Drain pending user messages from the queue. Returns user messages prefixed with `User said: …` when present. When the queue is empty, returns `{\"queue\":\"empty\"}` followed by guidance NOT to send a user-visible reply just to report the empty state — return to your previous task or wait silently.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
 		msgs := bus.DrainMessages()
 		var result string
 		if len(msgs) == 0 {
-			result = "No new messages. If you've finished your current task, call send_message to present results and wait for user input — do NOT go idle."
+			result = emptyQueueGuidance
 		} else {
 			bus.SetLastVoice(isVoiceMessage(msgs))
-			result = "User said: " + FormatMessages(msgs) + "\n\n" + voiceSuffix(msgs)
+			result = "User said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
