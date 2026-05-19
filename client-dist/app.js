@@ -512,6 +512,13 @@ function freezeCurrentReplies(chosenText) {
 }
 
 // Render an array of reply texts as inert chip elements in the message flow.
+// The frozen chips belong visually to the agent bubble that produced them, so
+// they're inserted immediately after the most recent non-loading agent bubble.
+// Falls back to generic appendMessage when no agent bubble is present (e.g. on
+// a fresh chat). Without this anchoring the chips end up wherever the loader
+// happens to be — which under permission flows can park them below an
+// unrelated pending user bubble, breaking the
+// [agent message → unused chips → chosen reply] cluster.
 function appendFrozenReplies(replies) {
   var div = document.createElement('div');
   div.className = 'frozen-replies';
@@ -521,7 +528,13 @@ function appendFrozenReplies(replies) {
     span.textContent = replies[i];
     div.appendChild(span);
   }
-  appendMessage(div);
+  var agentBubbles = messages.querySelectorAll('.bubble.agent:not(.loading)');
+  var lastAgent = agentBubbles[agentBubbles.length - 1];
+  if (lastAgent && lastAgent.parentNode === messages) {
+    messages.insertBefore(div, lastAgent.nextSibling);
+  } else {
+    appendMessage(div);
+  }
 }
 
 // --- File staging ---
