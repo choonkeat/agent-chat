@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [0.7.0] — 2026-05-18
+## [0.7.0] — 2026-05-21
 
 ### Features
 - Pending-receipt state for user bubbles: messages render dim and
@@ -25,6 +25,22 @@ All notable changes to agent-chat are documented in this file.
   misleading. History replay builds a deleted-IDs set and skips
   withdrawn user messages.
 
+### Fixes
+- `check_messages` empty-queue results now return the machine-readable
+  `{"queue":"empty"}` prefix plus explicit guidance that agents must
+  not send a user-visible reply merely to report an empty queue. The
+  shared tool-result framing was refactored so barge-in messages are
+  appended consistently, including on progress tools, reducing the
+  need for defensive polling between steps.
+- The iframe bootstrap nudge (`check_messages; reply me with a
+  send_message`) is persisted in `sessionStorage`, so reloads do not
+  re-type the nudge after a real user message has already been
+  delivered. `/clear` resets the persisted flag for a fresh session.
+- Frozen quick-reply chips now anchor immediately after the agent
+  bubble that created them, even when pending user bubbles or the
+  loading indicator are present. This keeps stale/unused reply chips
+  visually associated with the correct agent turn.
+
 ### Tests
 - New `e2e/markdown-images.spec.cjs` drives client-side
   `renderMarkdown()` via Playwright to cover `![alt](url)`, empty
@@ -45,8 +61,13 @@ All notable changes to agent-chat are documented in this file.
   coalescing under CPU pressure.
 
 ### Docs
+- ADR documenting the pending-message lifecycle: queued, consumed,
+  deleted, replayed, and how quick replies relate to pending user
+  bubbles.
 - Exported chat session capturing the TDD-driven implementation of
   the pending-receipt UX and the unsend × control.
+- Exported chat session covering the empty-queue guidance and frozen
+  quick-reply placement fixes.
 
 ## [0.6.0] — 2026-05-03
 
