@@ -10,11 +10,63 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// Per-process ordinal counters for each MCP tool whose call surfaces in the
+// agent's own .jsonl. Stamped onto the matching event when the tool fires so
+// downstream consumers (swe-swe-server's /api/fork resolver) can correlate a
+// chat bubble with its tool_use_id / call_id in the agent's rollout.
+//
+// On agent-chat restart these are seeded from the existing event log via
+// SeedToolCounters so the next stamped event continues the agent's own count.
+var (
+	sendMessageCount        atomic.Int64
+	sendProgressCount       atomic.Int64
+	sendVerbalReplyCount    atomic.Int64
+	sendVerbalProgressCount atomic.Int64
+	checkMessagesCount      atomic.Int64
+)
+
+// SeedToolCounters scans events and advances each tool counter past the
+// highest AgentToolSeq it sees for that tool. Call once after the on-disk
+// event log has been loaded, before any tool handler can fire.
+func SeedToolCounters(events []Event) {
+	var sm, sp, svr, svp, cm int64
+	for _, e := range events {
+		switch e.AgentToolName {
+		case "send_message":
+			if e.AgentToolSeq > sm {
+				sm = e.AgentToolSeq
+			}
+		case "send_progress":
+			if e.AgentToolSeq > sp {
+				sp = e.AgentToolSeq
+			}
+		case "send_verbal_reply":
+			if e.AgentToolSeq > svr {
+				svr = e.AgentToolSeq
+			}
+		case "send_verbal_progress":
+			if e.AgentToolSeq > svp {
+				svp = e.AgentToolSeq
+			}
+		case "check_messages":
+			if e.AgentToolSeq > cm {
+				cm = e.AgentToolSeq
+			}
+		}
+	}
+	sendMessageCount.Store(sm)
+	sendProgressCount.Store(sp)
+	sendVerbalReplyCount.Store(svr)
+	sendVerbalProgressCount.Store(svp)
+	checkMessagesCount.Store(cm)
+}
 
 // isVoiceMessage returns true if any message is a voice message (prefixed with 🎤).
 func isVoiceMessage(msgs []UserMessage) bool {
@@ -198,6 +250,12 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		Name:        "send_message",
 		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds; the user's reply is RETURNED by this call as `User responded: …` — that IS the message. Always end a task by calling send_message with the result and waiting; never end your turn silently. You do NOT need to poll for user messages — any barge-in the user sends while you are working will be appended to the next send_progress (or draw) return after a `---BARGE-IN---` sentinel.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
+		// Tick the ordinal regardless of whether we actually publish a bubble:
+		// the corresponding tool_use entry IS written to the agent's .jsonl
+		// even for the voice-mode-rejection branch, so the .jsonl-side count
+		// and the stamp-side count must advance together.
+		toolSeq := sendMessageCount.Add(1)
+
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
 		if bus.LastVoice() {
 			return &mcp.CallToolResult{
@@ -233,8 +291,8 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		// If user already sent messages, strip quick_replies and return
 		// queued messages immediately — the replies would be stale.
 		if bus.HasQueuedMessages() {
-			bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files})
-			msgs, err := bus.WaitForMessages(ctx)
+			bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
+			msgs, err := bus.WaitForMessagesStamped(ctx, "send_message", toolSeq)
 			if err != nil {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
@@ -250,9 +308,9 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			}, nil, nil
 		}
 
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies, Files: files})
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
 
-		msgs, err := bus.WaitForMessages(ctx)
+		msgs, err := bus.WaitForMessagesStamped(ctx, "send_message", toolSeq)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
@@ -274,6 +332,8 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		Name:        "send_verbal_reply",
 		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings. Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
+		toolSeq := sendVerbalReplyCount.Add(1)
+
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
 		}
@@ -296,8 +356,8 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		// If user already sent messages, strip quick_replies and return
 		// queued messages immediately — the replies would be stale.
 		if bus.HasQueuedMessages() {
-			bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files})
-			msgs, err := bus.WaitForMessages(ctx)
+			bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
+			msgs, err := bus.WaitForMessagesStamped(ctx, "send_verbal_reply", toolSeq)
 			if err != nil {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
@@ -313,9 +373,9 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			}, nil, nil
 		}
 
-		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies, Files: files})
+		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
 
-		msgs, err := bus.WaitForMessages(ctx)
+		msgs, err := bus.WaitForMessagesStamped(ctx, "send_verbal_reply", toolSeq)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
@@ -445,12 +505,14 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "send_progress",
 		Description: "Send a progress update to the chat UI without blocking. Use this for status updates (e.g., 'Working on it...', 'Found 3 matching files') when you want to keep the user informed but don't need a response. Unlike send_message, this returns immediately. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ProgressParams) (*mcp.CallToolResult, any, error) {
+		toolSeq := sendProgressCount.Add(1)
+
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
 		}
 
 		files := resolveImageFiles(params.ImageURLs)
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files})
+		bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_progress"})
 
 		ack := appendBargeIn(bus, "Progress sent. If you've finished your task, use send_message to present final results and wait for the user's next request.")
 		return &mcp.CallToolResult{
@@ -470,12 +532,14 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "send_verbal_progress",
 		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalProgressParams) (*mcp.CallToolResult, any, error) {
+		toolSeq := sendVerbalProgressCount.Add(1)
+
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
 		}
 
 		files := resolveImageFiles(params.ImageURLs)
-		bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files})
+		bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_progress"})
 
 		ack := appendBargeIn(bus, "Verbal progress sent. If you've finished your task, use send_verbal_reply to present final results and wait for the user's next request.")
 		return &mcp.CallToolResult{
@@ -491,7 +555,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "check_messages",
 		Description: "Drain pending user messages from the queue. Returns user messages prefixed with `User said: …` when present. When the queue is empty, returns `{\"queue\":\"empty\"}` followed by guidance NOT to send a user-visible reply just to report the empty state — return to your previous task or wait silently.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
-		msgs := bus.DrainMessages()
+		// Tick per call (empty or not) so the ordinal stays aligned with the
+		// .jsonl-side count of check_messages tool_use entries.
+		toolSeq := checkMessagesCount.Add(1)
+		msgs := bus.DrainMessagesStamped("check_messages", toolSeq)
 		var result string
 		if len(msgs) == 0 {
 			result = emptyQueueGuidance

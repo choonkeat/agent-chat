@@ -49,6 +49,20 @@ type Event struct {
 	Instructions []any     `json:"instructions,omitempty"` // draw instructions
 	Files        []FileRef `json:"files,omitempty"`
 	Timestamp    int64     `json:"ts,omitempty"` // Unix milliseconds
+
+	// AgentToolSeq + AgentToolName stamp events with the per-tool ordinal of
+	// the MCP call that produced them, so consumers (e.g. swe-swe-server's
+	// /api/fork resolver) can locate the matching tool_use/function_call in
+	// the agent's own .jsonl without resorting to text correlation.
+	//
+	// For "agentMessage" events: the Nth call to AgentToolName that emitted
+	// this bubble (send_message, send_progress, send_verbal_reply, etc.).
+	// For "userMessagesConsumed" events: the Nth check_messages call that
+	// drained the listed IDs.
+	// Zero / empty means "unstamped" -- legacy events or server-side ack
+	// paths that didn't originate from an MCP tool call.
+	AgentToolSeq  int64  `json:"agent_tool_seq,omitempty"`
+	AgentToolName string `json:"agent_tool_name,omitempty"`
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.
@@ -113,6 +127,12 @@ func NewEventBus() *EventBus {
 func NewEventBusWithLog(path string) (*EventBus, error) {
 	// Load existing events from the log file.
 	events, maxSeq, lastQR := loadEventLog(path)
+
+	// Resume MCP tool-call counters from whatever the on-disk events already
+	// stamped so post-restart events keep counting from where they left off.
+	// Without this, the first post-restart send_message would re-stamp 1 and
+	// collide with the existing #1 in the agent's .jsonl.
+	SeedToolCounters(events)
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -243,8 +263,11 @@ func (eb *EventBus) PublishConsumedUserMessage(text string, files []FileRef) str
 }
 
 // publishConsumed fans out a userMessagesConsumed event for the given message
-// IDs. No-op when the slice is empty.
-func (eb *EventBus) publishConsumed(msgs []UserMessage) {
+// IDs. No-op when the slice is empty. toolName + toolSeq stamp the event with
+// the MCP call that caused the drain (so /api/fork can map a userMessage
+// bubble back to the agent-side tool_use). Pass empty/zero for unstamped
+// (server-acked) drains.
+func (eb *EventBus) publishConsumed(msgs []UserMessage, toolName string, toolSeq int64) {
 	if len(msgs) == 0 {
 		return
 	}
@@ -257,19 +280,30 @@ func (eb *EventBus) publishConsumed(msgs []UserMessage) {
 	if len(ids) == 0 {
 		return
 	}
-	eb.Publish(Event{Type: "userMessagesConsumed", IDs: ids})
+	eb.Publish(Event{
+		Type:          "userMessagesConsumed",
+		IDs:           ids,
+		AgentToolName: toolName,
+		AgentToolSeq:  toolSeq,
+	})
 }
 
 // DrainMessages returns all currently queued messages, or nil if none are queued.
-// Non-blocking. Text from multiple messages is joined with "\n\n"; files are aggregated.
+// Unstamped variant for callers that don't have an MCP tool ordinal to attach.
 func (eb *EventBus) DrainMessages() []UserMessage {
+	return eb.DrainMessagesStamped("", 0)
+}
+
+// DrainMessagesStamped is DrainMessages plus a tool-name/ordinal stamp on the
+// resulting userMessagesConsumed event.
+func (eb *EventBus) DrainMessagesStamped(toolName string, toolSeq int64) []UserMessage {
 	var msgs []UserMessage
 	for {
 		select {
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
-			eb.publishConsumed(msgs)
+			eb.publishConsumed(msgs, toolName, toolSeq)
 			return msgs
 		}
 	}
@@ -278,6 +312,12 @@ func (eb *EventBus) DrainMessages() []UserMessage {
 // WaitForMessages waits for at least one queued message, drains any additional,
 // and returns them.
 func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) {
+	return eb.WaitForMessagesStamped(ctx, "", 0)
+}
+
+// WaitForMessagesStamped is WaitForMessages plus a tool-name/ordinal stamp on
+// the resulting userMessagesConsumed event.
+func (eb *EventBus) WaitForMessagesStamped(ctx context.Context, toolName string, toolSeq int64) ([]UserMessage, error) {
 	var msgs []UserMessage
 	select {
 	case msg := <-eb.msgQueue:
@@ -291,7 +331,7 @@ func (eb *EventBus) WaitForMessages(ctx context.Context) ([]UserMessage, error) 
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
-			eb.publishConsumed(msgs)
+			eb.publishConsumed(msgs, toolName, toolSeq)
 			return msgs, nil
 		}
 	}
