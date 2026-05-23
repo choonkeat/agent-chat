@@ -2,6 +2,25 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.7.1] — 2026-05-23
+
+### Features
+- Chat events now carry an `agent_tool_name` + `agent_tool_seq` stamp
+  identifying the per-tool ordinal of the MCP call that produced
+  them (`send_message`, `send_progress`, `send_verbal_reply`,
+  `send_verbal_progress`, `check_messages`). Downstream consumers
+  (e.g. a fork resolver) can locate the matching `tool_use_id` /
+  `call_id` in the agent's own `.jsonl` rollout without resorting to
+  text correlation against bubble content. Counters tick on handler
+  entry so even early-return calls (e.g. voice-mode rejection) stay
+  aligned with the agent-side `.jsonl` count, and are seeded from the
+  on-disk event log at startup so post-restart events keep counting
+  from where they left off.
+
+### Tests
+- New `stamp_test.go` covering counter increment, restart seeding,
+  and stamped vs. unstamped drain paths.
+
 ## [0.7.0] — 2026-05-21
 
 ### Features
