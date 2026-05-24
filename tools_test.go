@@ -19,14 +19,14 @@ func mustParseTime(t *testing.T, s string) time.Time {
 
 // Common expected substrings for reply instructions (shared across tests).
 const (
-	replyInstructionsBody = "The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_message` or `send_progress`. Plain text in your response is never seen by the user.\n\n" +
+	replyInstructionsBody = "The TUI is invisible to the user (so don't ever call the built-in AskUserQuestion tool). EVERY user-visible message — questions, status, final answers, errors — must go through `send_message` or `send_progress`. Plain text in your response is never seen by the user.\n\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_message` BEFORE acting. Otherwise just proceed.\n" +
 		"- Use `send_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
 		"- When the task is done, deliver the result with `send_message` and wait. NEVER end your turn without calling `send_message` — going silent looks like a crash to the user."
 
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
-		"The TUI is invisible to the user. EVERY user-visible message — questions, status, final answers, errors — must go through `send_verbal_reply` or `send_verbal_progress`. Plain text in your response is never seen by the user.\n\n" +
+		"The TUI is invisible to the user (so don't ever call the built-in AskUserQuestion tool). EVERY user-visible message — questions, status, final answers, errors — must go through `send_verbal_reply` or `send_verbal_progress`. Plain text in your response is never seen by the user.\n\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_verbal_reply` BEFORE acting. Otherwise just proceed.\n" +
 		"- Use `send_verbal_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_verbal_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
 		"- When the task is done, deliver the result with `send_verbal_reply` and wait. NEVER end your turn without calling `send_verbal_reply` — going silent looks like a crash to the user."
