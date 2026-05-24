@@ -2,6 +2,26 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.8.0] — 2026-05-24
+
+### Fixes
+- Restart-safe tool ordinals. The per-tool `agent_tool_seq` counter ticks
+  on handler entry to stay aligned with the agent's `.jsonl`, but two
+  routine early-returns published no event — `send_message` rejected in
+  voice mode, and `check_messages` draining an empty queue. Because
+  `SeedToolCounters` reseeds from the on-disk event log at startup, those
+  ticks were invisible after a restart, so the next stamp could collide
+  with an ordinal the agent's rollout had already used. Both branches now
+  emit a hidden `toolMarker` event carrying only the stamp; the UI event
+  switches and the markdown exporter ignore unknown event types, so it
+  renders nothing, while `SeedToolCounters` recovers the true count. This
+  makes the early-return alignment promised in 0.7.1 hold across restarts.
+
+### Tests
+- `stamp_test.go`: marker-stamp emission and seed recovery from a
+  `toolMarker` phantom. `tools_test.go`: render-guard asserting a
+  `toolMarker` produces no markdown and never perturbs elapsed-time deltas.
+
 ## [0.7.1] — 2026-05-23
 
 ### Features
