@@ -288,6 +288,20 @@ func (eb *EventBus) publishConsumed(msgs []UserMessage, toolName string, toolSeq
 	})
 }
 
+// PublishToolMarker records an MCP tool invocation that ticked its per-tool
+// ordinal counter but produced no user-visible event (e.g. send_message
+// rejected in voice mode, or check_messages draining an empty queue). The
+// agent's own .jsonl still has a tool_use entry for these calls, so without a
+// marker the on-disk event log would under-count that tool and SeedToolCounters
+// would recover an ordinal lower than the agent's actual count after a restart.
+//
+// The marker carries only the stamp; it is not a bubble. Both the browser event
+// switches (client-dist/app.js) and the markdown exporter (renderChatMarkdown)
+// ignore unknown event types, so a toolMarker renders nothing.
+func (eb *EventBus) PublishToolMarker(toolName string, toolSeq int64) {
+	eb.Publish(Event{Type: "toolMarker", AgentToolName: toolName, AgentToolSeq: toolSeq})
+}
+
 // DrainMessages returns all currently queued messages, or nil if none are queued.
 // Unstamped variant for callers that don't have an MCP tool ordinal to attach.
 func (eb *EventBus) DrainMessages() []UserMessage {

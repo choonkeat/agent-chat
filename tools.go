@@ -258,6 +258,9 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
 		if bus.LastVoice() {
+			// Marker keeps the on-disk count aligned with the agent's .jsonl,
+			// which records this tool_use despite the early return.
+			bus.PublishToolMarker("send_message", toolSeq)
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{
 					&mcp.TextContent{Text: "ERROR: The user is in voice mode. Use send_verbal_reply instead of send_message to respond."},
@@ -561,6 +564,9 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		msgs := bus.DrainMessagesStamped("check_messages", toolSeq)
 		var result string
 		if len(msgs) == 0 {
+			// Empty drain publishes no userMessagesConsumed event, so record a
+			// marker to keep the on-disk count aligned with the agent's .jsonl.
+			bus.PublishToolMarker("check_messages", toolSeq)
 			result = emptyQueueGuidance
 		} else {
 			bus.SetLastVoice(isVoiceMessage(msgs))

@@ -63,6 +63,57 @@ func TestSeedToolCounters_RecoversMaxPerTool(t *testing.T) {
 	}
 }
 
+// TestSeedToolCounters_RecoversFromToolMarker simulates the phantom scenario:
+// a send_message that emitted a bubble (#1) followed by a voice-mode rejection
+// (#2, recorded only as a toolMarker), and a check_messages whose only trace is
+// an empty-drain marker. Seed must recover the marker ordinals so post-restart
+// stamps continue past the agent's real .jsonl count instead of colliding.
+func TestSeedToolCounters_RecoversFromToolMarker(t *testing.T) {
+	resetToolCounters(t)
+
+	events := []Event{
+		{Type: "agentMessage", Text: "hi", AgentToolName: "send_message", AgentToolSeq: 1},
+		// Voice-mode rejection: ticked the counter, emitted no bubble.
+		{Type: "toolMarker", AgentToolName: "send_message", AgentToolSeq: 2},
+		// Empty-queue check: ticked the counter, emitted no consumed event.
+		{Type: "toolMarker", AgentToolName: "check_messages", AgentToolSeq: 1},
+	}
+
+	SeedToolCounters(events)
+
+	if got, want := sendMessageCount.Load(), int64(2); got != want {
+		t.Errorf("sendMessageCount: got %d, want %d (must include the marker phantom)", got, want)
+	}
+	if got, want := checkMessagesCount.Load(), int64(1); got != want {
+		t.Errorf("checkMessagesCount: got %d, want %d", got, want)
+	}
+}
+
+// TestPublishToolMarker_StampsHiddenEvent confirms the helper publishes a
+// stamped, non-bubble event that flows through the bus like any other.
+func TestPublishToolMarker_StampsHiddenEvent(t *testing.T) {
+	bus := NewEventBus()
+	ch := bus.Subscribe()
+	defer bus.Unsubscribe(ch)
+
+	bus.PublishToolMarker("send_message", 9)
+
+	select {
+	case ev := <-ch:
+		if ev.Type != "toolMarker" {
+			t.Fatalf("Type: got %q, want %q", ev.Type, "toolMarker")
+		}
+		if ev.AgentToolName != "send_message" || ev.AgentToolSeq != 9 {
+			t.Errorf("stamp: got (%q, %d), want (send_message, 9)", ev.AgentToolName, ev.AgentToolSeq)
+		}
+		if ev.Text != "" || len(ev.Files) != 0 || len(ev.QuickReplies) != 0 {
+			t.Errorf("marker should carry no renderable payload; got %+v", ev)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("no toolMarker event observed")
+	}
+}
+
 func TestSeedToolCounters_EmptyEvents_LeavesCountersAtZero(t *testing.T) {
 	resetToolCounters(t)
 	SeedToolCounters(nil)

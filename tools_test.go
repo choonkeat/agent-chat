@@ -426,6 +426,36 @@ func TestRenderChatMarkdownAlternates(t *testing.T) {
 	}
 }
 
+// TestRenderChatMarkdownIgnoresToolMarker locks in the contract that hidden
+// toolMarker events (emitted on routine early-returns to keep restart-seed
+// counts aligned) never surface in the export and never perturb the elapsed-time
+// deltas between real bubbles.
+func TestRenderChatMarkdownIgnoresToolMarker(t *testing.T) {
+	events := []Event{
+		{Type: "userMessage", Text: "U1", Timestamp: 1000},
+		// A phantom check_messages drain sits between the two real turns.
+		{Type: "toolMarker", AgentToolName: "check_messages", AgentToolSeq: 2, Timestamp: 4000},
+		{Type: "agentMessage", Text: "A1", Timestamp: 33000},
+	}
+	md := renderChatMarkdown(events, chatExportMeta{Title: "T", Date: "d", Index: "01"}, nil)
+
+	if strings.Contains(md, "toolMarker") || strings.Contains(md, "check_messages") {
+		t.Errorf("toolMarker leaked into export:\n%s", md)
+	}
+	// Timing must measure U1->A1 (32s), unaffected by the marker's 4000 ts.
+	if !strings.Contains(md, "<small>took 32.0s</small><br>\n**AGENT**\n\n> A1") {
+		t.Errorf("marker perturbed elapsed-time delta; got:\n%s", md)
+	}
+
+	// A marker-only log produces no turns at all.
+	mdOnly := renderChatMarkdown([]Event{
+		{Type: "toolMarker", AgentToolName: "send_message", AgentToolSeq: 1},
+	}, chatExportMeta{Title: "x", Date: "d", Index: "01"}, nil)
+	if strings.Contains(mdOnly, "**USER**") || strings.Contains(mdOnly, "**AGENT**") {
+		t.Errorf("marker-only log should emit no turns; got:\n%s", mdOnly)
+	}
+}
+
 func TestRenderChatMarkdownBlockquoteEscape(t *testing.T) {
 	// Body with leading `> ` should nest one level deeper, not overwrite the
 	// turn's blockquote prefix.
