@@ -1477,18 +1477,38 @@ function speakText(text, onDone) {
   addSystemBubble('Speaking...');
   var ttsStart = Date.now();
   var done = false;
+  var keepAlive = null; // (B) periodic resume() to defeat Chrome's ~15s silent-stop bug
   function finish(reason) {
     if (done) return;
     done = true;
     isSpeaking = false;
     btnVoice.classList.remove('speaking');
     if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
+    if (keepAlive) { clearInterval(keepAlive); keepAlive = null; }
     console.log('[' + ts() + '] TTS finished (' + reason + ') after ' + (Date.now() - ttsStart) + 'ms');
     if (onDone) onDone();
   }
 
   var chunks = splitIntoChunks(text);
   console.log('[' + ts() + '] TTS splitting into ' + chunks.length + ' chunks');
+
+  // (A) Idle watchdog: only cancels speech that makes NO progress for the budget.
+  // It is re-armed on every word boundary, so slow-but-progressing speech is never
+  // cut off midway. Voices that don't emit boundary events fall back to the same
+  // generous length-based budget the old fixed watchdog used.
+  function armWatchdog(index, chunk) {
+    if (ttsSafetyTimer) { clearTimeout(ttsSafetyTimer); ttsSafetyTimer = null; }
+    var idleTimeout = Math.max(15000, chunk.length * 100);
+    ttsSafetyTimer = setTimeout(function() {
+      if (!done) {
+        console.warn('[' + ts() + '] TTS idle watchdog on chunk ' + index + ' (no progress for ' + idleTimeout + 'ms) — speak() may have stalled');
+        addSystemBubble('TTS timed out — future replies will have a play button');
+        ttsUnlocked = false;
+        speechSynthesis.cancel();
+        finish('idle-watchdog');
+      }
+    }, idleTimeout);
+  }
 
   function speakChunk(index) {
     if (done) return;
@@ -1500,7 +1520,13 @@ function speakText(text, onDone) {
     var utterance = new SpeechSynthesisUtterance(chunk);
     if (selectedVoice) utterance.voice = selectedVoice;
     utterance.rate = 1.0;
+    // (A) Each word boundary proves progress — re-arm the idle watchdog.
+    utterance.onboundary = function() {
+      if (done) return;
+      armWatchdog(index, chunk);
+    };
     utterance.onend = function() {
+      if (done) return;
       if (index === 0) {
         var elapsed = Date.now() - ttsStart;
         if (elapsed < 500 && text.length > 20 && /iP(hone|ad|od)/.test(navigator.userAgent)) {
@@ -1517,22 +1543,19 @@ function speakText(text, onDone) {
     };
     speechSynthesis.speak(utterance);
     console.log('[' + ts() + '] TTS speak() chunk ' + (index + 1) + '/' + chunks.length + ', length=' + chunk.length + ', voice=' + (utterance.voice ? utterance.voice.name : 'default'));
-    // Safety timeout proportional to chunk length (~100ms per char, min 15s).
-    // Previous fixed 15s was too short for longer chunks on slower iOS voices.
-    var chunkTimeout = Math.max(15000, chunk.length * 100);
-    ttsSafetyTimer = setTimeout(function() {
-      if (!done) {
-        console.warn('[' + ts() + '] TTS safety timeout on chunk ' + index + ' (after ' + chunkTimeout + 'ms) — speak() may have failed silently');
-        addSystemBubble('TTS timed out — future replies will have a play button');
-        ttsUnlocked = false;
-        speechSynthesis.cancel();
-        finish('safety-timeout');
-      }
-    }, chunkTimeout);
+    armWatchdog(index, chunk);
   }
 
   // Delay speak() after cancel() to work around Safari WebKit bug
-  setTimeout(function() { speakChunk(0); }, 100);
+  setTimeout(function() {
+    // (B) Chrome silently stops speechSynthesis after ~15s of continuous queued
+    // playback. A periodic resume() keeps the queue alive (no-op when not paused).
+    keepAlive = setInterval(function() {
+      if (done) { clearInterval(keepAlive); keepAlive = null; return; }
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.resume();
+    }, 10000);
+    speakChunk(0);
+  }, 100);
 }
 
 function addSystemBubble(text) {

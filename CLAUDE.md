@@ -15,6 +15,7 @@ Run `make e2e-test` to execute Playwright E2E tests. Run `make e2e-report` to
 serve the HTML report from the last run.
 
 - Tests connect to a remote Chrome via CDP. Auto-detected from `BROWSER_CDP_PORT` env var, or set `CDP_ENDPOINT` explicitly (legacy default: `http://chrome:9223`)
+- **The CDP endpoint is LAZY.** Nothing listens on `BROWSER_CDP_PORT` until an MCP Playwright session has opened a page — Chrome is owned by the swe-swe MCP/screencast layer, not the test runner, so a plain `connectOverCDP` cannot start it. A cold endpoint makes every spec fail at connect with `ECONNREFUSED`. **Warm it once before `make e2e-test`** by navigating with the MCP browser tool, e.g. `mcp__swe-swe-playwright__browser_navigate { url: "https://example.com" }`. The `e2e/global-setup.cjs` hook probes CDP first and prints this exact instruction if it's cold.
 - Set `SLOW_MO=500` to slow down browser actions for live viewing in Agent View
 - `make e2e-report` kills any previous report server, then serves on `E2E_REPORT_PORT` (defaults to `$PORT` or 3001)
 - View the report in the Preview tab

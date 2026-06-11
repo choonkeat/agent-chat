@@ -32,10 +32,10 @@ type chatExportMeta struct {
 // body follows as a `> ` blockquote. Before each agent turn (except the first)
 // a `<small>took NN.Ns</small><br>` line records the elapsed time since the
 // previous bubble. Quick replies sent with an agent turn are listed as a
-// trailing `[Quick replies]` bullet block. User-attached images render inline
-// within the user blockquote, wrapped in a flex `<div>` so md-serve / our
-// viewer tile them three-up while GitHub's sanitizer (which strips inline
-// styles) gracefully degrades to one-per-row.
+// trailing `[Quick replies]` bullet block. Images attached to either a user
+// or an agent turn render inline within that turn's blockquote, wrapped in a
+// flex `<div>` so md-serve / our viewer tile them three-up while GitHub's
+// sanitizer (which strips inline styles) gracefully degrades to one-per-row.
 func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string]string) string {
 	var b strings.Builder
 
@@ -90,7 +90,8 @@ func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string
 			}
 		case "agentMessage", "verbalReply":
 			body := strings.TrimSpace(e.Text)
-			if body == "" {
+			imgBlock := imageBlock(e.Files, imageMap)
+			if body == "" && imgBlock == "" {
 				continue
 			}
 			// Mirror client-dist/app.js:323-333: any previous bubble (user or
@@ -99,8 +100,18 @@ func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string
 				fmt.Fprintf(&b, "<small>took %s</small><br>\n", formatElapsed(e.Timestamp-lastTs))
 			}
 			b.WriteString("**AGENT**\n\n")
-			b.WriteString(blockquoteText(body))
-			b.WriteString("\n\n")
+			if body != "" {
+				b.WriteString(blockquoteText(body))
+				b.WriteString("\n")
+			}
+			if imgBlock != "" {
+				if body != "" {
+					b.WriteString(">\n")
+				}
+				b.WriteString(imgBlock)
+				b.WriteString("\n")
+			}
+			b.WriteString("\n")
 			if qr := quickRepliesBlock(e.QuickReplies); qr != "" {
 				b.WriteString(qr)
 			}
@@ -151,10 +162,11 @@ func quickRepliesBlock(replies []string) string {
 	return b.String()
 }
 
-// imageBlock renders user-attached files as an inline flex `<div>` of
+// imageBlock renders a turn's attached files as an inline flex `<div>` of
 // `<a><img></a>` tags, each line prefixed with `> ` so it lives inside the
-// user-turn blockquote. Non-image attachments are emitted as plain links
-// instead of `<img>`. Returns "" if no displayable attachments.
+// turn's blockquote (used for both user and agent turns). Non-image
+// attachments are emitted as plain links instead of `<img>`. Returns "" if no
+// displayable attachments.
 func imageBlock(files []FileRef, imageMap map[string]string) string {
 	if len(files) == 0 {
 		return ""
@@ -225,11 +237,15 @@ func formatElapsed(ms int64) string {
 	return fmt.Sprintf("%dm %ds", mins, rem)
 }
 
-// writeImageAttachments copies user-uploaded files from their server-side
-// upload paths to assetsDir/{date}-{NN}-N.{ext}. Returns a map from each
-// source path to the relative URL the .md should reference. Non-image files
-// are also copied (renderChatMarkdown emits them as plain links rather than
-// `<img>` tags, but the relative-path link still points to a real file).
+// writeImageAttachments copies files attached to user *and* agent turns from
+// their server-side upload paths to assetsDir/{date}-{NN}-N.{ext}. Returns a
+// map from each source path to the relative URL the .md should reference.
+// Both parties' attachments are embedded — an agent screenshot posted via
+// send_message/send_progress is archived the same way a user upload is. Only
+// these turn types are scanned; hidden bookkeeping events (e.g. toolMarker)
+// never carry user-facing files. Non-image files are also copied
+// (renderChatMarkdown emits them as plain links rather than `<img>` tags, but
+// the relative-path link still points to a real file).
 func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[string]string, error) {
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir assets: %w", err)
@@ -237,7 +253,9 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 	out := map[string]string{}
 	n := 0
 	for _, e := range events {
-		if e.Type != "userMessage" {
+		switch e.Type {
+		case "userMessage", "agentMessage", "verbalReply":
+		default:
 			continue
 		}
 		for _, f := range e.Files {
@@ -288,24 +306,24 @@ func copyFile(src, dst string) error {
 	return os.Rename(tmp, dst)
 }
 
-// ensureViewerAssets writes viewer.css and viewer.js to dir if either is
-// missing. Idempotent — won't overwrite existing files (so users can patch
-// the served versions if they want).
+// ensureViewerAssets writes the embedded viewer.css and viewer.js into dir,
+// overwriting any existing copies. These files are owned by agent-chat, not the
+// user: every export refreshes them so bundled fixes always reach every
+// archive. (A user wanting custom styling should edit the embedded source and
+// rebuild, not patch the served copy — it will be clobbered on the next
+// export.) index.html is handled separately by upsertIndexHTML, which preserves
+// the user-visible manifest it splices in.
 func ensureViewerAssets(dir string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	for _, name := range []string{"viewer.css", "viewer.js"} {
-		dst := filepath.Join(dir, name)
-		if _, err := os.Stat(dst); err == nil {
-			continue
-		}
 		data, err := chatLogViewerFS.ReadFile("chatlog-viewer/assets/" + name)
 		if err != nil {
 			return fmt.Errorf("read embedded %s: %w", name, err)
 		}
-		if err := os.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("write %s: %w", dst, err)
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", name, err)
 		}
 	}
 	return nil

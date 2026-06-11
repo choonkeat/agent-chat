@@ -426,6 +426,59 @@ func TestRenderChatMarkdownAlternates(t *testing.T) {
 	}
 }
 
+// TestRunChatMarkdownExportEmbedsAgentImages locks in the contract that
+// screenshots attached to an agent turn (via send_message/send_progress) are
+// copied into assets/ and rendered inline in the AGENT blockquote — symmetric
+// with user uploads. This restores the all-parties behavior the original
+// browser-rendered export_chat_html had; the server-side markdown rewrite
+// (dff1d6d) silently regressed it to user-only. See ADR
+// 2026-05-30-export-embeds-agent-images.md.
+func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
+	dir := t.TempDir()
+	now := mustParseTime(t, "2026-05-30T10:00:00Z")
+
+	// A real source image the exporter can copy into assets/.
+	src := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(src, []byte("\x89PNG\r\n\x1a\nfake"), 0644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	events := []Event{
+		{Type: "userMessage", Text: "take a screenshot", Timestamp: 1000},
+		{Type: "agentMessage", Text: "here it is", Timestamp: 2000,
+			Files: []FileRef{{Name: "shot.png", Path: src, Type: "image/png"}}},
+	}
+	mdPath, err := runChatMarkdownExport(dir, "agent-shot", events, "claude", "v1", now)
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	md, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("read md: %v", err)
+	}
+	mdStr := string(md)
+
+	// The agent body and its image must both appear, with the image inside the
+	// AGENT turn (after the body, not in some user turn).
+	if !strings.Contains(mdStr, "**AGENT**\n\n> here it is") {
+		t.Errorf("agent body missing/misformatted; got:\n%s", mdStr)
+	}
+	rel := "./assets/2026-05-30-01-1.png"
+	if !strings.Contains(mdStr, `<img src="`+rel+`"`) {
+		t.Errorf("agent image not rendered inline; want img src %q; got:\n%s", rel, mdStr)
+	}
+	// The image markup must sit within the agent turn (after **AGENT**), and
+	// there is no later turn to bleed into.
+	if ai := strings.Index(mdStr, "**AGENT**"); ai < 0 || strings.Index(mdStr, rel) < ai {
+		t.Errorf("agent image rendered outside the agent turn; got:\n%s", mdStr)
+	}
+
+	// The bytes must have been copied into assets/.
+	if _, err := os.Stat(filepath.Join(dir, "assets", "2026-05-30-01-1.png")); err != nil {
+		t.Errorf("agent screenshot not copied to assets: %v", err)
+	}
+}
+
 // TestRenderChatMarkdownIgnoresToolMarker locks in the contract that hidden
 // toolMarker events (emitted on routine early-returns to keep restart-seed
 // counts aligned) never surface in the export and never perturb the elapsed-time
