@@ -4,6 +4,28 @@ All notable changes to agent-chat are documented in this file.
 
 ## [0.8.0] — 2026-05-24
 
+### Features
+- Export viewer markdown styling. The chatlog viewer now styles every
+  element `marked.parse` emits — blockquotes (including nested and inside
+  user bubbles), GFM tables, horizontal rules, `h4`–`h6`, and list items —
+  which previously fell back to unstyled browser defaults, so quoted text
+  and tables rendered broken in exported archives.
+- Viewer assets are agent-chat-owned. `ensureViewerAssets` now overwrites
+  `viewer.css`/`viewer.js` on every export instead of skipping existing
+  copies, so bundled fixes reach every archive without manual deletion.
+  `index.html` keeps its create-if-missing behavior (it is mutated in
+  place with manifest entries). See ADR
+  `2026-06-11-viewer-assets-agent-owned.md`.
+- Exported markdown embeds agent-attached images, not just user uploads.
+  Images posted via `send_message`/`send_progress` `image_urls` are copied
+  to `assets/` and rendered inline within the agent turn's blockquote,
+  matching how user uploads are archived. See ADR
+  `2026-05-30-export-embeds-agent-images.md`.
+- Agent steered off the built-in AskUserQuestion tool. Its MCQ renders
+  only in the chat-invisible TUI and, unlike permission prompts, exposes
+  no channel to intercept, so the reply-instructions prompt now directs
+  the agent to route choices through `send_message` quick replies instead.
+
 ### Fixes
 - Restart-safe tool ordinals. The per-tool `agent_tool_seq` counter ticks
   on handler entry to stay aligned with the agent's `.jsonl`, but two
@@ -21,6 +43,10 @@ All notable changes to agent-chat are documented in this file.
 - `stamp_test.go`: marker-stamp emission and seed recovery from a
   `toolMarker` phantom. `tools_test.go`: render-guard asserting a
   `toolMarker` produces no markdown and never perturbs elapsed-time deltas.
+- `chatlogexport_assets_test.go`: viewer assets are written from the
+  embedded source when missing and unconditionally overwritten when
+  present (agent-owned). `tools_test.go`: pinned expected-text consts
+  updated for the AskUserQuestion steering directive.
 
 ## [0.7.1] — 2026-05-23
 
