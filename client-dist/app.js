@@ -90,17 +90,6 @@ window.addEventListener('scroll', function () {
   isUserScrolledUp = distFromBottom > threshold;
 });
 
-// Auto-focus chat input when window/iframe regains focus
-function focusChatInput() {
-  if (chatInput && !chatInput.disabled && !chatInput.readOnly) {
-    chatInput.focus();
-  }
-}
-window.addEventListener('focus', focusChatInput);
-document.addEventListener('visibilitychange', function () {
-  if (!document.hidden) focusChatInput();
-});
-
 function scrollToBottom(force) {
   if (!force && isUserScrolledUp) return;
   window.scrollTo(0, document.documentElement.scrollHeight);
@@ -1286,8 +1275,9 @@ acDropdown.addEventListener('mousedown', function (e) {
   }
 });
 
-// Desktop: Enter sends, Shift+Enter inserts newline
-// Mobile/touch: Enter inserts newline, send button only
+// Ctrl/Cmd+Enter always sends, on every platform (incl. hardware keyboards on mobile)
+// Desktop: plain Enter sends too; Shift+Enter / Alt+Enter insert a newline
+// Mobile/touch: plain Enter inserts a newline (send button only)
 var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 768);
 
 chatInput.addEventListener('keydown', function (e) {
@@ -1321,8 +1311,9 @@ chatInput.addEventListener('keydown', function (e) {
   }
 
   if (e.key !== 'Enter') return;
-  if (isMobile) return; // on mobile, Enter always inserts newline (default behavior)
-  if (e.shiftKey || e.altKey) return; // modifier+Enter inserts newline on desktop
+  if (e.metaKey || e.ctrlKey) { e.preventDefault(); handleSend(); return; } // Ctrl/Cmd+Enter always sends
+  if (isMobile) return; // on mobile, plain Enter inserts a newline (default behavior)
+  if (e.shiftKey || e.altKey) return; // Shift/Alt+Enter inserts a newline on desktop
   e.preventDefault();
   handleSend();
 });
