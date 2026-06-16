@@ -113,6 +113,19 @@ func TestEventBusWithoutLog(t *testing.T) {
 	bus.Close() // no-op when no file
 }
 
+func TestHasHistory(t *testing.T) {
+	bus := NewEventBus()
+	if bus.HasHistory() {
+		t.Fatal("fresh bus should have no history")
+	}
+	// A send_progress-style event (no quick replies) still counts as history,
+	// so welcome replies are suppressed after the agent has engaged.
+	bus.Publish(Event{Type: "agentMessage", Text: "Working on it..."})
+	if !bus.HasHistory() {
+		t.Fatal("bus with a logged event should report history")
+	}
+}
+
 func TestEventsSince(t *testing.T) {
 	bus := NewEventBus()
 	bus.Publish(Event{Type: "agentMessage", Text: "one"})

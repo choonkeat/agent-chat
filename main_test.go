@@ -15,6 +15,33 @@ import (
 	"time"
 )
 
+func TestParseWelcomeReplies(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"default", "What can you help me with?,Give me an overview of this project,What's changed recently?",
+			[]string{"What can you help me with?", "Give me an overview of this project", "What's changed recently?"}},
+		{"disabled", "", nil},
+		{"whitespace only", "   ", nil},
+		{"trims and drops empties", " a , , b ,", []string{"a", "b"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseWelcomeReplies(tc.raw)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestEnsureHTTPServerLazyStart(t *testing.T) {
 	// Reset global state for test
 	httpMu.Lock()

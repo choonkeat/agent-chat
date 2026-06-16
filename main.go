@@ -51,6 +51,13 @@ var autocompleteURL string
 // autocompleteTriggers is the raw flag value (e.g. "/=http://host/api,@=filepath").
 var autocompleteTriggers string
 
+// welcomeReplies are the hardcoded quick-reply chips shown on a genuinely empty
+// chat (zero events) so the opening state signals "your turn" instead of looking
+// frozen. They vanish the moment the agent sends its first message (with its own
+// context-aware replies) or any other history exists. Overridable via the
+// -welcome-replies flag; set to "" to disable.
+var welcomeReplies []string
+
 // triggerMap is the resolved flat map of trigger character → URL.
 // A URL of "builtin:filepath" signals the built-in filepath handler.
 // Populated by parseTriggerConfig at startup.
@@ -107,6 +114,18 @@ func ensureHTTPServer() error {
 	return nil
 }
 
+// parseWelcomeReplies splits the -welcome-replies flag into trimmed, non-empty
+// chips. An empty/whitespace-only flag disables welcome replies entirely.
+func parseWelcomeReplies(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if s := strings.TrimSpace(part); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func main() {
 	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
@@ -114,7 +133,11 @@ func main() {
 	flag.StringVar(&uploadDir, "upload-dir", "", "directory for uploaded files (default: temp dir)")
 	flag.StringVar(&autocompleteURL, "autocomplete-url", "", "legacy: fallback URL for triggers without an explicit URL")
 	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to URLs (e.g. '/=http://host/api')")
+	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
+	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	flag.Parse()
+
+	welcomeReplies = parseWelcomeReplies(*welcomeRepliesFlag)
 
 	if *showVersion {
 		fmt.Printf("agent-chat %s (%s)\n", version, commit)
@@ -425,6 +448,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	if qr := bus.LastQuickReplies(); len(qr) > 0 {
 		connectMsg["quickReplies"] = qr
+	} else if len(welcomeReplies) > 0 && !bus.HasHistory() {
+		// Genuinely empty chat: seed welcome replies so the opening state
+		// signals "your turn" instead of looking frozen. Suppressed once any
+		// history exists (including a send_progress-only opening).
+		connectMsg["quickReplies"] = welcomeReplies
 	}
 	conn.WriteJSON(connectMsg)
 

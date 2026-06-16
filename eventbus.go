@@ -378,6 +378,15 @@ func (eb *EventBus) HasQueuedMessages() bool {
 	return len(eb.msgQueue) > 0
 }
 
+// HasHistory reports whether any events have been logged this session. A fresh
+// chat (no agent messages, draws, or progress yet) returns false — used to
+// decide whether to seed welcome quick replies on connect.
+func (eb *EventBus) HasHistory() bool {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return len(eb.eventLog) > 0
+}
+
 // RemoveFromQueue atomically pulls every queued message, drops the one with
 // the matching ID, and re-enqueues the rest in their original order. Returns
 // true if the target ID was found and removed. Used by the "unsend" flow so
