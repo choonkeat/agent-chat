@@ -2,6 +2,35 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.8.1] — 2026-06-20
+
+### Features
+- Ctrl/Cmd+Enter always submits. The submit/newline keydown handler now
+  treats Ctrl/Cmd+Enter as submit on every platform — including hardware
+  keyboards on mobile, where the `isMobile` bail previously swallowed the
+  keystroke before any modifier check. Desktop plain Enter still submits;
+  Shift/Alt+Enter still insert a newline.
+- Welcome quick replies on an empty chat. A genuinely empty chat (zero
+  events) now seeds hardcoded "welcome" quick-reply chips so the opening
+  state signals "your turn" instead of reading as frozen. They are
+  suppressed the moment any history exists (including a `send_progress`-only
+  opening), and the agent's first `send_message` replaces them with its own
+  context-aware replies. Overridable via the new `-welcome-replies` flag
+  (comma-separated; `''` disables).
+
+### Fixes
+- Dropped the window `focus` + `visibilitychange` auto-focus
+  (`focusChatInput`) that grabbed the textarea on every tab/window
+  refocus. The four intentional focus points remain.
+
+### Tests
+- `e2e/chat-submit.spec.cjs`: 6 specs over desktop + mobile-UA contexts
+  covering Enter / Shift+Enter / Ctrl+Enter / Cmd+Enter, asserting submit
+  via `#loading-bubble` with a fresh server per test.
+- `eventbus_test.go` (`HasHistory`), `main_test.go` (`parseWelcomeReplies`),
+  and `e2e/welcome-replies.spec.cjs` cover the welcome-reply seeding and
+  history-suppression behavior.
+
 ## [0.8.0] — 2026-05-24
 
 ### Features
