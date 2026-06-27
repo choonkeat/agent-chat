@@ -128,6 +128,40 @@ test.describe('renderMarkdown — images', () => {
     expect(html).toContain('alt=""');
   });
 
+  test('relative path link: [words](/relative/path) renders <a>', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() =>
+      window.renderMarkdown('[words](/relative/path)')
+    );
+    expect(html).toContain('<a href="/relative/path"');
+    expect(html).toContain('>words</a>');
+    expect(html).not.toContain('<img');
+  });
+
+  test('relative link without leading slash: [docs](foo/bar) renders <a>', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() =>
+      window.renderMarkdown('[docs](docs/readme.md)')
+    );
+    expect(html).toContain('<a href="docs/readme.md"');
+    expect(html).toContain('>docs</a>');
+  });
+
+  test('javascript: URL link is rejected (no <a href> emitted)', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() =>
+      window.renderMarkdown('[click](javascript:alert(1))')
+    );
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('javascript:');
+  });
+
   test('javascript: URL is rejected (no <img> emitted)', async ({ page }) => {
     await page.goto(server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });

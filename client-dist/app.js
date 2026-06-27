@@ -258,8 +258,12 @@ function renderMarkdown(text) {
     if (/^\s*javascript:/i.test(url)) return alt;
     return '<img src="' + url + '" alt="' + alt + '">';
   });
-  // Links [text](url)
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Links [text](url) — accept absolute (http/https) AND relative URLs since
+  // chat content often links by path. Block `javascript:` for safety.
+  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(_, text, url) {
+    if (/^\s*javascript:/i.test(url)) return text;
+    return '<a href="' + url + '" target="_blank" rel="noopener">' + text + '</a>';
+  });
   // Bare URLs
   html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
   // Clean up newlines adjacent to block-level elements to avoid double spacing
