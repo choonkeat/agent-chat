@@ -1216,10 +1216,16 @@ function acFetch(trigger, query) {
     // in ranked order for acCache.query, that order was computed against
     // a shorter query — extending it can change tier and tiebreakers.
     acSortByQuery(filtered, query);
-    if (acTriggerPos >= 0) {
-      acShow(filtered, query);
+    // Only short-circuit when the cache actually yields matches. If filtering
+    // empties the set, fall through to the server fetch so the provider's
+    // informative status (e.g. "No emoji matching X") is shown instead of a
+    // bare "No results" — the cache path otherwise never echoes the query.
+    if (filtered.length > 0) {
+      if (acTriggerPos >= 0) {
+        acShow(filtered, query);
+      }
+      return;
     }
-    return;
   }
 
   acShowStatus('Loading\u2026');
