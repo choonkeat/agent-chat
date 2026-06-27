@@ -28,7 +28,15 @@ publish-dry: build-platforms
 	DRY_RUN=true ./scripts/publish.sh
 
 publish: build-platforms
-	DRY_RUN=false ./scripts/publish.sh
+	@# Binaries are built by the build-platforms prerequisite above. Only now,
+	@# right before publishing, prompt for the npm OTP if it isn't already in
+	@# the environment — so the short-lived OTP isn't burned during the build.
+	@if [ -n "$$NPM_OTP" ]; then \
+		DRY_RUN=false ./scripts/publish.sh; \
+	else \
+		read -rsp "Enter npm OTP (blank to publish without one): " otp; echo; \
+		DRY_RUN=false NPM_OTP="$$otp" ./scripts/publish.sh; \
+	fi
 
 bump:
 	@if [ -z "$(VERSION)" ]; then \
