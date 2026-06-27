@@ -2,6 +2,35 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.8.2] — 2026-06-27
+
+### Features
+- Relative-path markdown links now render. The link rule previously matched
+  only `http(s)://` URLs, so `[text](/relative/path)` fell through as plain
+  text. It now accepts relative URLs too (still blocking `javascript:`),
+  mirroring the image rule.
+- Relative links and images resolve against the parent window URL when
+  embedded. When agent-chat runs inside a host iframe (e.g. swe-swe), reading
+  the parent's location is blocked cross-origin, so the embedder passes its
+  top-level URL via a `parent_url` query-string parameter. That value is used
+  as the base for resolving relative `[text](url)` link hrefs and
+  `![alt](url)` image srcs via `new URL()`. Absolute and protocol-relative
+  URLs pass through unchanged; with no `parent_url` present it is a no-op,
+  preserving prior own-origin behaviour.
+
+### Fixes
+- Autocomplete now re-fetches from the provider when client-side cache
+  filtering empties the result set, instead of short-circuiting to a bare
+  "No results". The provider's informative status ("No emoji matching X" /
+  "No files matching X in DIR") is shown consistently, and a race that made
+  the no-match state nondeterministic is removed.
+
+### Tests
+- `e2e/markdown-images.spec.cjs`: relative links (leading-slash and no-slash),
+  `javascript:` rejection, and `parent_url` resolution — origin/path
+  resolution, image src, absolute pass-through, no-base fallback, and the
+  actual `?parent_url=` load wiring.
+
 ## [0.8.1] — 2026-06-20
 
 ### Features
