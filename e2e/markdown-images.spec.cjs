@@ -173,6 +173,73 @@ test.describe('renderMarkdown — images', () => {
     expect(html).not.toContain('javascript:');
   });
 
+  test('parent base set: leading-slash link resolves against parent origin', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() => {
+      window.parentBaseUrl = 'https://parent.example/app/page';
+      return window.renderMarkdown('[words](/relative/path)');
+    });
+    expect(html).toContain('<a href="https://parent.example/relative/path"');
+    expect(html).toContain('>words</a>');
+  });
+
+  test('parent base set: no-leading-slash link resolves against parent path', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() => {
+      window.parentBaseUrl = 'https://parent.example/app/';
+      return window.renderMarkdown('[docs](docs/readme.md)');
+    });
+    expect(html).toContain('<a href="https://parent.example/app/docs/readme.md"');
+  });
+
+  test('parent base set: relative image src resolves against parent', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() => {
+      window.parentBaseUrl = 'https://parent.example/app/';
+      return window.renderMarkdown('![d](/diagram.png)');
+    });
+    expect(html).toContain('src="https://parent.example/diagram.png"');
+  });
+
+  test('parent base set: absolute URL is left unchanged', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() => {
+      window.parentBaseUrl = 'https://parent.example/app/';
+      return window.renderMarkdown('[g](https://www.google.com/search)');
+    });
+    expect(html).toContain('<a href="https://www.google.com/search"');
+  });
+
+  test('no parent base: relative link keeps own-origin behaviour', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await page.evaluate(() => {
+      window.parentBaseUrl = '';
+      return window.renderMarkdown('[words](/relative/path)');
+    });
+    expect(html).toContain('<a href="/relative/path"');
+  });
+
+  test('parent_url query param is read into parentBaseUrl on load', async ({ page }) => {
+    await page.goto(server.url + '/?parent_url=' + encodeURIComponent('https://parent.example/app/'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const base = await page.evaluate(() => window.parentBaseUrl);
+    expect(base).toBe('https://parent.example/app/');
+
+    const html = await page.evaluate(() => window.renderMarkdown('[w](/x/y)'));
+    expect(html).toContain('<a href="https://parent.example/x/y"');
+  });
+
   test('mixed: image and link together', async ({ page }) => {
     await page.goto(server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });

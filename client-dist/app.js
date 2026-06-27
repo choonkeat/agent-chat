@@ -19,6 +19,24 @@ function applyTheme() {
 applyTheme();
 setInterval(applyTheme, 2000);
 
+// --- Parent URL resolution (relative links when embedded in an iframe) ---
+// When agent-chat runs inside a swe-swe iframe, a relative markdown link like
+// `/foo/bar` or `docs/readme.md` should resolve against the PARENT window's
+// URL, not our own iframe URL. A cross-origin parent blocks us from reading
+// window.parent.location, so instead the embedder passes its own URL to us as
+// the `parent_url` query string parameter on the iframe src. When absent
+// (e.g. agent-chat opened standalone), resolution is a no-op and relative
+// links keep their previous own-origin behaviour.
+var parentBaseUrl = new URLSearchParams(window.location.search).get('parent_url') || '';
+
+// Resolve a possibly-relative URL against the parent window URL. Absolute URLs
+// (with a scheme) and protocol-relative (//host) URLs are returned unchanged.
+function resolveAgainstParent(url) {
+  if (!parentBaseUrl) return url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || /^\/\//.test(url)) return url;
+  try { return new URL(url, parentBaseUrl).href; } catch (e) { return url; }
+}
+
 var messages = document.getElementById('messages');
 var chatInput = document.getElementById('chat-input');
 var sendBtn = document.getElementById('btn-send');
@@ -256,13 +274,13 @@ function renderMarkdown(text) {
   // Must run before the link rule so the leading "!" is consumed.
   html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function(_, alt, url) {
     if (/^\s*javascript:/i.test(url)) return alt;
-    return '<img src="' + url + '" alt="' + alt + '">';
+    return '<img src="' + resolveAgainstParent(url) + '" alt="' + alt + '">';
   });
   // Links [text](url) — accept absolute (http/https) AND relative URLs since
   // chat content often links by path. Block `javascript:` for safety.
   html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(_, text, url) {
     if (/^\s*javascript:/i.test(url)) return text;
-    return '<a href="' + url + '" target="_blank" rel="noopener">' + text + '</a>';
+    return '<a href="' + resolveAgainstParent(url) + '" target="_blank" rel="noopener">' + text + '</a>';
   });
   // Bare URLs
   html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
