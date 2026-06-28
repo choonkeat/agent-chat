@@ -110,3 +110,93 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
     expect(url).toBe('https://parent.example/api/fork/a%2Fb%20c?bubble=3&mode=after');
   });
 });
+
+test.describe('fork button — rendering & interaction (Phase 2)', () => {
+  /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
+  let server = null;
+
+  test.beforeAll(async () => {
+    server = await startServer();
+  });
+
+  test.afterAll(async () => {
+    if (server?.proc) {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fork_session set: agent bubble shows a fork button', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(1);
+  });
+
+  test('no fork_session: agent bubble has no fork button', async ({ page }) => {
+    await page.goto(server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await expect(page.locator('.bubble.agent')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
+  });
+
+  test('user bubble never shows a fork button (even with fork_session)', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addUserMessage('hi from user', null, null, Date.now()));
+    await expect(page.locator('.bubble.user')).toHaveCount(1);
+    await expect(page.locator('.bubble.user .bubble-fork-btn')).toHaveCount(0);
+  });
+
+  test('agent bubble without a seq shows no fork button', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    // Locally-generated agent messages (e.g. "Clearing context...") carry no seq.
+    await page.evaluate(() => window.addAgentMessage('local note', null, null, Date.now()));
+    await expect(page.locator('.bubble.agent')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
+  });
+
+  test('clicking fork button → confirm → window.open(forkUrl, _blank)', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
+      + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__opened = [];
+      window.confirm = () => true;
+      window.open = (u, t) => { window.__opened.push([u, t]); return null; };
+      window.addAgentMessage('hello', null, null, Date.now(), 9);
+    });
+
+    await page.locator('.bubble.agent .bubble-fork-btn').click();
+
+    const opened = await page.evaluate(() => window.__opened);
+    expect(opened).toEqual([
+      ['https://parent.example/api/fork/sess-1?bubble=9&mode=after', '_blank'],
+    ]);
+  });
+
+  test('clicking fork button → cancel confirm → window.open NOT called', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
+      + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => {
+      window.__opened = [];
+      window.confirm = () => false;
+      window.open = (u, t) => { window.__opened.push([u, t]); return null; };
+      window.addAgentMessage('hello', null, null, Date.now(), 9);
+    });
+
+    await page.locator('.bubble.agent .bubble-fork-btn').click();
+
+    const opened = await page.evaluate(() => window.__opened);
+    expect(opened).toEqual([]);
+  });
+});
