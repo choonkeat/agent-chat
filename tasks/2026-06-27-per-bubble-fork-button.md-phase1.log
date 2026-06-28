@@ -1,3 +1,4 @@
 234043 — Phase 1 RED: running e2e/fork-button.spec.cjs against CURRENT binary (no forkSession/forkUrl yet). Expect ALL 4 tests to FAIL: window.forkSession undefined (!= "" / "sess-abc-123") and window.forkUrl is not a function.
 234220 — Phase 1 RED observed: 4 failed (as expected). "window.forkUrl is not a function"; window.forkSession is undefined (test expecting "" also fails). Confirms the plumbing does not exist yet. Now implementing forkSession + forkUrl in client-dist/app.js.
 234237 — Phase 1 GREEN attempt: added forkSession + forkUrl to app.js, rebuilt linux binary, re-running spec. Expect ALL 4 to PASS.
+234252 — Phase 1 GREEN observed: 4 passed (6.1s). forkSession reads fork_session param; forkUrl builds absolute /api/fork/<uuid>?bubble=<seq>&mode=after against parentBaseUrl with proper uuid encoding. Phase 1 complete.

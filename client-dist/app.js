@@ -37,6 +37,23 @@ function resolveAgainstParent(url) {
   try { return new URL(url, parentBaseUrl).href; } catch (e) { return url; }
 }
 
+// --- Per-bubble fork ("fork from here") ---
+// When embedded in a swe-swe iframe, the embedder appends `fork_session=<live
+// session uuid>` to our src alongside `parent_url`. Its presence is the feature
+// flag: when non-empty, each agent bubble shows a fork button that opens a new
+// swe-swe session branched at that bubble. When absent (standalone agent-chat),
+// no button renders and behaviour is unchanged.
+var forkSession = new URLSearchParams(window.location.search).get('fork_session') || '';
+
+// Build the absolute fork URL for a given bubble event seq. Resolved against
+// parentBaseUrl (the same parent_url used for relative-link resolution) so the
+// /api/fork path hits the swe-swe origin, not our iframe origin. mode=after is
+// the only cut forkconvo implements today (see task notes), so it's hardcoded.
+function forkUrl(seq) {
+  return new URL('/api/fork/' + encodeURIComponent(forkSession)
+                 + '?bubble=' + seq + '&mode=after', parentBaseUrl).href;
+}
+
 var messages = document.getElementById('messages');
 var chatInput = document.getElementById('chat-input');
 var sendBtn = document.getElementById('btn-send');
