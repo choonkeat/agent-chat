@@ -745,15 +745,20 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 
 	// Built-in filepath handler.
 	if providerURL == "builtin:filepath" {
-		root := filepathRoot
+		var results []string
+		var hasMore bool
+		var scope string
 		if strings.HasPrefix(req.Query, "/") {
-			root = "/"
+			// Absolute query: confined to the roots allowlist.
+			results, hasMore = builtinFilepathCompleteAbs(req.Query, filepathRoots)
+			scope = "allowed roots " + strings.Join(filepathRoots, ", ")
+		} else {
+			results, hasMore = builtinFilepathComplete(filepathRoot, req.Query)
+			scope, _ = filepath.Abs(filepathRoot)
 		}
-		absRoot, _ := filepath.Abs(root)
-		results, hasMore := builtinFilepathComplete(root, req.Query)
 		info := ""
 		if len(results) == 0 {
-			info = fmt.Sprintf("No files matching %q in %s", req.Query, absRoot)
+			info = fmt.Sprintf("No files matching %q in %s", req.Query, scope)
 		}
 		writeAutocompleteResponse(w, stringsToItems(results), info, hasMore, false)
 		return
@@ -831,6 +836,64 @@ var (
 // Hidden files/dirs are NOT special-cased — they complete like anything else.
 func builtinFilepathComplete(root, query string) ([]string, bool) {
 	return bfsFilepathCollect([]string{root}, nil, query)
+}
+
+// builtinFilepathCompleteAbs handles absolute (@/…) queries, confining the walk
+// to the roots allowlist. See absoluteFilepathFrontier for the seeding rules.
+func builtinFilepathCompleteAbs(query string, roots []string) ([]string, bool) {
+	frontier, seeds := absoluteFilepathFrontier(query, roots)
+	if len(frontier) == 0 && len(seeds) == 0 {
+		return []string{}, false
+	}
+	return bfsFilepathCollect(frontier, seeds, query)
+}
+
+// absoluteFilepathFrontier resolves an absolute query into the BFS seed dirs
+// (frontier) and any pre-seeded candidates, honoring the roots allowlist:
+//
+//   - query reaches into a root (== root or under root/) → anchor the BFS at the
+//     deepest existing directory prefix within that root (performance: siblings
+//     are not read; a mid-segment typo just yields a shallower anchor);
+//   - query is a prefix of one or more roots (incl. bare "/") → those roots are
+//     both seeded as candidates (so @/ lists the roots) and used as the frontier
+//     (so deeper matches surface when cap slots remain);
+//   - query is under no root → empty (no results).
+func absoluteFilepathFrontier(query string, roots []string) (frontier, seeds []string) {
+	for _, root := range roots {
+		if query == root || strings.HasPrefix(query, root+"/") {
+			return []string{deepestExistingDir(query, root)}, nil
+		}
+	}
+	var matched []string
+	for _, root := range roots {
+		if strings.HasPrefix(root, query) {
+			matched = append(matched, root)
+		}
+	}
+	if len(matched) > 0 {
+		return matched, matched
+	}
+	return nil, nil
+}
+
+// deepestExistingDir returns the deepest existing directory that is a prefix of
+// query, never ascending above root. A query whose tail segment(s) don't exist
+// yet (the partial the user is typing) degrades to its nearest existing parent.
+func deepestExistingDir(query, root string) string {
+	p := filepath.Clean(query)
+	for {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			return p
+		}
+		if p == root {
+			return root
+		}
+		parent := filepath.Dir(p)
+		if parent == p || len(parent) < len(root) {
+			return root
+		}
+		p = parent
+	}
 }
 
 // bfsFilepathCollect walks breadth-first from each directory in frontier,

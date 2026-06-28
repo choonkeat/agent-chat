@@ -112,7 +112,7 @@ Work test-first. After **every** step run `make test` (per CLAUDE.md — never
   `TestBuiltinFilepathCompleteScoring` (deep `task → …/Dockerfile` must still
   appear — BFS-until-cap, no depth limit).
 
-### Step 3 — Absolute queries: allowlist + anchor + `@/` lists roots
+### Step 3 — Absolute queries: allowlist + anchor + `@/` lists roots  ✅ DONE
 - **Test (red):**
   - `TestBuiltinFilepathAbsoluteAllowed`: temp roots; an absolute query under an
     allowed root returns matches; an absolute query under a *disallowed* root
