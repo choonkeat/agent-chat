@@ -91,7 +91,7 @@ window.open(forkUrl(bubbleSeq), '_blank');
 
 ## Phases
 
-- [ ] **Phase 1 — fork URL plumbing (logic).** Read `fork_session` query param into
+- [x] **Phase 1 — fork URL plumbing (logic).** Read `fork_session` query param into
   a top-level `forkSession` var (mirrors `parentBaseUrl`). Add `forkUrl(seq)` that
   builds the absolute `/api/fork/<forkSession>?bubble=<seq>&mode=after` URL against
   `parentBaseUrl`. Tests (mirroring the `parent_url` tests in
