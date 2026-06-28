@@ -1,1 +1,2 @@
 015456 PHASE1 begin: writing TestFilepathRootsDefault + TestFilepathRootsFlagParse. Expect RED — parseFilepathRoots/filepathRoots do not exist yet (compile failure).
+015515 PHASE1 RED: 'go vet' fails — undefined: parseFilepathRoots (main_test.go:827). Expected failure observed (function not yet implemented).

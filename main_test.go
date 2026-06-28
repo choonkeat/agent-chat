@@ -821,3 +821,65 @@ func TestBuiltinFilepathCompleteScoring(t *testing.T) {
 		t.Errorf("tasks/readme.md (idx %d) should rank before cmd/templates/host/Dockerfile (idx %d)", tasksIdx, cmdIdx)
 	}
 }
+
+func TestFilepathRootsDefault(t *testing.T) {
+	// cwd that is NOT under any of the fixed roots: it must be included.
+	roots := parseFilepathRoots("", "/home/someone/project")
+	want := map[string]bool{
+		"/home/someone/project": false,
+		"/repos":                false,
+		"/workspace":            false,
+		"/worktrees":            false,
+	}
+	for _, r := range roots {
+		if _, ok := want[r]; ok {
+			want[r] = true
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("default roots missing %q; got %v", k, roots)
+		}
+	}
+
+	// cwd already under a fixed root: must NOT be double-listed.
+	roots = parseFilepathRoots("", "/repos/agent-chat/worktrees/x")
+	count := 0
+	for _, r := range roots {
+		if r == "/repos/agent-chat/worktrees/x" {
+			count++
+		}
+	}
+	if count != 0 {
+		t.Errorf("cwd under /repos should be de-duped, got %v", roots)
+	}
+	// /repos must still be present.
+	found := false
+	for _, r := range roots {
+		if r == "/repos" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected /repos in de-duped roots, got %v", roots)
+	}
+}
+
+func TestFilepathRootsFlagParse(t *testing.T) {
+	roots := parseFilepathRoots("/a, /b/c ,/d", "/some/cwd")
+	want := []string{"/a", "/b/c", "/d"}
+	if len(roots) != len(want) {
+		t.Fatalf("expected %v, got %v", want, roots)
+	}
+	for i, r := range roots {
+		if r != want[i] {
+			t.Errorf("root[%d] = %q, want %q", i, r, want[i])
+		}
+	}
+	// Custom flag must NOT auto-inject cwd or the fixed defaults.
+	for _, r := range roots {
+		if r == "/some/cwd" || r == "/repos" {
+			t.Errorf("custom flag should not inject default roots, got %v", roots)
+		}
+	}
+}
