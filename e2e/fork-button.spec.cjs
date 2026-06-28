@@ -162,6 +162,25 @@ test.describe('fork button — rendering & interaction (Phase 2)', () => {
     await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
   });
 
+  test('fork and play buttons have a comfortable vertical gap (fat-finger guard)', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(1);
+
+    // Fork (spawns a new session) sits above play (TTS). They must not be so
+    // close that a finger reaching for one hits the other. Assert a clear gap
+    // between the fork button's bottom edge and the play button's top edge.
+    const gap = await page.evaluate(() => {
+      const bubble = document.querySelector('.bubble.agent');
+      const fork = bubble.querySelector('.bubble-fork-btn').getBoundingClientRect();
+      const play = bubble.querySelector('.bubble-tts-btn').getBoundingClientRect();
+      return play.top - fork.bottom;
+    });
+    expect(gap).toBeGreaterThanOrEqual(12);
+  });
+
   test('clicking fork button → confirm → window.open(forkUrl, _blank)', async ({ page }) => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
       + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
