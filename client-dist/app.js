@@ -886,13 +886,30 @@ function appendAfterLoader(el) {
   messages.insertBefore(el, quickReplies);
 }
 
+var loaderTimer = null;
+
+// Render the elapsed time from the bubble's stored start timestamp. Always
+// derives the value from (now - start) rather than incrementing a counter, so
+// a late/throttled interval tick self-corrects instead of accumulating drift.
+function renderLoaderElapsed(div) {
+  var span = div.querySelector('.elapsed');
+  if (!span) return;
+  var s = Math.floor((Date.now() - Number(div.dataset.loaderStart)) / 1000);
+  span.textContent = s < 60
+    ? s + 's'
+    : Math.floor(s / 60) + 'm ' + String(s % 60).padStart(2, '0') + 's';
+}
+
 function showLoading() {
   removeLoading();
   quickReplies.classList.remove('visible'); // loading and quick replies are mutually exclusive
   var div = document.createElement('div');
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
-  div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+  div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="elapsed"></span>';
+  div.dataset.loaderStart = String(Date.now());
+  renderLoaderElapsed(div);
+  loaderTimer = setInterval(function () { renderLoaderElapsed(div); }, 1000);
   // Insert the loader BEFORE any trailing pending user bubbles so the
   // "agent is busy" indicator stays anchored at the consumed/pending boundary.
   var firstPending = messages.querySelector('.bubble.user.pending-agent');
@@ -906,6 +923,7 @@ function showLoading() {
 }
 
 function removeLoading() {
+  if (loaderTimer) { clearInterval(loaderTimer); loaderTimer = null; }
   var el = document.getElementById('loading-bubble');
   if (el) el.remove();
   sendBtn.classList.remove('agent-busy');
