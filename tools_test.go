@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -463,7 +465,12 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 	if !strings.Contains(mdStr, "**AGENT**\n\n> here it is") {
 		t.Errorf("agent body missing/misformatted; got:\n%s", mdStr)
 	}
-	rel := "./assets/2026-05-30-01-1.png"
+	// Asset filenames carry a content sha (first 12 hex of sha256) before the
+	// extension so distinct content can never collide on numbering alone.
+	sum := sha256.Sum256([]byte("\x89PNG\r\n\x1a\nfake"))
+	sha := hex.EncodeToString(sum[:])[:12]
+	asset := "2026-05-30-01-1-" + sha + ".png"
+	rel := "./assets/" + asset
 	if !strings.Contains(mdStr, `<img src="`+rel+`"`) {
 		t.Errorf("agent image not rendered inline; want img src %q; got:\n%s", rel, mdStr)
 	}
@@ -474,7 +481,7 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 	}
 
 	// The bytes must have been copied into assets/.
-	if _, err := os.Stat(filepath.Join(dir, "assets", "2026-05-30-01-1.png")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "assets", asset)); err != nil {
 		t.Errorf("agent screenshot not copied to assets: %v", err)
 	}
 }

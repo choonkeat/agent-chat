@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"html"
 	"io"
@@ -238,7 +240,9 @@ func formatElapsed(ms int64) string {
 }
 
 // writeImageAttachments copies files attached to user *and* agent turns from
-// their server-side upload paths to assetsDir/{date}-{NN}-N.{ext}. Returns a
+// their server-side upload paths to assetsDir/{date}-{NN}-N-{sha12}.{ext}. The
+// content digest before the extension guarantees distinct content never shares a
+// filename even if the numbering ever repeats across exports. Returns a
 // map from each source path to the relative URL the .md should reference.
 // Both parties' attachments are embedded — an agent screenshot posted via
 // send_message/send_progress is archived the same way a user upload is. Only
@@ -272,10 +276,19 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 				}
 			}
 			n++
-			dstName := fmt.Sprintf("%s-%s-%d%s", date, idx, n, ext)
+			// Copy under a provisional numbered name, then rename to include a
+			// content digest before the extension so assets never collide even
+			// if the numbering ever repeats: {date}-{NN}-{N}-{sha12}.{ext}.
+			staging := filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, n, ext))
+			sum, err := copyFileSum(f.Path, staging)
+			if err != nil {
+				return nil, fmt.Errorf("copy %s → %s: %w", f.Path, staging, err)
+			}
+			dstName := fmt.Sprintf("%s-%s-%d-%s%s", date, idx, n, sum, ext)
 			dst := filepath.Join(assetsDir, dstName)
-			if err := copyFile(f.Path, dst); err != nil {
-				return nil, fmt.Errorf("copy %s → %s: %w", f.Path, dst, err)
+			if err := os.Rename(staging, dst); err != nil {
+				os.Remove(staging)
+				return nil, fmt.Errorf("rename %s → %s: %w", staging, dst, err)
 			}
 			out[f.Path] = "./assets/" + dstName
 		}
@@ -283,27 +296,38 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 	return out, nil
 }
 
-func copyFile(src, dst string) error {
+// copyFileSum copies src to dst and returns a short hex sha256 of the bytes it
+// wrote. The hash is streamed off the same read used for the copy (io.TeeReader)
+// so the source is read exactly once. Callers use the returned digest as a
+// filename suffix so two assets with identical numbering but different content
+// can never clobber each other (and identical content yields an identical name,
+// which is fine — the second copy is a harmless rewrite).
+func copyFileSum(src, dst string) (string, error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer in.Close()
 	tmp := dst + ".tmp"
 	out, err := os.Create(tmp)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	h := sha256.New()
+	if _, err := io.Copy(out, io.TeeReader(in, h)); err != nil {
 		out.Close()
 		os.Remove(tmp)
-		return err
+		return "", err
 	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
-		return err
+		return "", err
 	}
-	return os.Rename(tmp, dst)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12], nil
 }
 
 // ensureViewerAssets writes the embedded viewer.css and viewer.js into dir,
