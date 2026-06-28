@@ -84,7 +84,7 @@ Problems this task fixes:
 Work test-first. After **every** step run `make test` (per CLAUDE.md — never
 `go test`/`go vet` directly). Red → green → refactor.
 
-### Step 1 — Roots config + default includes cwd
+### Step 1 — Roots config + default includes cwd  ✅ DONE
 - **Test (red):** add `TestFilepathRootsDefault` asserting the parsed default
   roots contain the cwd and `/repos`, `/workspace`, `/worktrees`, de-duped (cwd
   not double-listed if already under a root). Add `TestFilepathRootsFlagParse`

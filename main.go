@@ -63,8 +63,55 @@ var welcomeReplies []string
 // Populated by parseTriggerConfig at startup.
 var triggerMap map[string]string
 
-// filepathRoot is the directory used by the built-in filepath autocompleter.
+// filepathRoot is the directory used by the built-in filepath autocompleter
+// for relative queries.
 var filepathRoot = "."
+
+// filepathRoots is the allowlist of roots that absolute (@/…) queries are
+// confined to. Populated by parseFilepathRoots at startup.
+var filepathRoots []string
+
+// parseFilepathRoots resolves the --filepath-roots flag value into an allowlist
+// of absolute roots. When the flag is empty, the default is the fixed swe-swe
+// roots (/repos, /workspace, /worktrees) plus the current working directory —
+// the latter only if it is not already covered by a fixed root (de-dupe). A
+// non-empty flag is taken verbatim (cleaned, comma-split) with no defaults
+// injected.
+func parseFilepathRoots(flagVal, cwd string) []string {
+	if strings.TrimSpace(flagVal) != "" {
+		var roots []string
+		for _, p := range strings.Split(flagVal, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				roots = append(roots, filepath.Clean(p))
+			}
+		}
+		return roots
+	}
+	roots := []string{"/repos", "/workspace", "/worktrees"}
+	if cwd != "" {
+		cwd = filepath.Clean(cwd)
+		if !isPathUnderAny(cwd, roots) {
+			roots = append([]string{cwd}, roots...)
+		}
+	}
+	return roots
+}
+
+// isPathUnder reports whether p is root itself or nested under root.
+func isPathUnder(p, root string) bool {
+	return p == root || strings.HasPrefix(p, root+"/")
+}
+
+// isPathUnderAny reports whether p is under (or equal to) any of roots.
+func isPathUnderAny(p string, roots []string) bool {
+	for _, r := range roots {
+		if isPathUnder(p, r) {
+			return true
+		}
+	}
+	return false
+}
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
@@ -135,9 +182,12 @@ func main() {
 	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to URLs (e.g. '/=http://host/api')")
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
+	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
 	flag.Parse()
 
 	welcomeReplies = parseWelcomeReplies(*welcomeRepliesFlag)
+	cwd, _ := os.Getwd()
+	filepathRoots = parseFilepathRoots(*filepathRootsFlag, cwd)
 
 	if *showVersion {
 		fmt.Printf("agent-chat %s (%s)\n", version, commit)
