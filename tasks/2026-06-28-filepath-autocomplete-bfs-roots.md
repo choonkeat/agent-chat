@@ -130,7 +130,7 @@ Work test-first. After **every** step run `make test` (per CLAUDE.md — never
   - absolute under no root → empty;
   - relative → anchor under `filepathRoot` as today.
 
-### Step 4 — Full sweep
+### Step 4 — Full sweep  ✅ DONE
 - `make test` green (unit + e2e). For e2e, warm the lazy CDP endpoint first via
   an MCP `browser_navigate` (see CLAUDE.md / `e2e/global-setup.cjs`) or the
   specs fail at connect with `ECONNREFUSED`.
