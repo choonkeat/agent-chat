@@ -243,6 +243,36 @@ body {
   fill: currentColor;
 }
 
+/* Fork button — sits directly above the play (TTS) button on agent bubbles. */
+.bubble-fork-btn {
+  position: absolute;
+  right: -32px;
+  bottom: 36px;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.4;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+.bubble-fork-btn:hover {
+  opacity: 1;
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+.bubble-fork-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
 .bubble code {
   background: var(--code-bg);
   padding: 0.1rem 0.3rem;

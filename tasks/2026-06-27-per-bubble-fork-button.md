@@ -97,7 +97,7 @@ window.open(forkUrl(bubbleSeq), '_blank');
   `parentBaseUrl`. Tests (mirroring the `parent_url` tests in
   `e2e/markdown-images.spec.cjs`): `fork_session` query param read into
   `forkSession`; `forkUrl(seq)` builds the correct absolute URL.
-- [ ] **Phase 2 — fork button on agent bubbles (DOM + interaction).** Thread event
+- [x] **Phase 2 — fork button on agent bubbles (DOM + interaction).** Thread event
   `seq` into `addBubble`/`addAgentMessage` from the `agentMessage`/`verbalReply`
   handlers and history replay. Add `createForkButton(seq)` rendered on agent bubbles
   ABOVE the play button, only when `forkSession` is non-empty; on click show a
