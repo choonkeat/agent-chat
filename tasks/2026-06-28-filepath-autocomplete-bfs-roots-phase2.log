@@ -1,0 +1,1 @@
+015600 PHASE2 begin: write TestBuiltinFilepathBFSShallowFirst + TestBuiltinFilepathIncludesDotfiles, update TestBuiltinFilepathComplete to assert .git/config IS reachable. Expect RED — BFS not implemented (current DFS skips hidden dirs and DFS-orders, so dotfiles test + shallow-first test fail; updated .git assertion fails).
