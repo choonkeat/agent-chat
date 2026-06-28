@@ -107,7 +107,7 @@ window.open(forkUrl(bubbleSeq), '_blank');
   click → confirm → `window.open` called with the correct fork URL.
   *(Superseded by Phase 3 — see below.)*
 
-- [ ] **Phase 3 — consolidate into a "⋯" overflow menu (design pivot, confirmed
+- [x] **Phase 3 — consolidate into a "⋯" overflow menu (design pivot, confirmed
   with user 2026-06-27).** A stacked fork-above-play button floats above short
   (1–2 line) bubbles and the two round buttons sit too close (fat-finger risk).
   Pivot: a single `.bubble-menu-btn` (⋯) per agent bubble that opens a menu of
