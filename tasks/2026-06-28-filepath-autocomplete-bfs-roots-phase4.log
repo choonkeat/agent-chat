@@ -1,0 +1,1 @@
+015924 PHASE4 begin: warm lazy CDP via MCP browser_navigate, then 'make test' (unit + e2e). Expect: unit green; e2e green (filepath autocomplete is server-only, client unchanged). Also confirm no client-dist/ changes.
