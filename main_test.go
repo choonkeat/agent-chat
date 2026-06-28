@@ -715,14 +715,22 @@ func TestBuiltinFilepathComplete(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".git", "config"), nil, 0644)
 
 	results, _ := builtinFilepathComplete(dir, "")
-	// Should include main.go, README.md, src, src/app.go but NOT .git/config
-	for _, r := range results {
-		if strings.Contains(r, ".git") {
-			t.Errorf("should skip hidden dirs, got %s", r)
-		}
-	}
+	// New contract: dotdirs/dotfiles are NOT special-cased — .git/config is
+	// reachable like any other entry (no hidden guard).
 	if len(results) < 3 {
 		t.Errorf("expected at least 3 results, got %v", results)
+	}
+
+	// Hidden dirs now complete: query the dotted path.
+	results, _ = builtinFilepathComplete(dir, ".git/config")
+	foundGit := false
+	for _, r := range results {
+		if strings.HasSuffix(r, filepath.Join(".git", "config")) {
+			foundGit = true
+		}
+	}
+	if !foundGit {
+		t.Errorf("expected .git/config to be reachable, got %v", results)
 	}
 
 	// Fuzzy match
@@ -881,5 +889,75 @@ func TestFilepathRootsFlagParse(t *testing.T) {
 		if r == "/some/cwd" || r == "/repos" {
 			t.Errorf("custom flag should not inject default roots, got %v", roots)
 		}
+	}
+}
+
+func TestBuiltinFilepathIncludesDotfiles(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0755)
+	os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), nil, 0644)
+	os.MkdirAll(filepath.Join(dir, ".claude"), 0755)
+	os.WriteFile(filepath.Join(dir, ".claude", "settings.json"), nil, 0644)
+
+	results, _ := builtinFilepathComplete(dir, "github/ci")
+	found := false
+	for _, r := range results {
+		if strings.HasSuffix(r, filepath.Join(".github", "workflows", "ci.yml")) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected .github/workflows/ci.yml for query 'github/ci', got %v", results)
+	}
+
+	results, _ = builtinFilepathComplete(dir, ".claude/set")
+	found = false
+	for _, r := range results {
+		if strings.HasSuffix(r, filepath.Join(".claude", "settings.json")) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected .claude/settings.json for query '.claude/set', got %v", results)
+	}
+}
+
+func TestBuiltinFilepathBFSShallowFirst(t *testing.T) {
+	dir := t.TempDir()
+	// "aaa_sub" sorts before "match_shallow.txt", so a lexical DFS would dive
+	// into aaa_sub first and fill the cap with deep matches, dropping the
+	// shallow one. BFS visits the whole top level before any subtree, so the
+	// shallow match survives.
+	os.MkdirAll(filepath.Join(dir, "aaa_sub", "deeper"), 0755)
+	os.WriteFile(filepath.Join(dir, "aaa_sub", "deeper", "match_deep.txt"), nil, 0644)
+	for i := 0; i < 5; i++ {
+		os.WriteFile(filepath.Join(dir, "aaa_sub", "match_f"+string(rune('0'+i))+".txt"), nil, 0644)
+	}
+	os.WriteFile(filepath.Join(dir, "match_shallow.txt"), nil, 0644)
+
+	// Lower the candidate cap so the deep level is never reached.
+	orig := filepathCandidateCap
+	filepathCandidateCap = 3
+	t.Cleanup(func() { filepathCandidateCap = orig })
+
+	results, hasMore := builtinFilepathComplete(dir, "match")
+	foundShallow := false
+	foundDeep := false
+	for _, r := range results {
+		if strings.HasSuffix(r, "match_shallow.txt") {
+			foundShallow = true
+		}
+		if strings.HasSuffix(r, "match_deep.txt") {
+			foundDeep = true
+		}
+	}
+	if !foundShallow {
+		t.Errorf("BFS should collect the shallow match, got %v", results)
+	}
+	if foundDeep {
+		t.Errorf("deep match should be dropped at cap (BFS), got %v", results)
+	}
+	if !hasMore {
+		t.Errorf("expected has_more=true when capped")
 	}
 }

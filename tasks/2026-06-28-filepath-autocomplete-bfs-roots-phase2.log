@@ -1,1 +1,2 @@
 015600 PHASE2 begin: write TestBuiltinFilepathBFSShallowFirst + TestBuiltinFilepathIncludesDotfiles, update TestBuiltinFilepathComplete to assert .git/config IS reachable. Expect RED — BFS not implemented (current DFS skips hidden dirs and DFS-orders, so dotfiles test + shallow-first test fail; updated .git assertion fails).
+015641 PHASE2 RED: 'go vet' fails — undefined: filepathCandidateCap (main_test.go:939). Cap is currently a hardcoded literal 500 and dotfiles are skipped by the DFS guard. Expected failure observed.
