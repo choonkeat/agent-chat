@@ -243,13 +243,12 @@ body {
   fill: currentColor;
 }
 
-/* Fork button — sits above the play (TTS) button on agent bubbles. The extra
-   gap (vs. one button-height) is deliberate: fork spawns a new session, so we
-   keep it clear of the play button to reduce fat-finger misclicks. */
-.bubble-fork-btn {
+/* Overflow ("⋯") menu button — same footprint/position as the play button.
+   Opens a menu of bubble actions (Speak aloud, Fork from here). */
+.bubble-menu-btn {
   position: absolute;
   right: -32px;
-  bottom: 44px;
+  bottom: 4px;
   width: 24px;
   height: 24px;
   border: 1.5px solid var(--text-muted);
@@ -264,14 +263,63 @@ body {
   opacity: 0.4;
   transition: opacity 0.15s, color 0.15s, border-color 0.15s;
 }
-.bubble-fork-btn:hover {
+.bubble-menu-btn:hover {
   opacity: 1;
   color: var(--text-secondary);
   border-color: var(--text-secondary);
 }
-.bubble-fork-btn svg {
+.bubble-menu-btn svg {
   width: 14px;
   height: 14px;
+  fill: currentColor;
+}
+
+/* The floating action menu (appended to <body>, positioned in JS). */
+.bubble-menu {
+  position: fixed;
+  min-width: 190px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 1000;
+  animation: fadeIn 0.1s ease-out;
+}
+.bubble-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+}
+.bubble-menu button:hover {
+  background: var(--bg-tertiary);
+}
+.bubble-menu button + button {
+  border-top: 1px solid var(--bg-tertiary);
+}
+.bubble-menu-ic {
+  display: inline-flex;
+  width: 18px;
+  justify-content: center;
+  opacity: 0.85;
+}
+.bubble-menu-ic svg {
+  width: 15px;
+  height: 15px;
+}
+/* Filled shapes (play triangle, fork nodes) take the text colour; the fork's
+   connector keeps its inline stroke="currentColor" fill="none". */
+.bubble-menu-ic svg circle,
+.bubble-menu-ic svg polygon {
   fill: currentColor;
 }
 

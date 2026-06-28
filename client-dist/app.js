@@ -361,26 +361,98 @@ function createTtsButton(bubble) {
   return btn;
 }
 
-// Fork button for an agent bubble. Only rendered when forkSession is set (the
-// feature flag) and the bubble carries a server event seq. On click, a confirm
-// dialog guards against accidents; on confirm we open the forked session in a
-// NEW tab so the live conversation is untouched and any server-side fork error
-// lands in a throwaway tab. seq maps to the agent's tool-call cut point server
-// side (mode=after).
-function createForkButton(seq) {
+// --- Per-bubble overflow ("⋯") menu ---
+// When forkSession is set, an agent bubble's actions (Speak aloud + Fork from
+// here) live behind a single "⋯" button instead of stacked round buttons. This
+// keeps short (1–2 line) bubbles tidy (a stacked button would float above them)
+// and turns the actions into large, clearly-labeled tap targets — the menu
+// selection itself is the deliberate gate, so fork needs no extra confirm.
+
+var ICON_SPEAK = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
+var ICON_FORK = '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M6 8.4v3.6a3 3 0 0 0 3 3h6M18 8.4v3.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+
+var openBubbleMenu = null; // the currently-open menu element (carries .ownerBtn)
+
+function closeBubbleMenu() {
+  if (openBubbleMenu) {
+    openBubbleMenu.remove();
+    openBubbleMenu = null;
+  }
+}
+
+function makeMenuItem(action, label, icon) {
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.dataset.action = action;
+  b.innerHTML = '<span class="bubble-menu-ic">' + icon + '</span><span>' + label + '</span>';
+  return b;
+}
+
+function openBubbleMenuFor(btn, bubble, seq) {
+  var menu = document.createElement('div');
+  menu.className = 'bubble-menu';
+  menu.ownerBtn = btn;
+  // Clicks inside the menu must not bubble to the document-level dismiss handler.
+  menu.addEventListener('click', function (e) { e.stopPropagation(); });
+
+  var speak = makeMenuItem('speak', 'Speak aloud', ICON_SPEAK);
+  speak.addEventListener('click', function () {
+    closeBubbleMenu();
+    // This click is a user gesture — unlocks iOS TTS, same as the play button.
+    ttsUnlocked = true;
+    speakText(bubble.innerText, function () {});
+  });
+
+  var fork = makeMenuItem('fork', 'Fork from here', ICON_FORK);
+  fork.addEventListener('click', function () {
+    closeBubbleMenu();
+    // New tab keeps the live session alive; any server-side fork error lands in
+    // a throwaway tab (see task notes).
+    window.open(forkUrl(seq), '_blank');
+  });
+
+  menu.appendChild(speak);
+  menu.appendChild(fork);
+  document.body.appendChild(menu);
+
+  // Position fixed, just below the button, clamped to the viewport. If it would
+  // run off the bottom, flip it above the button instead.
+  var r = btn.getBoundingClientRect();
+  var mr = menu.getBoundingClientRect();
+  var top = r.bottom + 6;
+  var left = r.left;
+  if (left + mr.width > window.innerWidth - 8) left = window.innerWidth - 8 - mr.width;
+  if (left < 8) left = 8;
+  if (top + mr.height > window.innerHeight - 8) top = r.top - 6 - mr.height;
+  if (top < 8) top = 8;
+  menu.style.top = top + 'px';
+  menu.style.left = left + 'px';
+
+  openBubbleMenu = menu;
+}
+
+// "⋯" overflow button. Toggles the bubble's action menu.
+function createMenuButton(bubble, seq) {
   var btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'bubble-fork-btn';
-  btn.title = 'Fork a new session from here';
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M6 8.4v3.6a3 3 0 0 0 3 3h6M18 8.4v3.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+  btn.className = 'bubble-menu-btn';
+  btn.title = 'More actions';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
   btn.addEventListener('click', function (e) {
     e.stopPropagation();
-    if (window.confirm('Fork a new session branched from this point? Your current session keeps running.')) {
-      window.open(forkUrl(seq), '_blank');
-    }
+    var wasOpenForThis = openBubbleMenu && openBubbleMenu.ownerBtn === btn;
+    closeBubbleMenu();
+    if (!wasOpenForThis) openBubbleMenuFor(btn, bubble, seq);
   });
   return btn;
 }
+
+// Dismiss any open bubble menu on outside click or Escape.
+document.addEventListener('click', closeBubbleMenu);
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeBubbleMenu();
+});
 
 var lastBubbleTs = 0;
 
@@ -415,14 +487,15 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq) {
   if (attachments) {
     div.appendChild(attachments);
   }
-  // Add TTS play button to agent bubbles
+  // Agent bubbles get actions on the right. When forking is enabled and this
+  // bubble has a server event seq, the actions live behind a "⋯" menu (Speak
+  // aloud + Fork from here). Otherwise — standalone agent-chat, or seq-less
+  // local notices — keep the plain play button, unchanged.
   if (role === 'agent') {
-    div.appendChild(createTtsButton(div));
-    // Fork button sits above the play button, gated on the fork_session flag.
-    // Only bubbles with a server event seq are forkable (locally-generated
-    // agent notices carry no seq).
     if (forkSession && seq) {
-      div.appendChild(createForkButton(seq));
+      div.appendChild(createMenuButton(div, seq));
+    } else {
+      div.appendChild(createTtsButton(div));
     }
   }
   // User bubbles arriving with a server-assigned ID start in the "pending"
@@ -1674,7 +1747,9 @@ function pulseLastTtsButton(onDone) {
   var bubbles = messages.querySelectorAll('.bubble.agent');
   if (bubbles.length === 0) { if (onDone) onDone(); return; }
   var last = bubbles[bubbles.length - 1];
-  var btn = last.querySelector('.bubble-tts-btn');
+  // When forking is enabled the play action lives in the "⋯" menu, so fall back
+  // to pulsing that button to draw the user's tap (which unlocks iOS TTS).
+  var btn = last.querySelector('.bubble-tts-btn') || last.querySelector('.bubble-menu-btn');
   if (!btn) { if (onDone) onDone(); return; }
   // Temporarily boost opacity to draw attention
   btn.style.opacity = '1';
