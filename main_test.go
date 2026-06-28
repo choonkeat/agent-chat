@@ -961,3 +961,88 @@ func TestBuiltinFilepathBFSShallowFirst(t *testing.T) {
 		t.Errorf("expected has_more=true when capped")
 	}
 }
+
+func TestBuiltinFilepathAbsoluteAllowed(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "sub"), 0755)
+	os.WriteFile(filepath.Join(root, "sub", "target.go"), nil, 0644)
+	roots := []string{root}
+
+	// Absolute query under an allowed root returns matches (absolute paths).
+	results, _ := builtinFilepathCompleteAbs(filepath.Join(root, "sub", "tar"), roots)
+	found := false
+	for _, r := range results {
+		if r == filepath.Join(root, "sub", "target.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected absolute target.go under allowed root, got %v", results)
+	}
+
+	// Absolute query under a DISALLOWED root returns nothing.
+	other := t.TempDir() // not in roots
+	os.WriteFile(filepath.Join(other, "secret.go"), nil, 0644)
+	results, hasMore := builtinFilepathCompleteAbs(filepath.Join(other, "sec"), roots)
+	if len(results) != 0 || hasMore {
+		t.Errorf("expected no results under disallowed root, got %v (hasMore=%v)", results, hasMore)
+	}
+}
+
+func TestBuiltinFilepathAbsoluteAnchor(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "A"), 0755)
+	os.WriteFile(filepath.Join(root, "A", "match.go"), nil, 0644)
+	os.MkdirAll(filepath.Join(root, "B"), 0755)
+	os.WriteFile(filepath.Join(root, "B", "match.go"), nil, 0644)
+	roots := []string{root}
+
+	// Query anchored at <root>/A/<partial> must only read under <root>/A.
+	results, _ := builtinFilepathCompleteAbs(filepath.Join(root, "A", "mat"), roots)
+	for _, r := range results {
+		if strings.HasPrefix(r, filepath.Join(root, "B")) {
+			t.Errorf("anchor at /A leaked sibling /B entry: %s", r)
+		}
+	}
+	found := false
+	for _, r := range results {
+		if r == filepath.Join(root, "A", "match.go") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected /A/match.go, got %v", results)
+	}
+}
+
+func TestBuiltinFilepathSlashListsRoots(t *testing.T) {
+	base := t.TempDir()
+	root1 := filepath.Join(base, "alpha")
+	root2 := filepath.Join(base, "beta")
+	os.MkdirAll(root1, 0755)
+	os.MkdirAll(root2, 0755)
+	roots := []string{root1, root2}
+
+	// Bare "/" lists the allowed roots.
+	results, _ := builtinFilepathCompleteAbs("/", roots)
+	has := func(rs []string, want string) bool {
+		for _, r := range rs {
+			if r == want {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(results, root1) || !has(results, root2) {
+		t.Errorf("query / should list both roots, got %v", results)
+	}
+
+	// A prefix matching only root1 returns root1, not root2.
+	results, _ = builtinFilepathCompleteAbs(filepath.Join(base, "al"), roots)
+	if !has(results, root1) {
+		t.Errorf("prefix should list root1, got %v", results)
+	}
+	if has(results, root2) {
+		t.Errorf("prefix matching only root1 must not list root2, got %v", results)
+	}
+}

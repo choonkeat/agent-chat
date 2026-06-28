@@ -1,1 +1,2 @@
 015805 PHASE3 begin: write TestBuiltinFilepathAbsoluteAllowed, TestBuiltinFilepathAbsoluteAnchor, TestBuiltinFilepathSlashListsRoots. They call builtinFilepathCompleteAbs(query, roots) / absoluteFilepathFrontier (not yet defined). Expect RED — undefined functions (compile failure).
+015825 PHASE3 RED: 'go vet' fails — undefined: builtinFilepathCompleteAbs (main_test.go:972). Expected failure observed.
