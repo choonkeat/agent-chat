@@ -243,11 +243,13 @@ body {
   fill: currentColor;
 }
 
-/* Fork button — sits directly above the play (TTS) button on agent bubbles. */
+/* Fork button — sits above the play (TTS) button on agent bubbles. The extra
+   gap (vs. one button-height) is deliberate: fork spawns a new session, so we
+   keep it clear of the play button to reduce fat-finger misclicks. */
 .bubble-fork-btn {
   position: absolute;
   right: -32px;
-  bottom: 36px;
+  bottom: 44px;
   width: 24px;
   height: 24px;
   border: 1.5px solid var(--text-muted);
