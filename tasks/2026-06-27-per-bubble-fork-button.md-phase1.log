@@ -1,0 +1,1 @@
+234043 — Phase 1 RED: running e2e/fork-button.spec.cjs against CURRENT binary (no forkSession/forkUrl yet). Expect ALL 4 tests to FAIL: window.forkSession undefined (!= "" / "sess-abc-123") and window.forkUrl is not a function.
