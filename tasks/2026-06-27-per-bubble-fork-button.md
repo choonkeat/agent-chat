@@ -88,3 +88,20 @@ window.open(forkUrl(bubbleSeq), '_blank');
 - With `fork_session` absent (standalone): no fork button, no behaviour change.
 - Unit/e2e coverage mirroring the `parent_url` tests (button hidden without param;
   URL built correctly with param).
+
+## Phases
+
+- [ ] **Phase 1 — fork URL plumbing (logic).** Read `fork_session` query param into
+  a top-level `forkSession` var (mirrors `parentBaseUrl`). Add `forkUrl(seq)` that
+  builds the absolute `/api/fork/<forkSession>?bubble=<seq>&mode=after` URL against
+  `parentBaseUrl`. Tests (mirroring the `parent_url` tests in
+  `e2e/markdown-images.spec.cjs`): `fork_session` query param read into
+  `forkSession`; `forkUrl(seq)` builds the correct absolute URL.
+- [ ] **Phase 2 — fork button on agent bubbles (DOM + interaction).** Thread event
+  `seq` into `addBubble`/`addAgentMessage` from the `agentMessage`/`verbalReply`
+  handlers and history replay. Add `createForkButton(seq)` rendered on agent bubbles
+  ABOVE the play button, only when `forkSession` is non-empty; on click show a
+  `confirm()` dialog and on confirm `window.open(forkUrl(seq), '_blank')`. CSS for
+  `.bubble-fork-btn`. Tests: no fork button when `fork_session` absent; fork button
+  present on agent bubbles when `fork_session` set; user bubbles never get one;
+  click → confirm → `window.open` called with the correct fork URL.
