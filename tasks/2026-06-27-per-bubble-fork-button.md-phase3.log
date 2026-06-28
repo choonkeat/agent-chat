@@ -1,0 +1,1 @@
+024838 — Phase 3 RED: rewrote e2e/fork-button.spec.cjs to the ⋯ overflow-menu design (12 menu tests + 4 Phase 1). Current binary still has the old stacked .bubble-fork-btn. Expect Phase 1 (4) to PASS; the menu tests to FAIL (no .bubble-menu-btn / .bubble-menu yet; standalone test may pass since plain play still exists). Implementing createMenuButton next.

@@ -105,3 +105,26 @@ window.open(forkUrl(bubbleSeq), '_blank');
   `.bubble-fork-btn`. Tests: no fork button when `fork_session` absent; fork button
   present on agent bubbles when `fork_session` set; user bubbles never get one;
   click → confirm → `window.open` called with the correct fork URL.
+  *(Superseded by Phase 3 — see below.)*
+
+- [ ] **Phase 3 — consolidate into a "⋯" overflow menu (design pivot, confirmed
+  with user 2026-06-27).** A stacked fork-above-play button floats above short
+  (1–2 line) bubbles and the two round buttons sit too close (fat-finger risk).
+  Pivot: a single `.bubble-menu-btn` (⋯) per agent bubble that opens a menu of
+  large (~44px) labeled rows with inline SVG icons — "Speak aloud" (TTS) and
+  "Fork from here". Decisions:
+  - Menu only when `fork_session` is set AND the bubble has a `seq`; standalone
+    agent-chat and seq-less local notices keep the existing plain ▶ `.bubble-tts-btn`
+    (zero behaviour change without the param).
+  - The deliberate menu selection replaces the old `confirm()` dialog; "Fork from
+    here" → `window.open(forkUrl(seq), '_blank')` directly.
+  - Toggle on the ⋯ button; dismiss on outside-click and Esc; menu is
+    viewport-clamped (flips above the button near the bottom edge).
+  - `pulseLastTtsButton` falls back to the menu button so iOS voice-unlock still
+    works when the play button lives in the menu.
+  - Remove the now-dead `createForkButton`/`.bubble-fork-btn` path.
+  Tests: ⋯ present (and no standalone ▶) when fork enabled; standalone keeps plain
+  ▶; user bubbles / seq-less bubbles get no ⋯; click ⋯ opens a menu with speak +
+  fork rows; toggle and outside-click and Esc dismiss; fork row → `window.open`
+  with the correct URL + menu closes; rows meet the ~44px tap-target size; menu
+  stays within the viewport.

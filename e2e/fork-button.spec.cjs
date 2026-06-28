@@ -111,7 +111,7 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
   });
 });
 
-test.describe('fork button — rendering & interaction (Phase 2)', () => {
+test.describe('fork — overflow menu (Phase 3)', () => {
   /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
   let server = null;
 
@@ -126,96 +126,164 @@ test.describe('fork button — rendering & interaction (Phase 2)', () => {
     }
   });
 
-  test('fork_session set: agent bubble shows a fork button', async ({ page }) => {
+  test('fork_session set: agent bubble shows a ⋯ menu button, not a standalone play button', async ({ page }) => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
-    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(1);
+    // The play action lives inside the menu now — no standalone TTS button.
+    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(0);
+    // The old stacked fork button is gone.
+    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
   });
 
-  test('no fork_session: agent bubble has no fork button', async ({ page }) => {
+  test('no fork_session: agent bubble keeps the plain play button, no menu', async ({ page }) => {
     await page.goto(server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
-    await expect(page.locator('.bubble.agent')).toHaveCount(1);
-    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
   });
 
-  test('user bubble never shows a fork button (even with fork_session)', async ({ page }) => {
+  test('agent bubble without a seq: no menu, falls back to plain play button', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    // Locally-generated agent notices (e.g. "Clearing context...") carry no seq.
+    await page.evaluate(() => window.addAgentMessage('local note', null, null, Date.now()));
+    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+  });
+
+  test('user bubble never shows a menu or play button', async ({ page }) => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addUserMessage('hi from user', null, null, Date.now()));
     await expect(page.locator('.bubble.user')).toHaveCount(1);
-    await expect(page.locator('.bubble.user .bubble-fork-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.user .bubble-menu-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.user .bubble-tts-btn')).toHaveCount(0);
   });
 
-  test('agent bubble without a seq shows no fork button', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
-    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
-
-    // Locally-generated agent messages (e.g. "Clearing context...") carry no seq.
-    await page.evaluate(() => window.addAgentMessage('local note', null, null, Date.now()));
-    await expect(page.locator('.bubble.agent')).toHaveCount(1);
-    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
-  });
-
-  test('fork and play buttons have a comfortable vertical gap (fat-finger guard)', async ({ page }) => {
+  test('clicking ⋯ opens a menu with speak + fork rows', async ({ page }) => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
-    await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
 
-    // Fork (spawns a new session) sits above play (TTS). They must not be so
-    // close that a finger reaching for one hits the other. Assert a clear gap
-    // between the fork button's bottom edge and the play button's top edge.
-    const gap = await page.evaluate(() => {
-      const bubble = document.querySelector('.bubble.agent');
-      const fork = bubble.querySelector('.bubble-fork-btn').getBoundingClientRect();
-      const play = bubble.querySelector('.bubble-tts-btn').getBoundingClientRect();
-      return play.top - fork.bottom;
-    });
-    expect(gap).toBeGreaterThanOrEqual(12);
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="speak"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="fork"]')).toHaveCount(1);
   });
 
-  test('clicking fork button → confirm → window.open(forkUrl, _blank)', async ({ page }) => {
+  test('clicking ⋯ again toggles the menu closed', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    const btn = page.locator('.bubble.agent .bubble-menu-btn');
+    await btn.click();
+    await expect(page.locator('.bubble-menu')).toHaveCount(1);
+    await btn.click();
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
+  });
+
+  test('clicking outside dismisses the menu', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu')).toHaveCount(1);
+
+    // Click an empty area of the page.
+    await page.mouse.click(5, 5);
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
+  });
+
+  test('Escape dismisses the menu', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu')).toHaveCount(1);
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
+  });
+
+  test('"Fork from here" opens forkUrl in a new tab and closes the menu', async ({ page }) => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
       + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => {
       window.__opened = [];
-      window.confirm = () => true;
       window.open = (u, t) => { window.__opened.push([u, t]); return null; };
       window.addAgentMessage('hello', null, null, Date.now(), 9);
     });
 
-    await page.locator('.bubble.agent .bubble-fork-btn').click();
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await page.locator('.bubble-menu [data-action="fork"]').click();
 
     const opened = await page.evaluate(() => window.__opened);
     expect(opened).toEqual([
       ['https://parent.example/api/fork/sess-1?bubble=9&mode=after', '_blank'],
     ]);
+    // Menu closes after acting.
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
   });
 
-  test('clicking fork button → cancel confirm → window.open NOT called', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
-      + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
+  test('"Speak aloud" triggers TTS and closes the menu', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => {
-      window.__opened = [];
-      window.confirm = () => false;
-      window.open = (u, t) => { window.__opened.push([u, t]); return null; };
-      window.addAgentMessage('hello', null, null, Date.now(), 9);
+      window.__spoke = [];
+      // speakText is the top-level TTS entry point; stub it to observe the call.
+      window.speakText = (text, done) => { window.__spoke.push(text); if (done) done(); };
+      window.addAgentMessage('read me out', null, null, Date.now(), 5);
     });
 
-    await page.locator('.bubble.agent .bubble-fork-btn').click();
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await page.locator('.bubble-menu [data-action="speak"]').click();
 
-    const opened = await page.evaluate(() => window.__opened);
-    expect(opened).toEqual([]);
+    const spoke = await page.evaluate(() => window.__spoke);
+    expect(spoke.length).toBe(1);
+    expect(spoke[0]).toContain('read me out');
+    await expect(page.locator('.bubble-menu')).toHaveCount(0);
+  });
+
+  test('menu rows are comfortable tap targets (fat-finger guard)', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+
+    const heights = await page.evaluate(() =>
+      [...document.querySelectorAll('.bubble-menu button')].map(b => Math.round(b.getBoundingClientRect().height))
+    );
+    expect(heights.length).toBeGreaterThanOrEqual(2);
+    for (const h of heights) expect(h).toBeGreaterThanOrEqual(40);
+  });
+
+  test('open menu stays within the viewport', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+
+    const fits = await page.evaluate(() => {
+      const m = document.querySelector('.bubble-menu').getBoundingClientRect();
+      return m.left >= 0 && m.top >= 0 && m.right <= window.innerWidth && m.bottom <= window.innerHeight;
+    });
+    expect(fits).toBe(true);
   });
 });
