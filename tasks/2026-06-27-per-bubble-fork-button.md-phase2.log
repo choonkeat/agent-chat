@@ -5,3 +5,4 @@
 234826 — Visual verify: started throwaway server :7799 with ?fork_session set, injected user+agent bubbles via MCP browser, screenshot confirms fork icon renders ABOVE play icon on agent bubbles and NO button on the user bubble. Demo server killed by PID.
 235339 — Full regression: make unit-test PASS (go vet + go test ok 0.570s); full e2e suite 53 passed (2.5m) incl. the 10 fork tests and all parent_url/markdown/frozen-reply/welcome specs. seq threading through shared addBubble broke nothing.
 010648 — Phase 2 amendment (fat-finger guard, user feedback): added test asserting vertical gap between fork-bottom and play-top >= 12px. Current CSS has fork bottom:36px, play bottom:4px -> gap 8px. Expect this test to FAIL (8 < 12) against current binary.
+010745 — Phase 2 amendment GREEN: bumped fork-btn bottom 36px->44px (gap 8px->16px), rebuilt. Full fork spec 11 passed (19.5s) incl. fat-finger gap test (>=12px). confirm() dialog retained as second safety net.
