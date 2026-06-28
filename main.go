@@ -813,50 +813,93 @@ func stringsToItems(ss []string) []autocompleteItem {
 	return items
 }
 
-// builtinFilepathComplete returns file paths under root that fuzzy-match the query,
-// sorted by match quality (lower score = better match). Collects up to 500 candidates,
-// scores them, and returns the top 50.
+// Tunables for the built-in filepath completer. Vars (not consts) so tests can
+// lower the cap to force BFS ordering without building a huge tree.
+var (
+	// filepathCandidateCap bounds how many fuzzy matches we collect before
+	// stopping the walk (trips has_more).
+	filepathCandidateCap = 500
+	// filepathResultLimit is how many top-ranked matches we return.
+	filepathResultLimit = 50
+	// filepathVisitCap is a safety backstop on os.ReadDir entries inspected so
+	// a pathological tree can't hang a request (trips has_more).
+	filepathVisitCap = 20000
+)
+
+// builtinFilepathComplete returns file paths under root that fuzzy-match the
+// query, walked breadth-first and ranked by fuzzyScorePath (lower = better).
+// Hidden files/dirs are NOT special-cased — they complete like anything else.
 func builtinFilepathComplete(root, query string) ([]string, bool) {
+	return bfsFilepathCollect([]string{root}, nil, query)
+}
+
+// bfsFilepathCollect walks breadth-first from each directory in frontier,
+// collecting entries that fuzzy-match query. seedCandidates are evaluated as
+// candidates up front (used by absolute @/ queries to surface the roots
+// themselves, which are never emitted by the walk of their own contents).
+// BFS governs which candidates survive the candidate cap (shallowest first);
+// final display order is still by fuzzyScorePath. Returns the top results and
+// whether more matches exist (capped, backstopped, or trimmed past the limit).
+func bfsFilepathCollect(frontier, seedCandidates []string, query string) ([]string, bool) {
 	type scored struct {
 		path  string
 		score int
 	}
-	// If query contains "/.", the user is explicitly targeting hidden dirs.
-	skipHidden := !strings.Contains(query, "/.")
 	var candidates []scored
-	walkCapped := false
-	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	capped := false
+	add := func(p string) bool {
+		if s, ok := fuzzyScorePath(p, query); ok {
+			candidates = append(candidates, scored{p, s})
+			if len(candidates) >= filepathCandidateCap {
+				capped = true
+				return false
+			}
+		}
+		return true
+	}
+
+	for _, sc := range seedCandidates {
+		if !add(sc) {
+			break
+		}
+	}
+
+	queue := append([]string{}, frontier...)
+	visited := 0
+	for len(queue) > 0 && !capped {
+		dir := queue[0]
+		queue = queue[1:]
+		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return nil
+			continue
 		}
-		// Skip the root entry itself (before the hidden-dir check,
-		// because "." has a dot prefix but is not a hidden directory).
-		if path == root {
-			return nil
+		for _, e := range entries {
+			visited++
+			if visited >= filepathVisitCap {
+				capped = true
+				break
+			}
+			p := filepath.Join(dir, e.Name())
+			if !add(p) {
+				break
+			}
+			if e.IsDir() {
+				queue = append(queue, p)
+			}
 		}
-		if skipHidden && d.IsDir() && strings.HasPrefix(d.Name(), ".") {
-			return filepath.SkipDir
-		}
-		if s, ok := fuzzyScorePath(path, query); ok {
-			candidates = append(candidates, scored{path, s})
-		}
-		if len(candidates) >= 500 {
-			walkCapped = true
-			return filepath.SkipAll
-		}
-		return nil
-	})
+	}
+
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].score != candidates[j].score {
 			return candidates[i].score < candidates[j].score
 		}
 		return candidates[i].path < candidates[j].path
 	})
-	limit := 50
+	limit := filepathResultLimit
 	if len(candidates) < limit {
 		limit = len(candidates)
 	}
-	hasMore := walkCapped || len(candidates) > limit
+	hasMore := capped || len(candidates) > limit
 	results := make([]string, limit)
 	for i := 0; i < limit; i++ {
 		results[i] = candidates[i].path

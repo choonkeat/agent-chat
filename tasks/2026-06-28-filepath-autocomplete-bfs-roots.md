@@ -93,7 +93,7 @@ Work test-first. After **every** step run `make test` (per CLAUDE.md — never
   flag, default `cwd,/repos,/workspace,/worktrees` (compute cwd at startup).
   Add a helper `parseFilepathRoots(string, cwd string) []string`.
 
-### Step 2 — BFS replaces DFS (relative, dotfiles included)
+### Step 2 — BFS replaces DFS (relative, dotfiles included)  ✅ DONE
 - **Test (red):**
   - `TestBuiltinFilepathBFSShallowFirst`: a temp tree where a shallow file and a
     deep file both fuzzy-match a query; with the cap lowered (or a large tree),
