@@ -130,7 +130,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(1);
     // The play action lives inside the menu now — no standalone TTS button.
     await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(0);
@@ -142,7 +142,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
     await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
   });
@@ -155,6 +155,38 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.evaluate(() => window.addAgentMessage('local note', null, null, Date.now()));
     await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
     await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+  });
+
+  test('non-forkable progress bubble: no ⋯ menu, falls back to plain play button', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    // A send_progress bubble has a seq (server-stamped) but is NOT forkable —
+    // forking it would cut the conversation mid-turn. It must show the plain
+    // play button, never the ⋯ menu that offers "Fork from here".
+    await page.evaluate(() => window.addAgentMessage('working on it…', null, null, Date.now(), 6, false));
+    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+  });
+
+  test('isForkableTool: only reply tools are forkable', async ({ page }) => {
+    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const results = await page.evaluate(() => ({
+      send_message: window.isForkableTool('send_message'),
+      send_verbal_reply: window.isForkableTool('send_verbal_reply'),
+      send_progress: window.isForkableTool('send_progress'),
+      send_verbal_progress: window.isForkableTool('send_verbal_progress'),
+      missing: window.isForkableTool(undefined),
+    }));
+    expect(results).toEqual({
+      send_message: true,
+      send_verbal_reply: true,
+      send_progress: false,
+      send_verbal_progress: false,
+      missing: false,
+    });
   });
 
   test('user bubble never shows a menu or play button', async ({ page }) => {
@@ -171,7 +203,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await expect(page.locator('.bubble-menu')).toHaveCount(0);
 
     await page.locator('.bubble.agent .bubble-menu-btn').click();
@@ -184,7 +216,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     const btn = page.locator('.bubble.agent .bubble-menu-btn');
     await btn.click();
     await expect(page.locator('.bubble-menu')).toHaveCount(1);
@@ -196,7 +228,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await page.locator('.bubble.agent .bubble-menu-btn').click();
     await expect(page.locator('.bubble-menu')).toHaveCount(1);
 
@@ -209,7 +241,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await page.locator('.bubble.agent .bubble-menu-btn').click();
     await expect(page.locator('.bubble-menu')).toHaveCount(1);
 
@@ -225,7 +257,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.evaluate(() => {
       window.__opened = [];
       window.open = (u, t) => { window.__opened.push([u, t]); return null; };
-      window.addAgentMessage('hello', null, null, Date.now(), 9);
+      window.addAgentMessage('hello', null, null, Date.now(), 9, true);
     });
 
     await page.locator('.bubble.agent .bubble-menu-btn').click();
@@ -247,7 +279,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
       window.__spoke = [];
       // speakText is the top-level TTS entry point; stub it to observe the call.
       window.speakText = (text, done) => { window.__spoke.push(text); if (done) done(); };
-      window.addAgentMessage('read me out', null, null, Date.now(), 5);
+      window.addAgentMessage('read me out', null, null, Date.now(), 5, true);
     });
 
     await page.locator('.bubble.agent .bubble-menu-btn').click();
@@ -263,7 +295,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await page.locator('.bubble.agent .bubble-menu-btn').click();
 
     const heights = await page.evaluate(() =>
@@ -277,7 +309,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
-    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5));
+    await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
     await page.locator('.bubble.agent .bubble-menu-btn').click();
 
     const fits = await page.evaluate(() => {
