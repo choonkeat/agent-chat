@@ -465,7 +465,17 @@ function formatElapsed(ms) {
   return mins + 'm ' + remSecs + 's';
 }
 
-function addBubble(text, role, files, extraClass, timestamp, messageId, seq) {
+// Only replies (send_message / send_verbal_reply) are true turn boundaries and
+// thus forkable. Progress tools (send_progress / send_verbal_progress) publish
+// the same event Type but must NOT be offered as fork anchors — a fork there
+// cuts the conversation mid-turn. Whitelist (not blacklist) so anything missing
+// an agent_tool_name — e.g. old pre-stamping history — fails closed to
+// non-forkable rather than offering a doomed anchor.
+function isForkableTool(toolName) {
+  return toolName === 'send_message' || toolName === 'send_verbal_reply';
+}
+
+function addBubble(text, role, files, extraClass, timestamp, messageId, seq, forkable) {
   // Show elapsed time before agent messages (how long the agent took to reply)
   if (role !== 'user' && timestamp && lastBubbleTs) {
     var delta = timestamp - lastBubbleTs;
@@ -488,11 +498,13 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq) {
     div.appendChild(attachments);
   }
   // Agent bubbles get actions on the right. When forking is enabled and this
-  // bubble has a server event seq, the actions live behind a "⋯" menu (Speak
-  // aloud + Fork from here). Otherwise — standalone agent-chat, or seq-less
-  // local notices — keep the plain play button, unchanged.
+  // bubble is a forkable reply with a server event seq, the actions live behind
+  // a "⋯" menu (Speak aloud + Fork from here). Otherwise — standalone
+  // agent-chat, seq-less local notices, or non-forkable progress bubbles — keep
+  // the plain play button. The ⋯ menu therefore appears ONLY when a fork is
+  // actually on offer, so the menu never renders with just a lone Speak item.
   if (role === 'agent') {
-    if (forkSession && seq) {
+    if (forkSession && seq && forkable) {
       div.appendChild(createMenuButton(div, seq));
     } else {
       div.appendChild(createTtsButton(div));
@@ -536,9 +548,9 @@ function sendUnsend(messageId) {
   if (bubble) bubble.remove();
 }
 
-function addAgentMessage(text, files, extraClass, timestamp, seq) {
+function addAgentMessage(text, files, extraClass, timestamp, seq, forkable) {
   if (text || (files && files.length > 0)) {
-    addBubble(text, 'agent', files, extraClass, timestamp, undefined, seq);
+    addBubble(text, 'agent', files, extraClass, timestamp, undefined, seq, forkable);
   }
 }
 
@@ -2139,7 +2151,7 @@ function replayHistory(history) {
     switch (event.type) {
       case 'agentMessage':
         if (event.text || (event.files && event.files.length > 0)) {
-          addBubble(event.text, 'agent', event.files, null, event.ts, undefined, event.seq);
+          addBubble(event.text, 'agent', event.files, null, event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name));
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
@@ -2182,7 +2194,7 @@ function replayHistory(history) {
       case 'verbalReply':
         if (event.text || (event.files && event.files.length > 0)) {
           var hasReplies = event.quick_replies && event.quick_replies.length > 0;
-          addBubble(event.text, 'agent', event.files, hasReplies ? 'voice lmk' : 'voice brb', event.ts, undefined, event.seq);
+          addBubble(event.text, 'agent', event.files, hasReplies ? 'voice lmk' : 'voice brb', event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name));
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
@@ -2289,7 +2301,7 @@ function connect() {
 
       case 'agentMessage':
         console.log('[' + ts() + '] Agent message received: "' + data.text + '"');
-        addAgentMessage(data.text || '', data.files, null, data.ts, data.seq);
+        addAgentMessage(data.text || '', data.files, null, data.ts, data.seq, isForkableTool(data.agent_tool_name));
         // With quick_replies: agent is waiting for input — show replies, hide loading
         // Without quick_replies: progress update — loading stays visible
         if (data.quick_replies && data.quick_replies.length > 0) {
@@ -2313,7 +2325,7 @@ function connect() {
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
         var isProgress = !(data.quick_replies && data.quick_replies.length > 0);
-        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice lmk', data.ts, data.seq);
+        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice lmk', data.ts, data.seq, isForkableTool(data.agent_tool_name));
         if (isSpeaking) {
           console.log('[' + ts() + '] TTS busy — queuing reply');
           ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
