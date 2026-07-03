@@ -297,7 +297,7 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 		{Type: "agentMessage", Text: "hi there", Timestamp: 4500, QuickReplies: []string{"more", "stop"}},
 		{Type: "userMessage", Text: "thanks", Timestamp: 5000},
 	}
-	mdPath, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", now)
+	mdPath, _, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", now)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -369,10 +369,10 @@ func TestRunChatMarkdownExportPrependsToExistingIndex(t *testing.T) {
 	now1 := mustParseTime(t, "2026-04-30T10:00:00Z")
 	now2 := mustParseTime(t, "2026-04-30T11:00:00Z") // same day → idx 02
 
-	if _, err := runChatMarkdownExport(dir, "first", []Event{{Type: "userMessage", Text: "a"}}, "claude", "v1", now1); err != nil {
+	if _, _, err := runChatMarkdownExport(dir, "first", []Event{{Type: "userMessage", Text: "a"}}, "claude", "v1", now1); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if _, err := runChatMarkdownExport(dir, "second", []Event{{Type: "userMessage", Text: "b"}}, "claude", "v1", now2); err != nil {
+	if _, _, err := runChatMarkdownExport(dir, "second", []Event{{Type: "userMessage", Text: "b"}}, "claude", "v1", now2); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 
@@ -450,7 +450,7 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 		{Type: "agentMessage", Text: "here it is", Timestamp: 2000,
 			Files: []FileRef{{Name: "shot.png", Path: src, Type: "image/png"}}},
 	}
-	mdPath, err := runChatMarkdownExport(dir, "agent-shot", events, "claude", "v1", now)
+	mdPath, _, err := runChatMarkdownExport(dir, "agent-shot", events, "claude", "v1", now)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -483,6 +483,66 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 	// The bytes must have been copied into assets/.
 	if _, err := os.Stat(filepath.Join(dir, "assets", asset)); err != nil {
 		t.Errorf("agent screenshot not copied to assets: %v", err)
+	}
+}
+
+// TestRunChatMarkdownExportSkipsMissingAttachment locks in that an attachment
+// whose source file has gone missing (uploads are transient scratch files) does
+// not fail the whole export: the turn's other content is still archived, the
+// present sibling attachment is still copied, and the loss is reported as a
+// warning rather than an error.
+func TestRunChatMarkdownExportSkipsMissingAttachment(t *testing.T) {
+	dir := t.TempDir()
+	now := mustParseTime(t, "2026-07-03T10:00:00Z")
+
+	// One real image, one referencing a path that no longer exists.
+	present := filepath.Join(dir, "here.png")
+	if err := os.WriteFile(present, []byte("\x89PNG\r\n\x1a\nreal"), 0644); err != nil {
+		t.Fatalf("write present: %v", err)
+	}
+	missing := filepath.Join(dir, "gone.png") // never created
+
+	events := []Event{
+		{Type: "userMessage", Text: "see attached", Timestamp: 1000,
+			Files: []FileRef{
+				{Name: "gone.png", Path: missing, Type: "image/png"},
+				{Name: "here.png", Path: present, Type: "image/png"},
+			}},
+	}
+
+	mdPath, warnings, err := runChatMarkdownExport(dir, "missing-attach", events, "claude", "v1", now)
+	if err != nil {
+		t.Fatalf("export must not fail on a missing attachment: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("want exactly 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "gone.png") || !strings.Contains(warnings[0], missing) {
+		t.Errorf("warning should name the missing file and its path; got %q", warnings[0])
+	}
+
+	md, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("read md: %v", err)
+	}
+	mdStr := string(md)
+
+	// The user body is archived regardless of the missing attachment.
+	if !strings.Contains(mdStr, "**USER**\n\n> see attached") {
+		t.Errorf("user body missing; got:\n%s", mdStr)
+	}
+	// The present sibling is still copied and referenced.
+	sum := sha256.Sum256([]byte("\x89PNG\r\n\x1a\nreal"))
+	sha := hex.EncodeToString(sum[:])[:12]
+	// The missing file consumes its sequence number before the copy fails, so
+	// the present sibling lands on index 2 (a harmless gap in numbering).
+	rel := "./assets/2026-07-03-01-2-" + sha + ".png"
+	if !strings.Contains(mdStr, `<img src="`+rel+`"`) {
+		t.Errorf("present image not rendered inline; want img src %q; got:\n%s", rel, mdStr)
+	}
+	// The missing file must not leave a broken <img> reference behind.
+	if strings.Contains(mdStr, "gone.png") {
+		t.Errorf("missing attachment should not be referenced in the .md; got:\n%s", mdStr)
 	}
 }
 

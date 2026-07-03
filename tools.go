@@ -621,13 +621,16 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}
 
 		events, _ := bus.History()
-		mdPath, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", time.Now())
+		mdPath, warnings, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", time.Now())
 		if err != nil {
 			return nil, nil, err
 		}
 
 		summary := fmt.Sprintf("Exported chat to %s. Open %s in a browser to browse the archive.",
 			mdPath, filepath.Join(rootDir, "index.html"))
+		if len(warnings) > 0 {
+			summary += fmt.Sprintf("\n\n%d warning(s):\n- %s", len(warnings), strings.Join(warnings, "\n- "))
+		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: summary}},
 		}, nil, nil
