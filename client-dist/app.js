@@ -488,6 +488,18 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
   }
   if (timestamp) lastBubbleTs = timestamp;
 
+  // If a loader is on screen (e.g. a progress bubble arrived mid-turn, or the
+  // user's just-broadcast message), re-anchor its tick to this new bubble so it
+  // counts forward from the latest timestamp rather than double-counting time
+  // already shown in the elapsed-time separator above.
+  if (timestamp) {
+    var activeLoader = document.getElementById('loading-bubble');
+    if (activeLoader) {
+      activeLoader.dataset.loaderStart = String(timestamp);
+      renderLoaderElapsed(activeLoader);
+    }
+  }
+
   var div = document.createElement('div');
   div.className = 'bubble ' + role + (extraClass ? ' ' + extraClass : '');
   if (text) {
@@ -919,7 +931,11 @@ function showLoading() {
   div.className = 'bubble agent loading';
   div.id = 'loading-bubble';
   div.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="elapsed"></span>';
-  div.dataset.loaderStart = String(Date.now());
+  // Anchor the tick to the previous speech bubble's timestamp, not Date.now().
+  // That keeps the counter continuous with the elapsed-time separators and, on
+  // reconnect/replay, correctly shows how long the agent has really been busy
+  // instead of restarting at 0s. Falls back to now when there's no prior bubble.
+  div.dataset.loaderStart = String(lastBubbleTs || Date.now());
   renderLoaderElapsed(div);
   loaderTimer = setInterval(function () { renderLoaderElapsed(div); }, 1000);
   // Insert the loader BEFORE any trailing pending user bubbles so the
