@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -250,11 +251,19 @@ func formatElapsed(ms int64) string {
 // never carry user-facing files. Non-image files are also copied
 // (renderChatMarkdown emits them as plain links rather than `<img>` tags, but
 // the relative-path link still points to a real file).
-func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[string]string, error) {
+//
+// An attachment whose source file has since been moved or deleted (uploads are
+// transient scratch files) is skipped with a warning rather than failing the
+// whole export — a stale reference from one turn must not prevent archiving the
+// rest of the conversation. renderChatMarkdown omits any attachment missing
+// from the returned map, so the .md simply won't reference the skipped file.
+// The collected warnings are returned so the caller can surface them.
+func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[string]string, []string, error) {
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir assets: %w", err)
+		return nil, nil, fmt.Errorf("mkdir assets: %w", err)
 	}
 	out := map[string]string{}
+	var warnings []string
 	n := 0
 	for _, e := range events {
 		switch e.Type {
@@ -282,18 +291,24 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 			staging := filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, n, ext))
 			sum, err := copyFileSum(f.Path, staging)
 			if err != nil {
-				return nil, fmt.Errorf("copy %s → %s: %w", f.Path, staging, err)
+				if errors.Is(err, os.ErrNotExist) {
+					// Source vanished between the upload and the export. Warn
+					// and skip rather than aborting the whole export.
+					warnings = append(warnings, fmt.Sprintf("skipped missing attachment %q (%s)", f.Name, f.Path))
+					continue
+				}
+				return nil, nil, fmt.Errorf("copy %s → %s: %w", f.Path, staging, err)
 			}
 			dstName := fmt.Sprintf("%s-%s-%d-%s%s", date, idx, n, sum, ext)
 			dst := filepath.Join(assetsDir, dstName)
 			if err := os.Rename(staging, dst); err != nil {
 				os.Remove(staging)
-				return nil, fmt.Errorf("rename %s → %s: %w", staging, dst, err)
+				return nil, nil, fmt.Errorf("rename %s → %s: %w", staging, dst, err)
 			}
 			out[f.Path] = "./assets/" + dstName
 		}
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 // copyFileSum copies src to dst and returns a short hex sha256 of the bytes it
@@ -414,22 +429,23 @@ func upsertIndexHTML(path string, entry manifestEntry) error {
 
 // runChatMarkdownExport is the orchestrator the MCP tool calls. It writes the
 // .md file, copies image attachments, ensures viewer assets exist, and
-// upserts index.html. Returns the absolute path of the .md file.
-func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, now time.Time) (string, error) {
+// upserts index.html. Returns the absolute path of the .md file and any
+// non-fatal warnings (e.g. attachments whose source files had gone missing).
+func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, now time.Time) (string, []string, error) {
 	date := now.Format("2006-01-02")
 	idx := fmt.Sprintf("%02d", nextDailyIndex(rootDir, date))
 	mdPath := filepath.Join(rootDir, fmt.Sprintf("%s-%s-%s.md", date, idx, slug))
 	assetsDir := filepath.Join(rootDir, "assets")
 
 	if err := os.MkdirAll(rootDir, 0755); err != nil {
-		return "", fmt.Errorf("mkdir %s: %w", rootDir, err)
+		return "", nil, fmt.Errorf("mkdir %s: %w", rootDir, err)
 	}
 	if err := ensureViewerAssets(assetsDir); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	imageMap, err := writeImageAttachments(events, assetsDir, date, idx)
+	imageMap, warnings, err := writeImageAttachments(events, assetsDir, date, idx)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	meta := chatExportMeta{
@@ -442,7 +458,7 @@ func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, v
 	}
 	md := renderChatMarkdown(events, meta, imageMap)
 	if err := os.WriteFile(mdPath, []byte(md), 0644); err != nil {
-		return "", fmt.Errorf("write %s: %w", mdPath, err)
+		return "", nil, fmt.Errorf("write %s: %w", mdPath, err)
 	}
 
 	indexPath := filepath.Join(rootDir, "index.html")
@@ -450,9 +466,9 @@ func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, v
 	if err := upsertIndexHTML(indexPath, manifestEntry{
 		MD: mdRel, Date: date, Index: idx, Title: meta.Title,
 	}); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return mdPath, nil
+	return mdPath, warnings, nil
 }
 
 // humanTitle turns a kebab-case slug into a Title Case string for display.
