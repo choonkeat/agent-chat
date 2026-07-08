@@ -888,7 +888,13 @@ function enableInput(replies) {
   }
   updateSendButton(); // re-disable if uploads still pending
   chatInput.focus();
-  setTimeout(function () { scrollToBottom(true); }, 100);
+  // Respect the scroll-position guard: only follow to the bottom if the user
+  // is already there. Forcing it here yanked people down on every reconnect
+  // (the 'connected' handler calls enableInput) and whenever the agent posted
+  // a new prompt while they were scrolled up reading history. The user-sent
+  // path resets isUserScrolledUp and force-scrolls on its own, so this stays
+  // non-forced without breaking "jump to my own message".
+  setTimeout(function () { scrollToBottom(false); }, 100);
 }
 
 // Insert element into messages, always before the loading bubble so it stays last.
