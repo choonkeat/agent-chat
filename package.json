@@ -1,6 +1,6 @@
 {
   "name": "@choonkeat/agent-chat",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "A \"less intimidating\" chat UI for any agent",
   "type": "module",
   "bin": {
@@ -19,12 +19,12 @@
   },
   "license": "MIT",
   "optionalDependencies": {
-    "@choonkeat/agent-chat-darwin-arm64": "0.8.7",
-    "@choonkeat/agent-chat-darwin-x64": "0.8.7",
-    "@choonkeat/agent-chat-linux-arm64": "0.8.7",
-    "@choonkeat/agent-chat-linux-x64": "0.8.7",
-    "@choonkeat/agent-chat-win32-arm64": "0.8.7",
-    "@choonkeat/agent-chat-win32-x64": "0.8.7"
+    "@choonkeat/agent-chat-darwin-arm64": "0.8.8",
+    "@choonkeat/agent-chat-darwin-x64": "0.8.8",
+    "@choonkeat/agent-chat-linux-arm64": "0.8.8",
+    "@choonkeat/agent-chat-linux-x64": "0.8.8",
+    "@choonkeat/agent-chat-win32-arm64": "0.8.8",
+    "@choonkeat/agent-chat-win32-x64": "0.8.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2"
