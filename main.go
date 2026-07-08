@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -116,6 +117,17 @@ func isPathUnderAny(p string, roots []string) bool {
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
+
+// WebSocket keepalive tuning. The server pings the client on pingPeriod; the
+// browser auto-replies with a pong (pongs aren't exposed to JS), which resets
+// the read deadline. Periodic pings also keep idle-timeout proxies/load
+// balancers from silently dropping a quiet socket — the churn that made the
+// chat keep reconnecting. pingPeriod must be < pongWait.
+const (
+	wsWriteWait  = 10 * time.Second
+	wsPongWait   = 60 * time.Second
+	wsPingPeriod = 25 * time.Second
+)
 
 // uiURL is set once the HTTP server starts, used in tool results.
 var uiURL string
@@ -539,10 +551,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	bus.SubscribeTransient(writeCh)
 	defer bus.UnsubscribeTransient(writeCh)
 
-	// Forward events to WebSocket client
+	// Forward events to WebSocket client. This goroutine is the SOLE writer to
+	// conn once it starts (gorilla/websocket forbids concurrent writes), so the
+	// keepalive ping is emitted from here too.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		ping := time.NewTicker(wsPingPeriod)
+		defer ping.Stop()
+		writeMsg := func(data []byte) bool {
+			conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+			return conn.WriteMessage(websocket.TextMessage, data) == nil
+		}
 		for {
 			select {
 			case event, ok := <-sub:
@@ -557,7 +577,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				if !writeMsg(data) {
 					return
 				}
 			case msg, ok := <-writeCh:
@@ -568,14 +588,26 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+				if !writeMsg(data) {
+					return
+				}
+			case <-ping.C:
+				conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 					return
 				}
 			}
 		}
 	}()
 
-	// Read incoming messages
+	// Read incoming messages. The pong handler (browsers auto-reply to our
+	// pings) pushes the read deadline forward; if a client goes silent past
+	// wsPongWait, ReadMessage errors and we tear down so it can reconnect.
+	conn.SetReadDeadline(time.Now().Add(wsPongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsPongWait))
+		return nil
+	})
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
