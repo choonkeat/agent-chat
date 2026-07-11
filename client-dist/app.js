@@ -872,6 +872,34 @@ dropZone.addEventListener('drop', function(e) {
   }
 });
 
+// Paste to upload — reuses the drag-drop path. The clipboard often carries
+// multiple representations at once (rich text puts text/plain + text/html, and
+// apps like Excel add an image/png snapshot). We only treat a paste as a file
+// upload when there's a file/image AND no meaningful text — that separates a
+// real screenshot/copied file (no text) from a rich-text paste (has text),
+// which should paste as plain text and ignore the image snapshot.
+chatInput.addEventListener('paste', function(e) {
+  var cd = e.clipboardData;
+  if (!cd) return;
+  var files = [];
+  if (cd.files && cd.files.length > 0) {
+    for (var i = 0; i < cd.files.length; i++) files.push(cd.files[i]);
+  } else if (cd.items) {
+    for (var j = 0; j < cd.items.length; j++) {
+      if (cd.items[j].kind === 'file') {
+        var f = cd.items[j].getAsFile();
+        if (f) files.push(f);
+      }
+    }
+  }
+  if (files.length === 0) return; // plain text paste — let the browser insert it
+  var text = cd.getData('text/plain') || '';
+  if (text.trim().length > 0) return; // has real text — paste as text, drop the image snapshot
+  // Pure file/image paste — upload instead of inserting anything.
+  e.preventDefault();
+  addStagedFiles(files);
+});
+
 function enableInput(replies) {
   setQuickReplies(replies);
   chatInput.disabled = false;
