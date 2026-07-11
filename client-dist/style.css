@@ -417,6 +417,12 @@ body {
 /* --- Tables --- */
 
 .bubble table {
+  /* display:block turns the table into a scroll container so a wide table
+     scrolls horizontally within its bubble instead of widening the page
+     (mirrors how .bubble pre handles overflow). */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 0.3rem 0;
   font-size: 0.85em;
