@@ -2,6 +2,63 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.8.9] — 2026-07-11
+
+### Features
+- Paste images or files directly into the message textarea to upload them.
+  A pure file/image paste (no accompanying text) is intercepted and staged
+  for upload; a rich-text paste that carries an image snapshot alongside real
+  text is inserted as plain text instead, leaving the image out.
+
+### Fixes
+- Wide markdown tables now scroll horizontally within their chat bubble
+  instead of widening the whole page.
+
+## [0.8.8] — 2026-07-08
+
+### Features
+- WebSocket keepalive ping/pong to cut reconnect churn on idle connections.
+
+### Fixes
+- The chat no longer force-scrolls to the bottom on reconnect or when a new
+  prompt arrives, so your scroll position is preserved.
+
+## [0.8.7] — 2026-07-08
+
+### Fixes
+- The loading tick now anchors to the previous bubble's timestamp, keeping the
+  elapsed-time counter accurate.
+- Session export warns and skips missing attachments instead of failing the
+  whole export.
+
+## [0.8.6] — 2026-07-02
+
+### Fixes
+- "Fork from here" is hidden on non-forkable progress bubbles.
+
+## [0.8.5] — 2026-06-28
+
+### Features
+- Ticking elapsed-time counter on the loading indicator.
+
+## [0.8.4] — 2026-06-28
+
+### Features
+- Exported asset filenames are content-addressed with a sha12 suffix, so
+  identical assets deduplicate and names are stable across exports.
+
+## [0.8.3] — 2026-06-28
+
+### Features
+- Per-bubble "Fork from here" action on agent bubbles, consolidated (along with
+  the other bubble actions) into a ⋯ overflow menu.
+- Filepath autocomplete now does a BFS directory walk including dotfiles, and
+  supports absolute `@/…` queries against a configurable roots allowlist via
+  the new `--filepath-roots` flag.
+
+### Fixes
+- Wider gap between the fork and play buttons to guard against fat-finger taps.
+
 ## [0.8.2] — 2026-06-27
 
 ### Features
