@@ -2633,7 +2633,7 @@ async function buildExportHtml(opts) {
     + '.bubble ul,.bubble ol{margin:0.2rem 0;padding-left:1.2em;}.bubble li{margin:0.1rem 0;}'
     + '.bubble a{color:#93c5fd;text-decoration:underline;}'
     + '.bubble.user a{color:#fff;}'
-    + '.bubble table{border-collapse:collapse;margin:0.3rem 0;font-size:0.85em;}'
+    + '.bubble table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:0.3rem 0;font-size:0.85em;}'
     + '.bubble th,.bubble td{border:1px solid rgba(255,255,255,0.15);padding:0.25rem 0.5rem;}'
     + '.bubble th{background:rgba(255,255,255,0.08);font-weight:600;}'
     + '.elapsed-time{align-self:center;color:#666;font-size:0.65rem;padding:0.15rem 0.5rem;opacity:0.6;}'
