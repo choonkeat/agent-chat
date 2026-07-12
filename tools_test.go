@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 func mustParseTime(t *testing.T, s string) time.Time {
@@ -614,4 +618,132 @@ func TestUpsertIndexHTMLMissingSentinelFails(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "manifest opening line not found") {
 		t.Errorf("expected manifest-opening-line-not-found error, got: %v", err)
 	}
+}
+
+// --- check_messages redelivery (pending-ack) composition ---
+
+func TestComposeCheckMessagesResultEmpty(t *testing.T) {
+	got := composeCheckMessagesResult(nil, nil)
+	if got != emptyQueueGuidance {
+		t.Errorf("empty/empty must return emptyQueueGuidance, got: %q", got)
+	}
+}
+
+func TestComposeCheckMessagesResultFreshOnly(t *testing.T) {
+	fresh := []UserMessage{{Text: "update please"}}
+	got := composeCheckMessagesResult(nil, fresh)
+	want := "User said: update please\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
+	if got != want {
+		t.Errorf("fresh-only:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestComposeCheckMessagesResultLimboOnly(t *testing.T) {
+	limbo := []UserMessage{{Text: "did you get my reply"}}
+	got := composeCheckMessagesResult(limbo, nil)
+	if !strings.Contains(got, "---REDELIVERY---") {
+		t.Errorf("limbo-only missing redelivery sentinel:\n%s", got)
+	}
+	if !strings.Contains(got, "did you get my reply") {
+		t.Errorf("limbo-only missing redelivered body:\n%s", got)
+	}
+	if !strings.Contains(got, "already") {
+		t.Errorf("limbo-only must tell the agent to ignore already-handled messages:\n%s", got)
+	}
+	if strings.Contains(got, `{"queue":"empty"}`) {
+		t.Errorf("limbo-only must not claim the queue is empty:\n%s", got)
+	}
+}
+
+func TestComposeCheckMessagesResultFreshAndLimbo(t *testing.T) {
+	limbo := []UserMessage{{Text: "possibly lost"}}
+	fresh := []UserMessage{{Text: "new instruction"}}
+	got := composeCheckMessagesResult(limbo, fresh)
+	// Fresh messages are the authoritative instruction and must lead.
+	if !strings.HasPrefix(got, "User said: new instruction") {
+		t.Errorf("fresh must lead the result:\n%s", got)
+	}
+	idxFresh := strings.Index(got, "new instruction")
+	idxLimbo := strings.Index(got, "possibly lost")
+	if idxLimbo < idxFresh {
+		t.Errorf("redelivered messages must come after fresh ones:\n%s", got)
+	}
+	if !strings.Contains(got, "---REDELIVERY---") {
+		t.Errorf("missing redelivery sentinel:\n%s", got)
+	}
+}
+
+// --- progress keepalive ---
+
+type fakeProgressNotifier struct {
+	mu    sync.Mutex
+	calls []mcp.ProgressNotificationParams
+}
+
+func (f *fakeProgressNotifier) NotifyProgress(ctx context.Context, p *mcp.ProgressNotificationParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, *p)
+	return nil
+}
+
+func (f *fakeProgressNotifier) snapshot() []mcp.ProgressNotificationParams {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]mcp.ProgressNotificationParams(nil), f.calls...)
+}
+
+func TestProgressKeepaliveSendsNotifications(t *testing.T) {
+	fake := &fakeProgressNotifier{}
+	stop := startProgressKeepalive(context.Background(), fake, "tok-1", 5*time.Millisecond, "waiting for user reply")
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if len(fake.snapshot()) >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected >=2 progress notifications, got %d", len(fake.snapshot()))
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+	stop()
+	n := len(fake.snapshot())
+	time.Sleep(30 * time.Millisecond)
+	if after := len(fake.snapshot()); after != n {
+		t.Errorf("keepalive kept firing after stop: %d -> %d", n, after)
+	}
+
+	calls := fake.snapshot()
+	if calls[0].ProgressToken != "tok-1" {
+		t.Errorf("wrong progress token: %v", calls[0].ProgressToken)
+	}
+	if calls[0].Message != "waiting for user reply" {
+		t.Errorf("wrong message: %q", calls[0].Message)
+	}
+	if !(calls[1].Progress > calls[0].Progress) {
+		t.Errorf("progress must increase monotonically: %v then %v", calls[0].Progress, calls[1].Progress)
+	}
+}
+
+func TestProgressKeepaliveStopsOnContextCancel(t *testing.T) {
+	fake := &fakeProgressNotifier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := startProgressKeepalive(ctx, fake, "tok-2", 5*time.Millisecond, "waiting")
+	defer stop()
+	cancel()
+	time.Sleep(15 * time.Millisecond)
+	n := len(fake.snapshot())
+	time.Sleep(30 * time.Millisecond)
+	if after := len(fake.snapshot()); after != n {
+		t.Errorf("keepalive kept firing after ctx cancel: %d -> %d", n, after)
+	}
+}
+
+func TestKeepaliveForRequestNoTokenNoOp(t *testing.T) {
+	// A request without a progress token must yield a no-op stopper and
+	// never panic.
+	stop := keepaliveForRequest(context.Background(), &mcp.CallToolRequest{}, "waiting")
+	stop()
 }

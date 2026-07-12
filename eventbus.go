@@ -106,6 +106,22 @@ type EventBus struct {
 	msgQueue  chan UserMessage // queued user messages from browser
 	lastVoice bool            // whether the last consumed user message was voice
 
+	// limbo retains the last batch of user messages handed to the agent whose
+	// receipt no later MCP call has confirmed. A blocking send_message can be
+	// orphaned by the harness (e.g. Claude Code's 30-min stdio idle abort,
+	// which sends NO notifications/cancelled), so a delivered batch may have
+	// gone to a dead request ID; check_messages redelivers limbo instead of
+	// letting the reply vanish. Every new delivery overwrites (supersedes) it.
+	limboMu sync.Mutex
+	limbo   []UserMessage
+
+	// activeWait is the cancel handle of the current blocking wait. The
+	// harness serializes agent-chat calls, so a NEW call arriving proves any
+	// still-blocked previous call is dead client-side; cancelling it stops
+	// the zombie from stealing a user reply it can no longer deliver.
+	waitMu     sync.Mutex
+	activeWait *waitHandle
+
 	logFile *os.File   // optional JSONL event log on disk
 	logMu   sync.Mutex // guards logFile writes
 }
@@ -318,6 +334,9 @@ func (eb *EventBus) DrainMessagesStamped(toolName string, toolSeq int64) []UserM
 			msgs = append(msgs, msg)
 		default:
 			eb.publishConsumed(msgs, toolName, toolSeq)
+			if len(msgs) > 0 {
+				eb.SetLimbo(msgs)
+			}
 			return msgs
 		}
 	}
@@ -346,9 +365,76 @@ func (eb *EventBus) WaitForMessagesStamped(ctx context.Context, toolName string,
 			msgs = append(msgs, msg)
 		default:
 			eb.publishConsumed(msgs, toolName, toolSeq)
+			eb.SetLimbo(msgs)
 			return msgs, nil
 		}
 	}
+}
+
+// SetLimbo replaces the un-acked delivery buffer. Called on every delivery to
+// the agent; a newer batch supersedes an older one.
+func (eb *EventBus) SetLimbo(msgs []UserMessage) {
+	eb.limboMu.Lock()
+	eb.limbo = append([]UserMessage(nil), msgs...)
+	eb.limboMu.Unlock()
+}
+
+// AckLimbo clears the un-acked delivery buffer. Called by tool entries that
+// imply the agent is actively working (send_progress etc.) — the previous
+// delivery evidently arrived.
+func (eb *EventBus) AckLimbo() {
+	eb.limboMu.Lock()
+	eb.limbo = nil
+	eb.limboMu.Unlock()
+}
+
+// Limbo returns a copy of the un-acked delivery buffer.
+func (eb *EventBus) Limbo() []UserMessage {
+	eb.limboMu.Lock()
+	defer eb.limboMu.Unlock()
+	if eb.limbo == nil {
+		return nil
+	}
+	return append([]UserMessage(nil), eb.limbo...)
+}
+
+// waitHandle identifies one blocking wait so a stale end func can't cancel a
+// successor (cancel funcs aren't comparable; pointers are).
+type waitHandle struct{ cancel context.CancelFunc }
+
+// BeginBlockingWait registers a blocking wait as THE active waiter, cancelling
+// any previous one (see activeWait). It returns a derived context to block on
+// and an end func the caller must defer; the end func only deregisters this
+// wait, never a successor's.
+func (eb *EventBus) BeginBlockingWait(ctx context.Context) (context.Context, func()) {
+	wctx, cancel := context.WithCancel(ctx)
+	h := &waitHandle{cancel: cancel}
+	eb.waitMu.Lock()
+	if eb.activeWait != nil {
+		eb.activeWait.cancel()
+	}
+	eb.activeWait = h
+	eb.waitMu.Unlock()
+	return wctx, func() {
+		eb.waitMu.Lock()
+		if eb.activeWait == h {
+			eb.activeWait = nil
+		}
+		eb.waitMu.Unlock()
+		cancel()
+	}
+}
+
+// CancelActiveWait cancels the current blocking wait, if any. Called at every
+// MCP tool entry: a new call proves the previously blocked call is dead
+// client-side (zombie), and a dead call must not consume user messages.
+func (eb *EventBus) CancelActiveWait() {
+	eb.waitMu.Lock()
+	if eb.activeWait != nil {
+		eb.activeWait.cancel()
+		eb.activeWait = nil
+	}
+	eb.waitMu.Unlock()
 }
 
 // SetLastVoice records whether the last consumed user messages contained voice input.

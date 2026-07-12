@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEventBusWritesJSONL(t *testing.T) {
@@ -154,5 +156,148 @@ func TestEventsSince(t *testing.T) {
 	none := bus.EventsSince(3)
 	if len(none) != 0 {
 		t.Fatalf("EventsSince(3): expected 0, got %d", len(none))
+	}
+}
+
+// --- pending-ack (limbo) + single-waiter tests ---
+//
+// Background: a blocking send_message can be orphaned by the harness (e.g.
+// Claude Code's 30-min stdio idle abort sends NO notifications/cancelled), so
+// its server-side wait lives on as a zombie that steals the next user reply
+// and returns it on a dead request ID. Two defenses:
+//  1. single-waiter: any new MCP call cancels the previous blocking wait
+//     before it can consume anything (the harness serializes agent-chat
+//     calls, so a new call proves the old one is dead client-side).
+//  2. limbo: every batch delivered to the agent is retained un-acked; if the
+//     delivery was lost in transit, the next check_messages redelivers it.
+
+func TestWaitForMessagesStoresLimbo(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("hello", nil)
+	msgs, err := bus.WaitForMessages(context.Background())
+	if err != nil {
+		t.Fatalf("WaitForMessages: %v", err)
+	}
+	if len(msgs) != 1 || msgs[0].Text != "hello" {
+		t.Fatalf("unexpected msgs: %+v", msgs)
+	}
+	limbo := bus.Limbo()
+	if len(limbo) != 1 || limbo[0].Text != "hello" {
+		t.Fatalf("delivered batch not retained in limbo: %+v", limbo)
+	}
+}
+
+func TestDrainMessagesStoresLimboAndOverwrites(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("first", nil)
+	if msgs := bus.DrainMessages(); len(msgs) != 1 {
+		t.Fatalf("drain: %+v", msgs)
+	}
+	if limbo := bus.Limbo(); len(limbo) != 1 || limbo[0].Text != "first" {
+		t.Fatalf("limbo after first drain: %+v", limbo)
+	}
+	// A later delivery supersedes the previous batch (overwrite, not append).
+	bus.PushMessage("second", nil)
+	if msgs := bus.DrainMessages(); len(msgs) != 1 {
+		t.Fatalf("second drain: %+v", msgs)
+	}
+	if limbo := bus.Limbo(); len(limbo) != 1 || limbo[0].Text != "second" {
+		t.Fatalf("limbo after second drain: %+v", limbo)
+	}
+}
+
+func TestEmptyDrainLeavesLimboUntouched(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("keep me", nil)
+	bus.DrainMessages()
+	if msgs := bus.DrainMessages(); msgs != nil {
+		t.Fatalf("expected empty drain, got %+v", msgs)
+	}
+	if limbo := bus.Limbo(); len(limbo) != 1 || limbo[0].Text != "keep me" {
+		t.Fatalf("empty drain must not clear limbo: %+v", limbo)
+	}
+}
+
+func TestAckLimboClears(t *testing.T) {
+	bus := NewEventBus()
+	bus.PushMessage("hello", nil)
+	bus.DrainMessages()
+	bus.AckLimbo()
+	if limbo := bus.Limbo(); limbo != nil {
+		t.Fatalf("AckLimbo did not clear: %+v", limbo)
+	}
+}
+
+func TestSetLimboUnionForRedelivery(t *testing.T) {
+	bus := NewEventBus()
+	bus.SetLimbo([]UserMessage{{Text: "old"}, {Text: "new"}})
+	limbo := bus.Limbo()
+	if len(limbo) != 2 || limbo[0].Text != "old" || limbo[1].Text != "new" {
+		t.Fatalf("SetLimbo roundtrip: %+v", limbo)
+	}
+}
+
+func TestCancelActiveWaitAbortsBlockedWaiterWithoutConsuming(t *testing.T) {
+	bus := NewEventBus()
+	wctx, endWait := bus.BeginBlockingWait(context.Background())
+	defer endWait()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := bus.WaitForMessages(wctx)
+		errCh <- err
+	}()
+
+	// Give the waiter a moment to block, then a new tool call arrives and
+	// cancels it (zombie kill).
+	time.Sleep(10 * time.Millisecond)
+	bus.CancelActiveWait()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatalf("cancelled wait returned nil error")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("blocked waiter not cancelled by CancelActiveWait")
+	}
+
+	// A message arriving after the kill must remain drainable — the zombie
+	// must not have consumed it.
+	bus.PushMessage("survives", nil)
+	msgs := bus.DrainMessages()
+	if len(msgs) != 1 || msgs[0].Text != "survives" {
+		t.Fatalf("message stolen or lost after zombie kill: %+v", msgs)
+	}
+}
+
+func TestBeginBlockingWaitSupersedesPrevious(t *testing.T) {
+	bus := NewEventBus()
+	wctx1, end1 := bus.BeginBlockingWait(context.Background())
+	defer end1()
+	_, end2 := bus.BeginBlockingWait(context.Background())
+	defer end2()
+
+	select {
+	case <-wctx1.Done():
+		// first wait cancelled by the second — correct
+	case <-time.After(2 * time.Second):
+		t.Fatalf("second BeginBlockingWait did not cancel the first")
+	}
+}
+
+func TestEndBlockingWaitClearsOnlyItself(t *testing.T) {
+	bus := NewEventBus()
+	_, end1 := bus.BeginBlockingWait(context.Background())
+	end1() // wait #1 finishes normally
+
+	wctx2, end2 := bus.BeginBlockingWait(context.Background())
+	defer end2()
+	end1() // stale cleanup from #1 must not cancel #2
+
+	select {
+	case <-wctx2.Done():
+		t.Fatalf("stale end func cancelled the active wait")
+	default:
 	}
 }
