@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -97,6 +98,86 @@ const executeNotEchoGuidance = "This IS the user's message — execute the reque
 // vacuous "Queue is empty." reply to the user — which was observed when an
 // agent treated the empty-queue payload as the body of a send_message reply.
 const emptyQueueGuidance = `{"queue":"empty"} — no user message is pending. Do NOT call send_message just to report this; the user did not ask anything. Return to your previous task, or stay silent and wait for the next user message.`
+
+// composeCheckMessagesResult builds the check_messages result from the fresh
+// queue drain plus any un-acked limbo batch (see EventBus.SetLimbo). A limbo
+// batch was already handed to the agent once, but that delivery may have died
+// in transit (harness idle abort, stdio reset), so it is redelivered behind a
+// sentinel with ignore-if-already-handled framing. Fresh messages lead: they
+// are the authoritative current instruction.
+func composeCheckMessagesResult(limbo, fresh []UserMessage) string {
+	redelivery := ""
+	if len(limbo) > 0 {
+		redelivery = "---REDELIVERY---\nRedelivering earlier user message(s) whose delivery to you may have been lost in transit (e.g. a timed-out send_message). If you have already seen and handled these, ignore them — do NOT re-execute or re-reply. Otherwise treat them as the user's message now.\nUser said: " + FormatMessages(limbo)
+	}
+	switch {
+	case len(fresh) == 0 && len(limbo) == 0:
+		return emptyQueueGuidance
+	case len(fresh) == 0:
+		return redelivery + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(limbo)
+	case len(limbo) == 0:
+		return "User said: " + FormatMessages(fresh) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(fresh)
+	default:
+		return "User said: " + FormatMessages(fresh) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(fresh) + "\n\n" + redelivery
+	}
+}
+
+// progressKeepaliveInterval is how often a blocking tool call emits an MCP
+// progress notification to keep the in-flight request alive. Claude Code's
+// stdio idle timeout (CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT, default 30 min)
+// aborts calls that send no response or progress for the window — and the
+// abort sends no notifications/cancelled, orphaning the server-side wait. A
+// periodic progress ping resets that window (verified empirically), so a
+// send_message can block on a human indefinitely. Clients that ignore
+// progress simply see harmless extra notifications.
+var progressKeepaliveInterval = 60 * time.Second
+
+// progressNotifier is the slice of *mcp.ServerSession used by the keepalive
+// (an interface so tests can observe notifications without MCP plumbing).
+type progressNotifier interface {
+	NotifyProgress(context.Context, *mcp.ProgressNotificationParams) error
+}
+
+// startProgressKeepalive emits notifications/progress on token every interval
+// until the returned stop func is called or ctx is cancelled.
+func startProgressKeepalive(ctx context.Context, session progressNotifier, token any, interval time.Duration, message string) (stop func()) {
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		var n float64
+		for {
+			select {
+			case <-ticker.C:
+				n++
+				session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+					ProgressToken: token,
+					Progress:      n,
+					Message:       message,
+				})
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// keepaliveForRequest starts a progress keepalive for an in-flight tool call,
+// or returns a no-op stopper when the client sent no progress token.
+func keepaliveForRequest(ctx context.Context, req *mcp.CallToolRequest, message string) (stop func()) {
+	if req == nil || req.Session == nil || req.Params == nil {
+		return func() {}
+	}
+	token := req.Params.GetProgressToken()
+	if token == nil {
+		return func() {}
+	}
+	return startProgressKeepalive(ctx, req.Session, token, progressKeepaliveInterval, message)
+}
 
 // appendBargeIn drains any queued user messages and appends them to text with a
 // sentinel header so the agent reads them as a fresh user instruction without
@@ -256,6 +337,12 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		// and the stamp-side count must advance together.
 		toolSeq := sendMessageCount.Add(1)
 
+		// A new call proves any previously blocked call is dead client-side;
+		// kill it before it can steal the next user reply. No AckLimbo here:
+		// this call might be a recap after a lost delivery, and its own
+		// successful return overwrites limbo anyway.
+		bus.CancelActiveWait()
+
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
 		if bus.LastVoice() {
 			// Marker keeps the on-disk count aligned with the agent's .jsonl,
@@ -293,9 +380,16 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		// If user already sent messages, strip quick_replies and return
 		// queued messages immediately — the replies would be stale.
+		// Register as THE active waiter (cancellable by the next call) and
+		// keep the in-flight MCP request alive past harness idle timeouts.
+		waitCtx, endWait := bus.BeginBlockingWait(ctx)
+		defer endWait()
+		stopKeepalive := keepaliveForRequest(waitCtx, req, "waiting for user reply")
+		defer stopKeepalive()
+
 		if bus.HasQueuedMessages() {
 			bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
-			msgs, err := bus.WaitForMessagesStamped(ctx, "send_message", toolSeq)
+			msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_message", toolSeq)
 			if err != nil {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
@@ -313,7 +407,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
 
-		msgs, err := bus.WaitForMessagesStamped(ctx, "send_message", toolSeq)
+		msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_message", toolSeq)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
@@ -336,6 +430,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings. Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
 		toolSeq := sendVerbalReplyCount.Add(1)
+		bus.CancelActiveWait()
 
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -356,11 +451,16 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
 		files := resolveImageFiles(params.ImageURLs)
 
+		waitCtx, endWait := bus.BeginBlockingWait(ctx)
+		defer endWait()
+		stopKeepalive := keepaliveForRequest(waitCtx, req, "waiting for user reply")
+		defer stopKeepalive()
+
 		// If user already sent messages, strip quick_replies and return
 		// queued messages immediately — the replies would be stale.
 		if bus.HasQueuedMessages() {
 			bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
-			msgs, err := bus.WaitForMessagesStamped(ctx, "send_verbal_reply", toolSeq)
+			msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_verbal_reply", toolSeq)
 			if err != nil {
 				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 			}
@@ -378,7 +478,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
 
-		msgs, err := bus.WaitForMessagesStamped(ctx, "send_verbal_reply", toolSeq)
+		msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_verbal_reply", toolSeq)
 		if err != nil {
 			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
 		}
@@ -428,6 +528,11 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 ` + "`first_quick_reply`" + ` is a SINGLE plain string — the primary reply option shown to the viewer. ` + "`more_quick_replies`" + ` is an array of additional option strings. Do NOT pass a JSON-encoded array as ` + "`first_quick_reply`" + `; it must be a plain string.`,
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
+		// Kill any orphaned blocking wait, and ack limbo: a draw call means
+		// the agent is actively working, so the previous delivery arrived.
+		bus.CancelActiveWait()
+		bus.AckLimbo()
+
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
 		}
@@ -474,11 +579,16 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 			AckID:        ack.ID,
 		})
 
+		waitCtx, endWait := bus.BeginBlockingWait(ctx)
+		defer endWait()
+		stopKeepalive := keepaliveForRequest(waitCtx, req, "waiting for viewer response")
+		defer stopKeepalive()
+
 		var result string
 		select {
 		case result = <-ack.Ch:
-		case <-ctx.Done():
-			return nil, nil, fmt.Errorf("draw cancelled: %w", ctx.Err())
+		case <-waitCtx.Done():
+			return nil, nil, fmt.Errorf("draw cancelled: %w", waitCtx.Err())
 		}
 
 		text := "Viewer acknowledged."
@@ -509,6 +619,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Description: "Send a progress update to the chat UI without blocking. Use this for status updates (e.g., 'Working on it...', 'Found 3 matching files') when you want to keep the user informed but don't need a response. Unlike send_message, this returns immediately. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ProgressParams) (*mcp.CallToolResult, any, error) {
 		toolSeq := sendProgressCount.Add(1)
+		// A progress update means the agent is actively working: kill any
+		// orphaned blocking wait and ack the previous delivery as received.
+		bus.CancelActiveWait()
+		bus.AckLimbo()
 
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -536,6 +650,8 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalProgressParams) (*mcp.CallToolResult, any, error) {
 		toolSeq := sendVerbalProgressCount.Add(1)
+		bus.CancelActiveWait()
+		bus.AckLimbo()
 
 		if err := ensureHTTPServer(); err != nil {
 			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
@@ -556,21 +672,29 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "check_messages",
-		Description: "Drain pending user messages from the queue. Returns user messages prefixed with `User said: …` when present. When the queue is empty, returns `{\"queue\":\"empty\"}` followed by guidance NOT to send a user-visible reply just to report the empty state — return to your previous task or wait silently.",
+		Description: "Drain pending user messages from the queue. Returns user messages prefixed with `User said: …` when present. When the queue is empty, returns `{\"queue\":\"empty\"}` followed by guidance NOT to send a user-visible reply just to report the empty state — return to your previous task or wait silently. The result may also carry a `---REDELIVERY---` section repeating earlier message(s) whose delivery to you may have been lost (e.g. a timed-out send_message) — ignore any you have already handled.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
 		// Tick per call (empty or not) so the ordinal stays aligned with the
 		// .jsonl-side count of check_messages tool_use entries.
 		toolSeq := checkMessagesCount.Add(1)
-		msgs := bus.DrainMessagesStamped("check_messages", toolSeq)
-		var result string
-		if len(msgs) == 0 {
+		bus.CancelActiveWait()
+		// Capture limbo BEFORE draining — a non-empty drain overwrites it.
+		// Un-acked limbo gets redelivered: if the call that first carried it
+		// died in transit, this is the recovery path; if not, the sentinel
+		// framing tells the agent to ignore the duplicate.
+		limbo := bus.Limbo()
+		fresh := bus.DrainMessagesStamped("check_messages", toolSeq)
+		if len(fresh) == 0 {
 			// Empty drain publishes no userMessagesConsumed event, so record a
 			// marker to keep the on-disk count aligned with the agent's .jsonl.
 			bus.PublishToolMarker("check_messages", toolSeq)
-			result = emptyQueueGuidance
 		} else {
-			bus.SetLastVoice(isVoiceMessage(msgs))
-			result = "User said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+			bus.SetLastVoice(isVoiceMessage(fresh))
+		}
+		result := composeCheckMessagesResult(limbo, fresh)
+		if len(limbo) > 0 {
+			// The union just delivered becomes the new un-acked batch.
+			bus.SetLimbo(append(limbo, fresh...))
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
@@ -588,6 +712,8 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "export_chat_md",
 		Description: "Export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies any user-uploaded image attachments into ./agent-chats/assets/YYYY-MM-DD-NN-N.{ext} (relative-path links from the .md), and upserts ./agent-chats/index.html — the chat-archive landing page — by prepending a manifest entry on top (newest first). On the first export, also writes ./agent-chats/assets/viewer.css and viewer.js (idempotent: never overwritten on subsequent calls). Path safety: target_dir cannot escape cwd.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
+		bus.CancelActiveWait()
+		bus.AckLimbo()
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, nil, fmt.Errorf("get cwd: %w", err)
