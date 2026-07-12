@@ -2,6 +2,17 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.8.10] — 2026-07-12
+
+### Fixes
+- The MCP `send_message` call now survives the harness's stdio idle abort
+  (Claude Code's ~30-min `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`, which fires with
+  no `cancelled` notification) without losing the user's reply. A 60-second
+  progress keepalive resets the idle window so a blocked `send_message` can
+  wait on a human indefinitely, a single-active-waiter guard prevents duplicate
+  waits, and any reply whose delivery dies in transit is redelivered on the
+  next `check_messages` behind a `---REDELIVERY---` sentinel.
+
 ## [0.8.9] — 2026-07-11
 
 ### Features
