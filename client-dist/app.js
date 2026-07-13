@@ -934,7 +934,7 @@ chatInput.addEventListener('paste', function(e) {
   addStagedFiles(files);
 });
 
-function enableInput(replies) {
+function enableInput(replies, focusInput) {
   setQuickReplies(replies);
   chatInput.disabled = false;
   chatInput.readOnly = false;
@@ -949,7 +949,11 @@ function enableInput(replies) {
     quickReplies.classList.remove('visible');
   }
   updateSendButton(); // re-disable if uploads still pending
-  chatInput.focus();
+  // Focus by default, but let callers opt out: the (re)connect path passes
+  // false so a background reconnect doesn't yank focus into the textarea
+  // (especially disruptive when embedded in an iframe — it steals focus from
+  // the host page). First connect and user-driven callers still focus.
+  if (focusInput !== false) chatInput.focus();
   // Respect the scroll-position guard: only follow to the bottom if the user
   // is already there. Forcing it here yanked people down on every reconnect
   // (the 'connected' handler calls enableInput) and whenever the agent posted
@@ -2345,6 +2349,7 @@ function connect() {
       case 'connected':
         console.log('[' + ts() + '] Connected event received');
         setStatus('connected');
+        var isReconnect = hasConnectedBefore;
         var label = hasConnectedBefore ? 'Reconnected' : 'Connected';
         if (!hasConnectedBefore) {
           label += ' \u00b7 [agent-chat](https://github.com/choonkeat/agent-chat)';
@@ -2367,7 +2372,8 @@ function connect() {
         // cause freezeCurrentReplies to freeze the wrong replies when
         // history events stream in.
         connectQuickReplies = data.quickReplies || null;
-        enableInput();
+        // Don't steal focus on a background reconnect; do focus on first connect.
+        enableInput(undefined, !isReconnect);
         break;
 
       case 'historyEnd':
