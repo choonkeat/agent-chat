@@ -2,6 +2,17 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Features
+- When embedded in a host that passes `parent_url` (e.g. swe-swe), clicking a
+  link to a local address (`localhost`, `127.0.0.1`, or a `*.lvh.me` vhost)
+  inside a chat bubble now loads it in the host's App Preview pane instead of a
+  new browser tab. The click is posted to the parent window as
+  `agent-chat-open-preview`; the host routes it into Preview. Modified clicks
+  (cmd/ctrl/shift/alt or non-left button) and non-local links keep the default
+  new-tab behaviour, and standalone agent-chat is unaffected.
+
 ## [0.8.10] — 2026-07-12
 
 ### Fixes
