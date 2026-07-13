@@ -533,36 +533,38 @@ body {
   position: relative;
 }
 
-/* The "⋯" actions control rides in the bubble's upper-left corner. Faintly
-   visible at rest so it stays reachable on touch devices (no hover), fully
-   opaque on hover/focus. Only ever exists on .pending-agent bubbles — we don't
-   render it for consumed ones. Opens a menu (Delete + Send as interrupting). */
+/* The "⋯" actions control for a pending user bubble. Visually identical to the
+   agent bubble's .bubble-menu-btn — same bordered circle, footprint, muted
+   colour and hover reveal — differing only in alignment: it mirrors to the
+   bubble's left edge because user bubbles are right-aligned. Faintly visible at
+   rest so it stays reachable on touch devices (no hover), fully opaque on
+   hover/focus. Only ever exists on .pending-agent bubbles — we don't render it
+   for consumed ones. Opens a menu (Delete + Send as interrupting). */
 .bubble-pending-menu {
   position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 22px;
-  height: 22px;
+  left: -32px;
+  bottom: 4px;
+  width: 24px;
+  height: 24px;
+  border: 1.5px solid var(--text-muted);
   border-radius: 50%;
-  border: none;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
   opacity: 0.4;
-  transition: opacity 0.15s, background 0.15s;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .bubble.user.pending-agent:hover .bubble-pending-menu,
+.bubble-pending-menu:hover,
 .bubble-pending-menu:focus {
   opacity: 1;
-}
-
-.bubble-pending-menu:hover {
-  background: rgba(0, 0, 0, 0.8);
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
 }
 
 .bubble-pending-menu svg {
