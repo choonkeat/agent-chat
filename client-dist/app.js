@@ -65,6 +65,40 @@ var inputContainer = document.getElementById('input-container');
 var fileStaging = document.getElementById('file-staging');
 var dropZone = document.body;
 
+// A link's host counts as "local" (should load in the embedder's App Preview
+// pane rather than a new browser tab) when it's localhost, the loopback IP, or
+// a *.lvh.me vhost. Anything else is a real site the Preview iframe can't frame.
+function isLocalPreviewHost(host) {
+  if (!host) return false;
+  host = host.toLowerCase();
+  return host === 'localhost'
+    || host === '127.0.0.1'
+    || host === '[::1]'
+    || host === 'lvh.me'
+    || host.slice(-8) === '.lvh.me';
+}
+
+// Intercept clicks on local links inside chat bubbles: instead of opening a new
+// browser tab, ask the embedder to load them in its App Preview pane. Posted to
+// the parent window as `agent-chat-open-preview`; swe-swe listens for it and
+// routes the URL into Preview. Only active when embedded with a parent URL (the
+// same signal used for relative-link resolution) so standalone agent-chat is
+// unaffected. Modified clicks and non-local links keep default new-tab behaviour.
+if (messages) {
+  messages.addEventListener('click', function (e) {
+    if (window.parent === window || !parentBaseUrl) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    var a = e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var url;
+    try { url = new URL(a.href, window.location.href); } catch (_) { return; }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    if (!isLocalPreviewHost(url.hostname)) return;
+    e.preventDefault();
+    window.parent.postMessage({ type: 'agent-chat-open-preview', url: a.href }, '*');
+  });
+}
+
 var btnVoice = document.getElementById('btn-voice');
 var voiceControls = document.getElementById('voice-controls');
 var voiceSelect = document.getElementById('voice-select');
