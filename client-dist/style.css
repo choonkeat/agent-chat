@@ -533,10 +533,10 @@ body {
   position: relative;
 }
 
-/* The "⋯" actions control rides in the bubble's upper-left corner. Subtle at
-   rest, fully opaque on hover. Only ever exists on .pending-agent bubbles —
-   we don't render it for consumed ones. Opens a menu (Delete + Send as
-   interrupting). */
+/* The "⋯" actions control rides in the bubble's upper-left corner. Faintly
+   visible at rest so it stays reachable on touch devices (no hover), fully
+   opaque on hover/focus. Only ever exists on .pending-agent bubbles — we don't
+   render it for consumed ones. Opens a menu (Delete + Send as interrupting). */
 .bubble-pending-menu {
   position: absolute;
   top: -8px;
@@ -552,7 +552,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
+  opacity: 0.4;
   transition: opacity 0.15s, background 0.15s;
 }
 
