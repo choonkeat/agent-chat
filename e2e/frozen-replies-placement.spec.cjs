@@ -93,7 +93,7 @@ async function readMessagesOrder(page) {
         const pending = el.classList.contains('pending-agent');
         // Strip any TTS button / unsend button text from the snapshot.
         const clone = el.cloneNode(true);
-        clone.querySelectorAll('.tts-btn, .bubble-unsend').forEach((n) => n.remove());
+        clone.querySelectorAll('.tts-btn, .bubble-pending-menu').forEach((n) => n.remove());
         out.push({ kind: 'bubble', role, text: clone.textContent.trim(), pending });
         continue;
       }

@@ -533,34 +533,42 @@ body {
   position: relative;
 }
 
-/* The × unsend control rides in the bubble's upper-left corner. Subtle at
+/* The "⋯" actions control rides in the bubble's upper-left corner. Subtle at
    rest, fully opaque on hover. Only ever exists on .pending-agent bubbles —
-   we don't render it for consumed ones. */
-.bubble-unsend {
+   we don't render it for consumed ones. Opens a menu (Delete + Send as
+   interrupting). */
+.bubble-pending-menu {
   position: absolute;
   top: -8px;
   left: -8px;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
-  font-size: 14px;
-  line-height: 18px;
   padding: 0;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0;
   transition: opacity 0.15s, background 0.15s;
 }
 
-.bubble.user.pending-agent:hover .bubble-unsend,
-.bubble-unsend:focus {
+.bubble.user.pending-agent:hover .bubble-pending-menu,
+.bubble-pending-menu:focus {
   opacity: 1;
 }
 
-.bubble-unsend:hover {
-  background: #dc2626;
+.bubble-pending-menu:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.bubble-pending-menu svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
 }
 
 /* --- Sticky footer (input bar) --- */

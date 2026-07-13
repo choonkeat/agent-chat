@@ -1,8 +1,9 @@
 // @ts-check
 // e2e coverage for the "unsend pending message" flow:
-//   - A user bubble in .pending-agent state shows a clickable × button
-//   - Clicking × removes the bubble locally and from the agent's queue
-//   - A consumed (non-pending) bubble exposes no × at all
+//   - A user bubble in .pending-agent state shows a "⋯" actions button
+//   - The menu offers Delete and Send as interrupting
+//   - Clicking Delete removes the bubble locally and from the agent's queue
+//   - A consumed (non-pending) bubble exposes no ⋯ menu at all
 //   - The agent's subsequent check_messages does NOT see the unsent text
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
@@ -114,7 +115,7 @@ test.describe('Unsend pending user message', () => {
     }
   });
 
-  test('clicking × on a pending bubble removes it and the agent never sees it', async ({ page }) => {
+  test('Delete on a pending bubble removes it and the agent never sees it', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -126,17 +127,21 @@ test.describe('Unsend pending user message', () => {
     const userBubble = page.locator('.bubble.user.pending-agent', { hasText: 'please unsend me' });
     await expect(userBubble).toHaveCount(1);
 
-    // The × control should be present and clickable.
-    const unsendBtn = userBubble.locator('.bubble-unsend');
-    await expect(unsendBtn).toHaveCount(1);
-    // Make the × visible (it's hover-only by default) for the screenshot.
+    // The "⋯" actions control should be present and clickable.
+    const menuBtn = userBubble.locator('.bubble-pending-menu');
+    await expect(menuBtn).toHaveCount(1);
+    // Make it visible (it's hover-only by default) for the screenshot.
     await page.evaluate(() => {
-      const b = document.querySelector('.bubble.user.pending-agent .bubble-unsend');
+      const b = document.querySelector('.bubble.user.pending-agent .bubble-pending-menu');
       if (b) b.style.opacity = '1';
     });
     await page.screenshot({ path: 'test-results/screenshots/05-unsend-button-on-pending.png', fullPage: true });
 
-    await unsendBtn.click({ force: true });
+    // Open the menu and click Delete.
+    await menuBtn.click({ force: true });
+    const deleteItem = page.locator('.bubble-menu button[data-action="delete"]');
+    await expect(deleteItem).toHaveCount(1);
+    await deleteItem.click();
     await page.waitForTimeout(SETTLE_MS);
 
     // Bubble should be gone from the DOM.
@@ -148,7 +153,24 @@ test.describe('Unsend pending user message', () => {
     expect(result).not.toContain('please unsend me');
   });
 
-  test('a consumed (non-pending) bubble does not expose ×', async ({ page }) => {
+  test('the ⋯ menu on a pending bubble offers Delete and Send as interrupting', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    const sendBtn = page.locator('#btn-send');
+
+    await textarea.fill('two options please');
+    await sendBtn.click();
+    await page.waitForTimeout(SETTLE_MS);
+
+    const userBubble = page.locator('.bubble.user.pending-agent', { hasText: 'two options please' });
+    await expect(userBubble).toHaveCount(1);
+
+    await userBubble.locator('.bubble-pending-menu').click({ force: true });
+    await expect(page.locator('.bubble-menu button[data-action="delete"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveText(/Send as interrupting/);
+  });
+
+  test('a consumed (non-pending) bubble does not expose the ⋯ menu', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -163,8 +185,8 @@ test.describe('Unsend pending user message', () => {
     const consumed = page.locator('.bubble.user', { hasText: 'already seen' });
     await expect(consumed).toHaveCount(1);
     await expect(consumed).not.toHaveClass(/pending-agent/);
-    // The × control must NOT be present on consumed bubbles — the agent
-    // has already processed the text, so "unsend" would be misleading.
-    await expect(consumed.locator('.bubble-unsend')).toHaveCount(0);
+    // The ⋯ control must NOT be present on consumed bubbles — the agent
+    // has already processed the text, so Delete/interrupt would be misleading.
+    await expect(consumed.locator('.bubble-pending-menu')).toHaveCount(0);
   });
 });

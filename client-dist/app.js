@@ -404,6 +404,8 @@ function createTtsButton(bubble) {
 
 var ICON_SPEAK = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
 var ICON_FORK = '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M6 8.4v3.6a3 3 0 0 0 3 3h6M18 8.4v3.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+var ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M9 6V4h6v2M7 6l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13M10 10v6M14 10v6"/></svg>';
+var ICON_INTERRUPT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="13,3 4,14 11,14 10,21 20,9 13,9 13,3"/></svg>';
 
 var openBubbleMenu = null; // the currently-open menu element (carries .ownerBtn)
 
@@ -448,9 +450,13 @@ function openBubbleMenuFor(btn, bubble, seq) {
   menu.appendChild(speak);
   menu.appendChild(fork);
   document.body.appendChild(menu);
+  positionMenuBelow(menu, btn);
+  openBubbleMenu = menu;
+}
 
-  // Position fixed, just below the button, clamped to the viewport. If it would
-  // run off the bottom, flip it above the button instead.
+// Position a floating menu fixed, just below its owner button, clamped to the
+// viewport. If it would run off the bottom, flip it above the button instead.
+function positionMenuBelow(menu, btn) {
   var r = btn.getBoundingClientRect();
   var mr = menu.getBoundingClientRect();
   var top = r.bottom + 6;
@@ -461,8 +467,104 @@ function openBubbleMenuFor(btn, bubble, seq) {
   if (top < 8) top = 8;
   menu.style.top = top + 'px';
   menu.style.left = left + 'px';
+}
 
+// --- Pending user-bubble "⋯" menu (Delete + Send as interrupting) ---
+// Unread user bubbles (still queued, not yet drained by the agent) carry a small
+// "⋯" button. Delete pulls the message back out of the queue (unsend). Send as
+// interrupting types the message straight into the host terminal — aborting the
+// agent's current tool — and drops the queued copy so it isn't also read later.
+
+function openPendingMenuFor(btn, messageId, text) {
+  var menu = document.createElement('div');
+  menu.className = 'bubble-menu';
+  menu.ownerBtn = btn;
+  menu.addEventListener('click', function (e) { e.stopPropagation(); });
+
+  var del = makeMenuItem('delete', 'Delete', ICON_TRASH);
+  del.addEventListener('click', function () {
+    closeBubbleMenu();
+    sendUnsend(messageId);
+  });
+  menu.appendChild(del);
+
+  // Interrupting means typing the message text into the terminal; a file-only
+  // message has nothing to type, so only offer it when there's actual text.
+  if (text) {
+    var interrupt = makeMenuItem('interrupt', 'Send as interrupting', ICON_INTERRUPT);
+    interrupt.addEventListener('click', function () {
+      closeBubbleMenu();
+      interruptWithPendingMessage(messageId, text);
+    });
+    menu.appendChild(interrupt);
+  }
+
+  document.body.appendChild(menu);
+  positionMenuBelow(menu, btn);
   openBubbleMenu = menu;
+}
+
+// The "⋯" button for a pending user bubble — same corner footprint as the old
+// × unsend control, hover-revealed, but opens the action menu.
+function createPendingMenuButton(bubble, messageId, text) {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'bubble-pending-menu';
+  btn.title = 'More actions';
+  btn.setAttribute('aria-haspopup', 'true');
+  btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    var wasOpenForThis = openBubbleMenu && openBubbleMenu.ownerBtn === btn;
+    closeBubbleMenu();
+    if (!wasOpenForThis) openPendingMenuFor(btn, messageId, text);
+  });
+  return btn;
+}
+
+// Remove a pending bubble's "⋯" button, closing its menu first if open.
+function removePendingMenuBtn(bubble) {
+  var b = bubble.querySelector('.bubble-pending-menu');
+  if (!b) return;
+  if (openBubbleMenu && openBubbleMenu.ownerBtn === b) closeBubbleMenu();
+  b.remove();
+}
+
+// Promote a pending user bubble to a normal "sent" bubble in place: strip the
+// dimmed pending state, drop its menu, and re-parent it above the loader so the
+// transcript reads chronologically. Used when the message leaves via the
+// terminal (Send as interrupting) rather than being drained from the queue.
+function promotePendingBubble(bubble) {
+  bubble.classList.remove('pending-agent');
+  bubble.removeAttribute('title');
+  removePendingMenuBtn(bubble);
+  var loader = document.getElementById('loading-bubble');
+  if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
+    messages.insertBefore(bubble, loader);
+  }
+}
+
+// Send a queued-but-unread message as an interruption: type Esc Esc + the
+// message into the host terminal (aborts the agent's current tool and submits
+// the text directly), then drop the queued copy so the agent doesn't ALSO read
+// it via check_messages. The bubble is kept — promoted in place — because the
+// message went out through the terminal, not the agent-chat channel, so the
+// server never echoes it back. We strip the id BEFORE unsending so the
+// resulting userMessageDeleted broadcast can't match and remove this bubble.
+function interruptWithPendingMessage(messageId, text) {
+  var bubble = messages.querySelector('.bubble.user[data-msg-id="' + messageId + '"]');
+  if (window.parent === window) {
+    addAgentMessage('Cannot interrupt: host terminal not connected.', null, 'warning', Date.now());
+    return;
+  }
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
+  if (bubble) {
+    bubble.removeAttribute('data-msg-id');
+    promotePendingBubble(bubble);
+  }
+  if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+    activeWs.send(JSON.stringify({ type: 'unsend', id: messageId }));
+  }
 }
 
 // "⋯" overflow button. Toggles the bubble's action menu.
@@ -565,16 +667,7 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
     div.dataset.msgId = messageId;
     div.classList.add('pending-agent');
     div.title = "Agent hasn't seen this yet";
-    var unsend = document.createElement('button');
-    unsend.type = 'button';
-    unsend.className = 'bubble-unsend';
-    unsend.title = 'Unsend — pull this back before the agent reads it';
-    unsend.textContent = '×';
-    unsend.addEventListener('click', function (e) {
-      e.stopPropagation();
-      sendUnsend(messageId);
-    });
-    div.appendChild(unsend);
+    div.appendChild(createPendingMenuButton(div, messageId, text));
     appendAfterLoader(div);
   } else {
     appendMessage(div);
@@ -1042,8 +1135,7 @@ function markMessagesConsumed(ids) {
     if (!bubble) continue;
     bubble.classList.remove('pending-agent');
     bubble.removeAttribute('title');
-    var unsendBtn = bubble.querySelector('.bubble-unsend');
-    if (unsendBtn) unsendBtn.remove();
+    removePendingMenuBtn(bubble);
     if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
       // bubble currently sits after the loader; move it above.
       messages.insertBefore(bubble, loader);
@@ -2463,7 +2555,7 @@ function connect() {
         // saw it — drop the bubble everywhere.
         if (data.id) {
           var deleted = messages.querySelector('.bubble.user[data-msg-id="' + data.id + '"]');
-          if (deleted) deleted.remove();
+          if (deleted) { removePendingMenuBtn(deleted); deleted.remove(); }
         }
         break;
 
