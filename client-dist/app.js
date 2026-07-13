@@ -75,7 +75,7 @@ function isLocalPreviewHost(host) {
     || host === '127.0.0.1'
     || host === '[::1]'
     || host === 'lvh.me'
-    || host.slice(-8) === '.lvh.me';
+    || host.slice(-7) === '.lvh.me';
 }
 
 // Intercept clicks on local links inside chat bubbles: instead of opening a new
