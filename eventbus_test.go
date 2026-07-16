@@ -107,6 +107,70 @@ func TestEventBusReloadsLogOnStart(t *testing.T) {
 	}
 }
 
+func TestPendingUserMessagesFiltersConsumedAndDeleted(t *testing.T) {
+	events := []Event{
+		{Type: "userMessage", ID: "a", Text: "consumed"},
+		{Type: "userMessagesConsumed", IDs: []string{"a"}},
+		{Type: "userMessage", ID: "b", Text: "deleted"},
+		{Type: "userMessageDeleted", ID: "b"},
+		{Type: "userMessage", ID: "c", Text: "still-pending-1"},
+		{Type: "userMessage", ID: "d", Text: "still-pending-2"},
+		{Type: "userMessage", Text: "no-id-legacy"}, // LogUserMessage path — never pending
+		{Type: "agentMessage", Text: "unrelated"},
+	}
+	got := pendingUserMessages(events)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 pending messages, got %d: %+v", len(got), got)
+	}
+	// Order must match the log so the rehydrated queue lines up with the
+	// browser's replayed pending bubbles.
+	if got[0].ID != "c" || got[1].ID != "d" {
+		t.Errorf("unexpected pending order: %q, %q", got[0].ID, got[1].ID)
+	}
+}
+
+// A message left pending when the server stops must be re-queued on restart, so
+// the agent can still drain it and an unsend (Delete) finds it in the queue.
+// Without rehydration it becomes an un-deletable "ghost" bubble.
+func TestEventBusRehydratesPendingQueueOnRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	bus1, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 1): %v", err)
+	}
+	// One message consumed, one withdrawn, one left pending in the queue.
+	bus1.ReceiveUserMessage("consumed-me", nil)
+	bus1.DrainMessages() // publishes userMessagesConsumed for the above
+	delID := bus1.ReceiveUserMessage("delete-me", nil)
+	if !bus1.RemoveFromQueue(delID) {
+		t.Fatalf("expected delete-me to be in the queue")
+	}
+	bus1.Publish(Event{Type: "userMessageDeleted", ID: delID})
+	pendingID := bus1.ReceiveUserMessage("still-pending", nil)
+	bus1.Close() // queue is in-memory — the pending message is only in the log now
+
+	// Restart on the same log file.
+	bus2, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 2): %v", err)
+	}
+	defer bus2.Close()
+
+	if !bus2.HasQueuedMessages() {
+		t.Fatal("expected the pending message to be rehydrated into the queue")
+	}
+	// Delete must now succeed against the rehydrated queue (the fix: unsend finds
+	// it and can publish userMessageDeleted instead of silently failing).
+	if !bus2.RemoveFromQueue(pendingID) {
+		t.Fatalf("expected rehydrated pending message %q to be removable", pendingID)
+	}
+	if bus2.HasQueuedMessages() {
+		t.Error("queue should be empty after removing the only rehydrated message")
+	}
+}
+
 func TestEventBusWithoutLog(t *testing.T) {
 	bus := NewEventBus()
 	// Should work without panicking
