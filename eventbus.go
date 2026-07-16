@@ -154,7 +154,7 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &EventBus{
+	eb := &EventBus{
 		subscribers:      make(map[chan Event]struct{}),
 		pending:          make(map[string]chan string),
 		pendingExports:   make(map[string]chan ExportResult),
@@ -164,7 +164,55 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 		eventLog:         events,
 		nextSeq:          maxSeq,
 		lastQuickReplies: lastQR,
-	}, nil
+	}
+	// Re-enqueue messages that were still pending when the server stopped. The
+	// event log survives a restart but the in-memory queue does not, so without
+	// this a pending userMessage becomes a "ghost" bubble: the browser replays it
+	// from the log as still-pending, yet it's absent from the queue, so the agent
+	// can never drain it and an "unsend" (Delete) finds nothing in the queue to
+	// remove and so never publishes userMessageDeleted — the bubble reappears on
+	// every reload. Rehydrating restores the queue so pending truly means pending.
+	for _, m := range pendingUserMessages(events) {
+		select {
+		case eb.msgQueue <- m:
+		default:
+		}
+	}
+	return eb, nil
+}
+
+// pendingUserMessages scans a restored event log and returns the user messages
+// that are still pending — broadcast (userMessage) but neither consumed
+// (userMessagesConsumed) nor withdrawn (userMessageDeleted). Order is preserved
+// so the rehydrated queue matches the order the browser replays pending bubbles.
+// Messages without an ID (legacy LogUserMessage path) are skipped: they can be
+// neither consumed-by-id nor unsent, so they never render as pending bubbles.
+func pendingUserMessages(events []Event) []UserMessage {
+	consumed := make(map[string]bool)
+	deleted := make(map[string]bool)
+	for _, e := range events {
+		switch e.Type {
+		case "userMessagesConsumed":
+			for _, id := range e.IDs {
+				consumed[id] = true
+			}
+		case "userMessageDeleted":
+			if e.ID != "" {
+				deleted[e.ID] = true
+			}
+		}
+	}
+	var pending []UserMessage
+	for _, e := range events {
+		if e.Type != "userMessage" || e.ID == "" {
+			continue
+		}
+		if consumed[e.ID] || deleted[e.ID] {
+			continue
+		}
+		pending = append(pending, UserMessage{ID: e.ID, Text: e.Text, Files: e.Files})
+	}
+	return pending
 }
 
 // loadEventLog reads a JSONL event log file and returns the parsed events,
