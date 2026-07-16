@@ -170,6 +170,38 @@ test.describe('Unsend pending user message', () => {
     await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveText(/Send as interrupting/);
   });
 
+  test('with several pending bubbles, only the bottom-most offers Send as interrupting', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    const sendBtn = page.locator('#btn-send');
+
+    // Queue two messages without draining — both land in .pending-agent.
+    await textarea.fill('first queued');
+    await sendBtn.click();
+    await page.waitForTimeout(SETTLE_MS);
+    await textarea.fill('second queued');
+    await sendBtn.click();
+    await page.waitForTimeout(SETTLE_MS);
+
+    const first = page.locator('.bubble.user.pending-agent', { hasText: 'first queued' });
+    const second = page.locator('.bubble.user.pending-agent', { hasText: 'second queued' });
+    await expect(first).toHaveCount(1);
+    await expect(second).toHaveCount(1);
+
+    // The EARLIER bubble: Delete only, no interrupt (interrupt drains the whole
+    // queue, so it only belongs on the newest pending bubble).
+    await first.locator('.bubble-pending-menu').click({ force: true });
+    await expect(page.locator('.bubble-menu button[data-action="delete"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(0);
+    // Close the menu before opening the next one.
+    await page.locator('#messages').click({ position: { x: 5, y: 5 } });
+    await page.waitForTimeout(200);
+
+    // The BOTTOM-MOST bubble: both Delete and Send as interrupting.
+    await second.locator('.bubble-pending-menu').click({ force: true });
+    await expect(page.locator('.bubble-menu button[data-action="delete"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(1);
+  });
+
   test('a consumed (non-pending) bubble does not expose the ⋯ menu', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');

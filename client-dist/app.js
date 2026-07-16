@@ -471,9 +471,18 @@ function positionMenuBelow(menu, btn) {
 
 // --- Pending user-bubble "⋯" menu (Delete + Send as interrupting) ---
 // Unread user bubbles (still queued, not yet drained by the agent) carry a small
-// "⋯" button. Delete pulls the message back out of the queue (unsend). Send as
-// interrupting types the message straight into the host terminal — aborting the
-// agent's current tool — and drops the queued copy so it isn't also read later.
+// "⋯" button. Delete pulls this one message back out of the queue (unsend) and
+// is offered on EVERY pending bubble. Send as interrupting aborts the agent's
+// current tool and makes it drain its whole queue now (see
+// interruptWithPendingMessage); because that is a queue-level action it is only
+// offered on the bottom-most (newest) pending bubble.
+
+// True when `bubble` is the last pending (queued, unread) user bubble in the
+// transcript — the anchor for the queue-level "Send as interrupting" row.
+function isLastPendingBubble(bubble) {
+  var pending = messages.querySelectorAll('.bubble.user.pending-agent');
+  return pending.length > 0 && pending[pending.length - 1] === bubble;
+}
 
 function openPendingMenuFor(btn, messageId, text) {
   var menu = document.createElement('div');
@@ -488,13 +497,15 @@ function openPendingMenuFor(btn, messageId, text) {
   });
   menu.appendChild(del);
 
-  // Interrupting means typing the message text into the terminal; a file-only
-  // message has nothing to type, so only offer it when there's actual text.
-  if (text) {
+  // Interrupting drains the entire queue, so only offer it on the bottom-most
+  // pending bubble. It carries no per-message text (file-only messages included),
+  // so there's no text-presence guard.
+  var bubble = btn.closest('.bubble');
+  if (bubble && isLastPendingBubble(bubble)) {
     var interrupt = makeMenuItem('interrupt', 'Send as interrupting', ICON_INTERRUPT);
     interrupt.addEventListener('click', function () {
       closeBubbleMenu();
-      interruptWithPendingMessage(messageId, text);
+      interruptWithPendingMessage();
     });
     menu.appendChild(interrupt);
   }
@@ -530,41 +541,20 @@ function removePendingMenuBtn(bubble) {
   b.remove();
 }
 
-// Promote a pending user bubble to a normal "sent" bubble in place: strip the
-// dimmed pending state, drop its menu, and re-parent it above the loader so the
-// transcript reads chronologically. Used when the message leaves via the
-// terminal (Send as interrupting) rather than being drained from the queue.
-function promotePendingBubble(bubble) {
-  bubble.classList.remove('pending-agent');
-  bubble.removeAttribute('title');
-  removePendingMenuBtn(bubble);
-  var loader = document.getElementById('loading-bubble');
-  if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
-    messages.insertBefore(bubble, loader);
-  }
-}
-
-// Send a queued-but-unread message as an interruption: type Esc Esc + the
-// message into the host terminal (aborts the agent's current tool and submits
-// the text directly), then drop the queued copy so the agent doesn't ALSO read
-// it via check_messages. The bubble is kept — promoted in place — because the
-// message went out through the terminal, not the agent-chat channel, so the
-// server never echoes it back. We strip the id BEFORE unsending so the
-// resulting userMessageDeleted broadcast can't match and remove this bubble.
-function interruptWithPendingMessage(messageId, text) {
-  var bubble = messages.querySelector('.bubble.user[data-msg-id="' + messageId + '"]');
+// Interrupt the agent to make it drain its queue NOW. We abort its current tool
+// (Esc Esc) and submit "check_messages" into the host terminal, so the agent
+// reads ALL queued messages through the normal agent-chat channel — with full
+// redelivery/ordering/file-attachment semantics. We deliberately do NOT unsend
+// and do NOT promote any bubble: each pending bubble stays "pending" until the
+// server's real userMessagesConsumed broadcast flips it (markMessagesConsumed),
+// exactly like a message drained without an interrupt. Because check_messages
+// drains the whole queue, this is only offered on the bottom-most pending bubble.
+function interruptWithPendingMessage() {
   if (window.parent === window) {
     addAgentMessage('Cannot interrupt: host terminal not connected.', null, 'warning', Date.now());
     return;
   }
-  window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
-  if (bubble) {
-    bubble.removeAttribute('data-msg-id');
-    promotePendingBubble(bubble);
-  }
-  if (activeWs && activeWs.readyState === WebSocket.OPEN) {
-    activeWs.send(JSON.stringify({ type: 'unsend', id: messageId }));
-  }
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: 'check_messages' }, '*');
 }
 
 // "⋯" overflow button. Toggles the bubble's action menu.
