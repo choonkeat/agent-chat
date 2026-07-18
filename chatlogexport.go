@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -12,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -368,8 +371,8 @@ func copyFileSum(src, dst string) (string, error) {
 // user: every export refreshes them so bundled fixes always reach every
 // archive. (A user wanting custom styling should edit the embedded source and
 // rebuild, not patch the served copy — it will be clobbered on the next
-// export.) index.html is handled separately by upsertIndexHTML, which preserves
-// the user-visible manifest it splices in.
+// export.) index.html is handled separately by regenerateIndexHTML, which
+// derives the manifest from the export files on disk.
 func ensureViewerAssets(dir string) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -410,39 +413,112 @@ func jsString(s string) string {
 	return `'` + s + `'`
 }
 
-// manifestOpenRE matches the line `const MANIFEST = [` (followed by newline).
-// New entries are inserted immediately after this line so the array stays in
-// descending order (newest first).
+// manifestOpenRE matches the line `const MANIFEST = [` (followed by newline)
+// in the embedded index.html template. regenerateIndexHTML inserts the derived
+// manifest entries immediately after this line.
 var manifestOpenRE = regexp.MustCompile(`(?m)^[ \t]*const[ \t]+MANIFEST[ \t]*=[ \t]*\[[ \t]*\n`)
 
-// upsertIndexHTML writes the embedded index.html template if the file does
-// not exist, then inserts a new manifest entry as the first element of the
-// MANIFEST array (descending order — newest first).
-func upsertIndexHTML(path string, entry manifestEntry) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		tmpl, err := chatLogViewerFS.ReadFile("chatlog-viewer/index.html")
-		if err != nil {
-			return fmt.Errorf("read embedded index.html: %w", err)
-		}
-		if err := os.WriteFile(path, tmpl, 0644); err != nil {
-			return fmt.Errorf("write index.html: %w", err)
-		}
-	}
-	data, err := os.ReadFile(path)
+// mdExportNameRE parses an exported chat filename: {YYYY-MM-DD}-{NN}-{slug}.md
+// with NN 2 or 3 digits (matching nextDailyIndex). Files that don't match are
+// not exports and are excluded from the manifest.
+var mdExportNameRE = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})-(\d{2,3})-(.+)\.md$`)
+
+// chatHeaderRE matches one `key: value` line inside the leading
+// `<!-- agent-chat export` header comment.
+var chatHeaderRE = regexp.MustCompile(`^([a-z]+):\s*(.*)$`)
+
+// readChatHeader parses the `<!-- agent-chat export ... -->` comment at the
+// top of an exported .md file into key/value pairs. Returns nil if the file
+// doesn't start with the header (e.g. a hand-written or truncated file).
+func readChatHeader(path string) map[string]string {
+	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("read index.html: %w", err)
+		return nil
 	}
-	loc := manifestOpenRE.FindIndex(data)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() || strings.TrimSpace(sc.Text()) != "<!-- agent-chat export" {
+		return nil
+	}
+	fields := map[string]string{}
+	for i := 0; sc.Scan() && i < 32; i++ {
+		line := sc.Text()
+		if strings.TrimSpace(line) == "-->" {
+			return fields
+		}
+		if m := chatHeaderRE.FindStringSubmatch(line); m != nil {
+			fields[m[1]] = m[2]
+		}
+	}
+	return fields
+}
+
+// regenerateIndexHTML rewrites dir/index.html from scratch: the embedded
+// template plus a MANIFEST derived entirely from the `*.md` export files
+// present in dir (newest first; title read from each file's header comment,
+// falling back to humanTitle(slug)). Because the output is a pure function of
+// the directory contents it is idempotent, and a corrupted index.html (e.g.
+// git merge markers) is healed by simply being rewritten.
+func regenerateIndexHTML(dir string) error {
+	dirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("read dir %s: %w", dir, err)
+	}
+	type sortableEntry struct {
+		manifestEntry
+		idxNum int
+	}
+	var entries []sortableEntry
+	for _, de := range dirEntries {
+		if de.IsDir() {
+			continue
+		}
+		m := mdExportNameRE.FindStringSubmatch(de.Name())
+		if m == nil {
+			continue
+		}
+		date, idx, slug := m[1], m[2], m[3]
+		idxNum, err := strconv.Atoi(idx)
+		if err != nil {
+			continue
+		}
+		title := readChatHeader(filepath.Join(dir, de.Name()))["title"]
+		if title == "" {
+			title = humanTitle(slug)
+		}
+		entries = append(entries, sortableEntry{
+			manifestEntry: manifestEntry{MD: "./" + de.Name(), Date: date, Index: idx, Title: title},
+			idxNum:        idxNum,
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Date != entries[j].Date {
+			return entries[i].Date > entries[j].Date
+		}
+		if entries[i].idxNum != entries[j].idxNum {
+			return entries[i].idxNum > entries[j].idxNum
+		}
+		return entries[i].MD > entries[j].MD
+	})
+
+	tmpl, err := chatLogViewerFS.ReadFile("chatlog-viewer/index.html")
+	if err != nil {
+		return fmt.Errorf("read embedded index.html: %w", err)
+	}
+	loc := manifestOpenRE.FindIndex(tmpl)
 	if loc == nil {
-		return fmt.Errorf("manifest opening line not found in %s — cannot prepend entry", path)
+		return fmt.Errorf("manifest opening line not found in embedded index.html template")
 	}
-	insertAt := loc[1]
-	newLine := entry.jsLine() + "\n"
-	out := make([]byte, 0, len(data)+len(newLine))
-	out = append(out, data[:insertAt]...)
-	out = append(out, []byte(newLine)...)
-	out = append(out, data[insertAt:]...)
-	return os.WriteFile(path, out, 0644)
+	var lines strings.Builder
+	for _, e := range entries {
+		lines.WriteString(e.jsLine())
+		lines.WriteByte('\n')
+	}
+	out := make([]byte, 0, len(tmpl)+lines.Len())
+	out = append(out, tmpl[:loc[1]]...)
+	out = append(out, []byte(lines.String())...)
+	out = append(out, tmpl[loc[1]:]...)
+	return os.WriteFile(filepath.Join(dir, "index.html"), out, 0644)
 }
 
 // runChatMarkdownExport is the orchestrator the MCP tool calls. It writes the
@@ -479,11 +555,7 @@ func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, v
 		return "", nil, fmt.Errorf("write %s: %w", mdPath, err)
 	}
 
-	indexPath := filepath.Join(rootDir, "index.html")
-	mdRel := "./" + filepath.Base(mdPath)
-	if err := upsertIndexHTML(indexPath, manifestEntry{
-		MD: mdRel, Date: date, Index: idx, Title: meta.Title,
-	}); err != nil {
+	if err := regenerateIndexHTML(rootDir); err != nil {
 		return "", nil, err
 	}
 	return mdPath, warnings, nil

@@ -608,18 +608,6 @@ func TestFormatElapsed(t *testing.T) {
 	}
 }
 
-func TestUpsertIndexHTMLMissingSentinelFails(t *testing.T) {
-	dir := t.TempDir()
-	bad := filepath.Join(dir, "index.html")
-	if err := os.WriteFile(bad, []byte("<html><body>no sentinel here</body></html>"), 0644); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	err := upsertIndexHTML(bad, manifestEntry{MD: "./a.md", Date: "d", Index: "01", Title: "T"})
-	if err == nil || !strings.Contains(err.Error(), "manifest opening line not found") {
-		t.Errorf("expected manifest-opening-line-not-found error, got: %v", err)
-	}
-}
-
 // --- check_messages redelivery (pending-ack) composition ---
 
 func TestComposeCheckMessagesResultEmpty(t *testing.T) {
