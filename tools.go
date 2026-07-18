@@ -734,6 +734,26 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}, nil, nil
 	})
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "chatlog_optout",
+		Description: "Stop the streaming chat-log export for this session and delete its .md file (assets are left alone — their content-sha names may be shared by other sessions; index.html is regenerated). Use when the user asks not to archive this conversation. Re-enable later by calling set_chat_title.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
+		bus.CancelActiveWait()
+		bus.AckLimbo()
+		if chatStream == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: streaming chat-log export is not enabled (AGENT_CHAT_EXPORT_DIR unset) — nothing to opt out of"}},
+				IsError: true,
+			}, nil, nil
+		}
+		if err := chatStream.Optout(); err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Streaming chat-log export stopped and this session's .md deleted. Call set_chat_title to re-enable."}},
+		}, nil, nil
+	})
+
 	type ExportChatMDParams struct {
 		Title      string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
 		TargetDir  string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
@@ -741,7 +761,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "export_chat_md",
-		Description: "Export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies any user-uploaded image attachments into ./agent-chats/assets/YYYY-MM-DD-NN-N.{ext} (relative-path links from the .md), and upserts ./agent-chats/index.html — the chat-archive landing page — by prepending a manifest entry on top (newest first). On the first export, also writes ./agent-chats/assets/viewer.css and viewer.js (idempotent: never overwritten on subsequent calls). Path safety: target_dir cannot escape cwd.",
+		Description: "Manually export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. NOTE: when AGENT_CHAT_EXPORT_DIR is set the chat log auto-exports continuously (see set_chat_title) — this tool is the manual escape hatch for a custom target_dir or a forced full export. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies attachments into ./agent-chats/assets/ (content-sha filenames, relative-path links from the .md), refreshes viewer.css/viewer.js, and regenerates ./agent-chats/index.html — the chat-archive landing page — from the .md files on disk (newest first). Path safety: target_dir cannot escape cwd.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
 		bus.CancelActiveWait()
 		bus.AckLimbo()

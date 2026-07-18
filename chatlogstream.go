@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -8,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // chatLogStream appends each renderable chat event to a markdown export file
@@ -34,6 +38,49 @@ type chatLogStream struct {
 	imageMap map[string]string // upload path -> ./assets/... relative URL
 	f        *os.File          // O_APPEND handle
 	stopped  bool              // chatlog_optout
+
+	indexDebounce time.Duration // turn-end debounce for index regeneration (0 = 2s default)
+	indexTimer    *time.Timer   // pending debounced regeneration, if any
+}
+
+// chatLogSessionID derives the stable identity written to the `session:`
+// header line. The JSONL event log path (AGENT_CHAT_EVENT_LOG) is per-session
+// and survives restarts, so its hash identifies the session across restarts;
+// without an event log there is no history to resume from anyway, so a random
+// UUID suffices.
+func chatLogSessionID(eventLogPath string) string {
+	if eventLogPath == "" {
+		return uuid.New().String()
+	}
+	abs, err := filepath.Abs(eventLogPath)
+	if err != nil {
+		abs = eventLogPath
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// initChatLogStream is the boot-time entry point for the streaming export:
+// exportDir is AGENT_CHAT_EXPORT_DIR verbatim ("" = feature off), resolved
+// relative to cwd with the same cannot-escape-cwd rule as export_chat_md's
+// target_dir — except an escaping path is a misconfiguration warning +
+// feature off, not an error: a bad env var must never take the chat down.
+func initChatLogStream(exportDir, cwd, sessionID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
+	if exportDir == "" {
+		return nil, nil
+	}
+	dir := exportDir
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(cwd, dir)
+	}
+	dir = filepath.Clean(dir)
+	cwdClean := filepath.Clean(cwd)
+	rel, err := filepath.Rel(cwdClean, dir)
+	if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+		log.Printf("agent-chat: fatal misconfiguration: AGENT_CHAT_EXPORT_DIR %q resolves outside the working directory %q — streaming chat-log export disabled", exportDir, cwdClean)
+		return nil, nil
+	}
+	return newChatLogStream(dir, sessionID, agent, version, history, now)
 }
 
 // newChatLogStream claims the next daily NN in dir by creating the provisional
@@ -93,13 +140,20 @@ func newChatLogStream(dir, sessionID, agent, version string, history []Event, no
 	}
 	f.Sync()
 
-	return &chatLogStream{
+	s := &chatLogStream{
 		dir:      dir,
 		mdPath:   mdPath,
 		meta:     meta,
 		imageMap: map[string]string{},
 		f:        f,
-	}, nil
+	}
+	// Feature enabled mid-session (event log restored history but no export
+	// file existed yet): stream the backlog into the fresh file now.
+	// Attachments are best-effort — some upload sources may already be gone.
+	for _, e := range history {
+		s.HandleEvent(e)
+	}
+	return s, nil
 }
 
 // resumeChatLogStream scans dir for an export whose header `session:` line
@@ -198,7 +252,7 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.f == nil {
+	if s.f == nil && !s.stopped {
 		return fmt.Errorf("chat log stream is closed")
 	}
 
@@ -215,11 +269,14 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 		b.WriteString(renderChatBubble(e, &st, s.imageMap))
 	}
 
-	s.f.Close()
-	s.f = nil
+	if s.f != nil {
+		s.f.Close()
+		s.f = nil
+	}
 	if newPath != s.mdPath {
-		if err := os.Rename(s.mdPath, newPath); err != nil {
-			return fmt.Errorf("rename %s → %s: %w", s.mdPath, newPath, err)
+		// Retire the old name; after chatlog_optout it is already gone.
+		if err := os.Remove(s.mdPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", s.mdPath, err)
 		}
 		s.mdPath = newPath
 	}
@@ -232,18 +289,73 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 	}
 	s.f = f
 	s.st = st
+	s.stopped = false // set_chat_title re-arms a stream stopped by chatlog_optout
 	return nil
 }
 
-// Close flushes and closes the stream's file. Subsequent HandleEvent calls
-// are no-ops.
+// Optout implements chatlog_optout: stop appending, delete this session's .md
+// (assets stay — their content-sha names may be shared with other sessions;
+// orphans are harmless) and regenerate index.html so the archive no longer
+// lists it. SetTitle re-arms.
+func (s *chatLogStream) Optout() error {
+	s.mu.Lock()
+	if s.indexTimer != nil {
+		s.indexTimer.Stop()
+	}
+	s.stopped = true
+	if s.f != nil {
+		s.f.Close()
+		s.f = nil
+	}
+	mdPath, dir := s.mdPath, s.dir
+	s.mu.Unlock()
+
+	if err := os.Remove(mdPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove %s: %w", mdPath, err)
+	}
+	return regenerateIndexHTML(dir)
+}
+
+// scheduleIndexRegen (call with s.mu held) debounces the turn-end
+// housekeeping: index.html is regenerated once the event stream has been
+// quiet for the debounce window, not on every append.
+func (s *chatLogStream) scheduleIndexRegen() {
+	d := s.indexDebounce
+	if d == 0 {
+		d = 2 * time.Second
+	}
+	if s.indexTimer != nil {
+		s.indexTimer.Stop()
+	}
+	dir := s.dir
+	s.indexTimer = time.AfterFunc(d, func() {
+		if err := regenerateIndexHTML(dir); err != nil {
+			log.Printf("agent-chat: chatlog stream: regenerate index: %v", err)
+		}
+	})
+}
+
+// Close flushes and closes the stream's file and runs a final index
+// regeneration (the SIGTERM path — nothing else needs writing at session end;
+// every bubble is already on disk). Subsequent HandleEvent calls are no-ops.
 func (s *chatLogStream) Close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.indexTimer != nil {
+		s.indexTimer.Stop()
+	}
+	closed := false
 	if s.f != nil {
 		s.f.Sync()
 		s.f.Close()
 		s.f = nil
+		closed = true
+	}
+	dir := s.dir
+	s.mu.Unlock()
+	if closed {
+		if err := regenerateIndexHTML(dir); err != nil {
+			log.Printf("agent-chat: chatlog stream: final index regeneration: %v", err)
+		}
 	}
 }
 
@@ -292,4 +404,5 @@ func (s *chatLogStream) HandleEvent(e Event) {
 		return
 	}
 	s.f.Sync()
+	s.scheduleIndexRegen()
 }
