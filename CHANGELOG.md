@@ -5,6 +5,20 @@ All notable changes to agent-chat are documented in this file.
 ## [Unreleased]
 
 ### Features
+- Streaming chat-log auto-export: set `AGENT_CHAT_EXPORT_DIR` (relative to
+  cwd; cannot escape it) and every chat bubble is appended to
+  `{dir}/{date}-{NN}-untitled.md` the moment it happens — attachments are
+  copied into `assets/` at that same moment, while the upload files still
+  exist. New `set_chat_title` tool renames the file (full header rewrite;
+  callable again to rename), and `chatlog_optout` stops the export for the
+  session and deletes its `.md` (`set_chat_title` re-enables). The archive's
+  `index.html` is now **regenerated from the `.md` files on disk** (after a
+  quiet-turn debounce, and on exit) instead of being patched incrementally —
+  idempotent, so a git merge conflict in `index.html` heals on the next
+  export: accept either side. A `session:` header line lets a restarted
+  process (same `AGENT_CHAT_EVENT_LOG`) resume appending to its own file.
+  `export_chat_md` remains as the manual escape hatch. Nothing is ever
+  auto-committed.
 - When embedded in a host that passes `parent_url` (e.g. swe-swe), clicking a
   link to a local address (`localhost`, `127.0.0.1`, or a `*.lvh.me` vhost)
   inside a chat bubble now loads it in the host's App Preview pane instead of a

@@ -50,7 +50,32 @@ Agent (Claude, etc.)
 | `send_progress` | Send a non-blocking progress update. |
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |
-| `export_chat_md` | Export the current chat as a markdown file (HTML-table format that renders as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies image attachments to `./agent-chats/assets/`, and upserts the chat-archive `index.html`. First export also writes embedded `viewer.css` / `viewer.js` into the assets directory. |
+| `set_chat_title` | Name the streaming chat-log export (see below): renames the auto-written `…-untitled.md` to `…-{slugified-title}.md` and rewrites its header. Call again anytime to rename; also re-enables the export after `chatlog_optout`. |
+| `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
+| `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies attachments to `./agent-chats/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
+
+## Streaming chat-log export
+
+Set `AGENT_CHAT_EXPORT_DIR` (e.g. `agent-chats`, resolved relative to the
+working directory — it cannot escape it) and the markdown archive writes
+itself, no `export_chat_md` call needed:
+
+- **Every chat bubble is appended to `{date}-{NN}-untitled.md` the moment it
+  happens**, and its attachments are copied into `assets/` at that same moment
+  (content-sha filenames), while the upload files still exist.
+- The agent names the file via `set_chat_title` (renames + header rewrite;
+  callable again to rename). `chatlog_optout` stops the export for the session
+  and deletes its `.md`.
+- `index.html` — the archive landing page — is **regenerated from the `.md`
+  files on disk** after each quiet turn, never patched incrementally. That
+  makes it merge-friendly: on a git conflict in `index.html`, accept either
+  side (or delete the file); the next export regenerates it correctly.
+  Duplicate daily `NN`s from parallel branches are fine — the regenerated
+  index lists both, and content-sha asset names never clobber.
+- The header comment carries a `session:` line, so a restarted process
+  (same `AGENT_CHAT_EVENT_LOG`) resumes appending to its own file instead of
+  minting a new one.
+- Nothing is ever auto-committed — the export sits in the working tree.
 
 ## Installation
 
@@ -74,6 +99,7 @@ The chat UI opens automatically in your browser.
 |----------|-------------|
 | `AGENT_CHAT_PORT` | Fixed port for the HTTP server (default: random) |
 | `AGENT_CHAT_EVENT_LOG` | Path to a JSONL file for event persistence across restarts |
+| `AGENT_CHAT_EXPORT_DIR` | Directory (relative to cwd) for the streaming markdown chat-log export; unset = disabled |
 | `AGENT_CHAT_DISABLE` | Set to any value to disable tools and HTTP server |
 
 ## License
