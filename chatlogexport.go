@@ -29,6 +29,7 @@ type chatExportMeta struct {
 	Date    string // YYYY-MM-DD
 	Index   string // 2-digit zero-padded
 	Slug    string
+	Session string // session UUID (streaming exports; lets a restarted process find its file)
 	Agent   string
 	Version string // agent-chat version + commit
 }
@@ -50,6 +51,9 @@ func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string
 	fmt.Fprintf(&b, "date: %s\n", meta.Date)
 	fmt.Fprintf(&b, "index: %s\n", meta.Index)
 	fmt.Fprintf(&b, "slug: %s\n", meta.Slug)
+	if meta.Session != "" {
+		fmt.Fprintf(&b, "session: %s\n", meta.Session)
+	}
 	if meta.Agent != "" {
 		fmt.Fprintf(&b, "agent: %s\n", meta.Agent)
 	}
@@ -292,44 +296,60 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 		default:
 			continue
 		}
-		for _, f := range e.Files {
-			if f.Path == "" {
-				continue
-			}
-			if _, ok := out[f.Path]; ok {
-				continue
-			}
-			ext := filepath.Ext(f.Name)
-			if ext == "" && f.Type != "" {
-				if exts, _ := mime.ExtensionsByType(f.Type); len(exts) > 0 {
-					ext = exts[0]
-				}
-			}
-			n++
-			// Copy under a provisional numbered name, then rename to include a
-			// content digest before the extension so assets never collide even
-			// if the numbering ever repeats: {date}-{NN}-{N}-{sha12}.{ext}.
-			staging := filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, n, ext))
-			sum, err := copyFileSum(f.Path, staging)
-			if err != nil {
-				if errors.Is(err, os.ErrNotExist) {
-					// Source vanished between the upload and the export. Warn
-					// and skip rather than aborting the whole export.
-					warnings = append(warnings, fmt.Sprintf("skipped missing attachment %q (%s)", f.Name, f.Path))
-					continue
-				}
-				return nil, nil, fmt.Errorf("copy %s → %s: %w", f.Path, staging, err)
-			}
-			dstName := fmt.Sprintf("%s-%s-%d-%s%s", date, idx, n, sum, ext)
-			dst := filepath.Join(assetsDir, dstName)
-			if err := os.Rename(staging, dst); err != nil {
-				os.Remove(staging)
-				return nil, nil, fmt.Errorf("rename %s → %s: %w", staging, dst, err)
-			}
-			out[f.Path] = "./assets/" + dstName
+		w, err := writeEventAttachments(e, assetsDir, date, idx, &n, out)
+		warnings = append(warnings, w...)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 	return out, warnings, nil
+}
+
+// writeEventAttachments copies a single event's attachments into assetsDir
+// (which must already exist), advancing *n for each new asset and recording
+// source-path → relative-URL mappings in out. Paths already present in out are
+// skipped, so a shared map dedups across events. Missing source files produce
+// warnings, not errors (see writeImageAttachments). This is the per-event
+// primitive both the batch exporter and the streaming writer use.
+func writeEventAttachments(e Event, assetsDir, date, idx string, n *int, out map[string]string) ([]string, error) {
+	var warnings []string
+	for _, f := range e.Files {
+		if f.Path == "" {
+			continue
+		}
+		if _, ok := out[f.Path]; ok {
+			continue
+		}
+		ext := filepath.Ext(f.Name)
+		if ext == "" && f.Type != "" {
+			if exts, _ := mime.ExtensionsByType(f.Type); len(exts) > 0 {
+				ext = exts[0]
+			}
+		}
+		*n++
+		// Copy under a provisional numbered name, then rename to include a
+		// content digest before the extension so assets never collide even
+		// if the numbering ever repeats: {date}-{NN}-{N}-{sha12}.{ext}.
+		staging := filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, *n, ext))
+		sum, err := copyFileSum(f.Path, staging)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// Source vanished between the upload and the export. Warn
+				// and skip rather than aborting the whole export.
+				warnings = append(warnings, fmt.Sprintf("skipped missing attachment %q (%s)", f.Name, f.Path))
+				continue
+			}
+			return warnings, fmt.Errorf("copy %s → %s: %w", f.Path, staging, err)
+		}
+		dstName := fmt.Sprintf("%s-%s-%d-%s%s", date, idx, *n, sum, ext)
+		dst := filepath.Join(assetsDir, dstName)
+		if err := os.Rename(staging, dst); err != nil {
+			os.Remove(staging)
+			return warnings, fmt.Errorf("rename %s → %s: %w", staging, dst, err)
+		}
+		out[f.Path] = "./assets/" + dstName
+	}
+	return warnings, nil
 }
 
 // copyFileSum copies src to dst and returns a short hex sha256 of the bytes it
