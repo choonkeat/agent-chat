@@ -703,6 +703,37 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}, nil, nil
 	})
 
+	type SetChatTitleParams struct {
+		Title string `json:"title" jsonschema:"Short human-readable chat title (e.g. 'Auth bug fix'). Slugified for the filename."`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "set_chat_title",
+		Description: "Name the streaming chat-log export (enabled when AGENT_CHAT_EXPORT_DIR is set). Call it once the task at hand is clear — the auto-written ./agent-chats/YYYY-MM-DD-NN-untitled.md is renamed to …-{slugified-title}.md and its header rewritten; call again anytime to rename. Titles are per-session; keep them short and descriptive (e.g. 'Auth bug fix').",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *SetChatTitleParams) (*mcp.CallToolResult, any, error) {
+		bus.CancelActiveWait()
+		bus.AckLimbo()
+		if chatStream == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: streaming chat-log export is disabled — set AGENT_CHAT_EXPORT_DIR to enable it (export_chat_md still works for manual exports)"}},
+				IsError: true,
+			}, nil, nil
+		}
+		events, _ := bus.History()
+		if err := chatStream.SetTitle(params.Title, events); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: " + err.Error()}},
+				IsError: true,
+			}, nil, nil
+		}
+		if err := regenerateIndexHTML(chatStream.Dir()); err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Chat log renamed to " + chatStream.MDPath()}},
+		}, nil, nil
+	})
+
 	type ExportChatMDParams struct {
 		Title      string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
 		TargetDir  string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
