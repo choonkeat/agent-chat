@@ -236,6 +236,29 @@ func main() {
 	}
 	defer bus.Close()
 
+	// Streaming chat-log export (append-as-it-goes .md twin of the JSONL log),
+	// enabled by AGENT_CHAT_EXPORT_DIR. A misconfigured dir disables the
+	// feature with a warning; it never takes the chat down.
+	{
+		history, _ := bus.History()
+		stream, err := initChatLogStream(
+			os.Getenv("AGENT_CHAT_EXPORT_DIR"), cwd,
+			chatLogSessionID(os.Getenv("AGENT_CHAT_EVENT_LOG")),
+			"claude", version+" ("+commit+")", history, time.Now())
+		if err != nil {
+			log.Printf("Warning: streaming chat-log export disabled: %v", err)
+		} else if stream != nil {
+			chatStream = stream
+			defer chatStream.Close() // SIGTERM/exit: flush + final index regeneration
+			ch := bus.Subscribe()
+			go func() {
+				for e := range ch {
+					chatStream.HandleEvent(e)
+				}
+			}()
+		}
+	}
+
 	// Top-level context cancelled on shutdown — all goroutines should use this.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
