@@ -66,64 +66,82 @@ func renderChatMarkdown(events []Event, meta chatExportMeta, imageMap map[string
 	}
 	fmt.Fprintf(&b, "_%s_\n\n", strings.Join(bylineBits, " · "))
 
-	var lastTs int64
+	var st renderState
 	for _, e := range events {
-		switch e.Type {
-		case "userMessage":
-			body := strings.TrimSpace(e.Text)
-			imgBlock := imageBlock(e.Files, imageMap)
-			if body == "" && imgBlock == "" {
-				continue
-			}
-			b.WriteString("**USER**\n\n")
-			if body != "" {
-				b.WriteString(blockquoteText(body))
-				b.WriteString("\n")
-			}
-			if imgBlock != "" {
-				if body != "" {
-					b.WriteString(">\n")
-				}
-				b.WriteString(imgBlock)
-				b.WriteString("\n")
-			}
-			b.WriteString("\n")
-			if e.Timestamp > 0 {
-				lastTs = e.Timestamp
-			}
-		case "agentMessage", "verbalReply":
-			body := strings.TrimSpace(e.Text)
-			imgBlock := imageBlock(e.Files, imageMap)
-			if body == "" && imgBlock == "" {
-				continue
-			}
-			// Mirror client-dist/app.js:323-333: any previous bubble (user or
-			// agent) sets lastTs; if a delta is computable, emit it.
-			if lastTs > 0 && e.Timestamp > lastTs {
-				fmt.Fprintf(&b, "<small>took %s</small><br>\n", formatElapsed(e.Timestamp-lastTs))
-			}
-			b.WriteString("**AGENT**\n\n")
-			if body != "" {
-				b.WriteString(blockquoteText(body))
-				b.WriteString("\n")
-			}
-			if imgBlock != "" {
-				if body != "" {
-					b.WriteString(">\n")
-				}
-				b.WriteString(imgBlock)
-				b.WriteString("\n")
-			}
-			b.WriteString("\n")
-			if qr := quickRepliesBlock(e.QuickReplies); qr != "" {
-				b.WriteString(qr)
-			}
-			if e.Timestamp > 0 {
-				lastTs = e.Timestamp
-			}
-		}
+		b.WriteString(renderChatBubble(e, &st, imageMap))
 	}
 
+	return b.String()
+}
+
+// renderState carries the fold state renderChatBubble threads between bubbles:
+// lastTs is the timestamp of the previous rendered bubble, used to emit the
+// `<small>took Ns</small>` elapsed line before an agent turn.
+type renderState struct {
+	lastTs int64
+}
+
+// renderChatBubble renders a single event as markdown, updating st. Events
+// that produce no output (hidden types like toolMarker, or turns whose body
+// and attachments are all empty) return "" and leave st untouched. Both the
+// batch exporter (renderChatMarkdown) and the streaming writer fold this over
+// their events, so their outputs are identical by construction.
+func renderChatBubble(e Event, st *renderState, imageMap map[string]string) string {
+	var b strings.Builder
+	switch e.Type {
+	case "userMessage":
+		body := strings.TrimSpace(e.Text)
+		imgBlock := imageBlock(e.Files, imageMap)
+		if body == "" && imgBlock == "" {
+			return ""
+		}
+		b.WriteString("**USER**\n\n")
+		if body != "" {
+			b.WriteString(blockquoteText(body))
+			b.WriteString("\n")
+		}
+		if imgBlock != "" {
+			if body != "" {
+				b.WriteString(">\n")
+			}
+			b.WriteString(imgBlock)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		if e.Timestamp > 0 {
+			st.lastTs = e.Timestamp
+		}
+	case "agentMessage", "verbalReply":
+		body := strings.TrimSpace(e.Text)
+		imgBlock := imageBlock(e.Files, imageMap)
+		if body == "" && imgBlock == "" {
+			return ""
+		}
+		// Mirror client-dist/app.js:323-333: any previous bubble (user or
+		// agent) sets lastTs; if a delta is computable, emit it.
+		if st.lastTs > 0 && e.Timestamp > st.lastTs {
+			fmt.Fprintf(&b, "<small>took %s</small><br>\n", formatElapsed(e.Timestamp-st.lastTs))
+		}
+		b.WriteString("**AGENT**\n\n")
+		if body != "" {
+			b.WriteString(blockquoteText(body))
+			b.WriteString("\n")
+		}
+		if imgBlock != "" {
+			if body != "" {
+				b.WriteString(">\n")
+			}
+			b.WriteString(imgBlock)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		if qr := quickRepliesBlock(e.QuickReplies); qr != "" {
+			b.WriteString(qr)
+		}
+		if e.Timestamp > 0 {
+			st.lastTs = e.Timestamp
+		}
+	}
 	return b.String()
 }
 
