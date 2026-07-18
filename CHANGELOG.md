@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.8.14] — 2026-07-18
 
 ### Features
 - Streaming chat-log auto-export: set `AGENT_CHAT_EXPORT_DIR` (relative to
@@ -19,6 +19,39 @@ All notable changes to agent-chat are documented in this file.
   process (same `AGENT_CHAT_EVENT_LOG`) resume appending to its own file.
   `export_chat_md` remains as the manual escape hatch. Nothing is ever
   auto-committed.
+- "Send as interrupting" on a pending user bubble now aborts the agent's
+  current tool and submits `check_messages`, so the agent reads ALL queued
+  messages through the normal agent-chat channel (full redelivery / ordering /
+  file-attachment semantics) instead of having the message text typed
+  out-of-band. Bubbles stay pending until the server's real
+  `userMessagesConsumed` broadcast flips them, and the interrupt row shows
+  only on the bottom-most pending bubble (it drains the whole queue).
+
+### Fixes
+- Pending user messages survive a server restart. The event log survived but
+  the in-memory queue did not, leaving "ghost" pending bubbles the agent could
+  never drain and Delete could not remove. The queue is now rehydrated at
+  startup from every `userMessage` with no matching consumed/deleted event.
+
+## [0.8.13] — 2026-07-13
+
+### Fixes
+- Pending user-bubble (⋯) menu button unified with the agent bubble's
+  menu-button style.
+
+## [0.8.12] — 2026-07-13
+
+### Features
+- Pending user bubbles get a (⋯) overflow menu with "Delete" and "Send as
+  interrupting".
+
+### Fixes
+- The pending-bubble (⋯) menu stays faintly visible at rest so it is
+  discoverable on touch screens.
+
+## [0.8.11] — 2026-07-13
+
+### Features
 - When embedded in a host that passes `parent_url` (e.g. swe-swe), clicking a
   link to a local address (`localhost`, `127.0.0.1`, or a `*.lvh.me` vhost)
   inside a chat bubble now loads it in the host's App Preview pane instead of a
@@ -26,6 +59,10 @@ All notable changes to agent-chat are documented in this file.
   `agent-chat-open-preview`; the host routes it into Preview. Modified clicks
   (cmd/ctrl/shift/alt or non-left button) and non-local links keep the default
   new-tab behaviour, and standalone agent-chat is unaffected.
+
+### Fixes
+- No longer steals focus on reconnect.
+- The local-preview host check matches `*.lvh.me` subdomains.
 
 ## [0.8.10] — 2026-07-12
 
