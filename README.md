@@ -61,8 +61,10 @@ working directory — it cannot escape it) and the markdown archive writes
 itself, no `export_chat_md` call needed:
 
 - **Every chat bubble is appended to `{date}-{NN}-untitled.md` the moment it
-  happens**, and its attachments are copied into `assets/` at that same moment
-  (content-sha filenames), while the upload files still exist.
+  happens** (`{date}-{NN}-untitled-{SESSION_UUID}.md` when a `SESSION_UUID`
+  env var identifies the host session), and its attachments are copied into
+  `assets/` at that same moment (content-sha filenames), while the upload
+  files still exist.
 - The agent names the file via `set_chat_title` (renames + header rewrite;
   callable again to rename). `chatlog_optout` stops the export for the session
   and deletes its `.md`.
