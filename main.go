@@ -244,6 +244,7 @@ func main() {
 		stream, err := initChatLogStream(
 			os.Getenv("AGENT_CHAT_EXPORT_DIR"), cwd,
 			chatLogSessionID(os.Getenv("AGENT_CHAT_EVENT_LOG")),
+			os.Getenv("SESSION_UUID"),
 			"claude", version+" ("+commit+")", history, time.Now())
 		if err != nil {
 			log.Printf("Warning: streaming chat-log export disabled: %v", err)

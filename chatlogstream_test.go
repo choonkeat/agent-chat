@@ -72,7 +72,7 @@ func TestChatLogStreamAppends(t *testing.T) {
 	sum := sha256.Sum256(imgContent)
 	sha12 := hex.EncodeToString(sum[:])[:12]
 
-	s, err := newChatLogStream(dir, "sess-uuid-1234", "claude", "v1 (abc)", nil, now)
+	s, err := newChatLogStream(dir, "sess-uuid-1234", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatalf("newChatLogStream: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestChatLogStreamAppends(t *testing.T) {
 func TestChatLogStreamSkipsHiddenEvents(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
-	s, err := newChatLogStream(dir, "sess-uuid-5678", "claude", "v1 (abc)", nil, now)
+	s, err := newChatLogStream(dir, "sess-uuid-5678", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatalf("newChatLogStream: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestChatLogStreamSkipsHiddenEvents(t *testing.T) {
 func TestChatLogStreamRename(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
-	s, err := newChatLogStream(dir, "sess-rename", "claude", "v1 (abc)", nil, now)
+	s, err := newChatLogStream(dir, "sess-rename", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatalf("newChatLogStream: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestChatLogStreamResume(t *testing.T) {
 	sum1 := sha256.Sum256(img1)
 	sha1hex := hex.EncodeToString(sum1[:])[:12]
 
-	s1, err := newChatLogStream(dir, "sess-A", "claude", "v1 (abc)", nil, now)
+	s1, err := newChatLogStream(dir, "sess-A", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatalf("first stream: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestChatLogStreamResume(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s2, err := newChatLogStream(dir, "sess-A", "claude", "v1 (abc)", history, now.Add(time.Hour))
+	s2, err := newChatLogStream(dir, "sess-A", "", "claude", "v1 (abc)", history, now.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("resume stream: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestChatLogStreamResume(t *testing.T) {
 	}
 
 	// A different session must NOT steal the file — it mints the next NN.
-	s3, err := newChatLogStream(dir, "sess-B", "claude", "v1 (abc)", nil, now)
+	s3, err := newChatLogStream(dir, "sess-B", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatalf("third stream: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestChatLogStreamResume(t *testing.T) {
 // no directory or files created.
 func TestChatLogStreamEnvDisabled(t *testing.T) {
 	cwd := t.TempDir()
-	s, err := initChatLogStream("", cwd, "sid", "claude", "v1", nil, time.Now())
+	s, err := initChatLogStream("", cwd, "sid", "", "claude", "v1", nil, time.Now())
 	if err != nil {
 		t.Fatalf("disabled feature must not error: %v", err)
 	}
@@ -321,7 +321,7 @@ func TestChatLogStreamEscapesCwd(t *testing.T) {
 	cwd := t.TempDir()
 	outside := t.TempDir()
 	for _, dir := range []string{outside, "../escape"} {
-		s, err := initChatLogStream(dir, cwd, "sid", "claude", "v1", nil, time.Now())
+		s, err := initChatLogStream(dir, cwd, "sid", "", "claude", "v1", nil, time.Now())
 		if err != nil {
 			t.Errorf("escaping dir %q must disable, not error: %v", dir, err)
 		}
@@ -346,7 +346,7 @@ func TestChatLogStreamEscapesCwd(t *testing.T) {
 func TestChatLogStreamIndexDebounce(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
-	s, err := newChatLogStream(dir, "sess-debounce", "claude", "v1", nil, now)
+	s, err := newChatLogStream(dir, "sess-debounce", "", "claude", "v1", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestChatLogOptout(t *testing.T) {
 	sum := sha256.Sum256(img)
 	sha12 := hex.EncodeToString(sum[:])[:12]
 
-	s, err := newChatLogStream(dir, "sess-optout", "claude", "v1 (abc)", nil, now)
+	s, err := newChatLogStream(dir, "sess-optout", "", "claude", "v1 (abc)", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,5 +459,96 @@ func TestChatLogOptout(t *testing.T) {
 	}
 	if want := renderChatMarkdown(append(history, e4), meta, expectedMap); string(got) != want {
 		t.Errorf("post-re-arm append != batch render\n--- got:\n%s\n--- want:\n%s", got, want)
+	}
+}
+
+// TestChatLogStreamSessionUUIDSuffix: a non-blank sessionUUID (SESSION_UUID
+// env in production) tags the provisional filename so a dangling untitled
+// export is attributable to its session; the display title stays "Untitled"
+// and set_chat_title drops the suffix.
+func TestChatLogStreamSessionUUIDSuffix(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-tag", "B227-UUID", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	if base := filepath.Base(s.MDPath()); base != "2026-07-18-01-untitled-b227-uuid.md" {
+		t.Errorf("provisional filename = %s, want 2026-07-18-01-untitled-b227-uuid.md", base)
+	}
+	if s.meta.Title != "Untitled" {
+		t.Errorf("provisional title = %q, want Untitled", s.meta.Title)
+	}
+	if err := s.SetTitle("Real Title", nil); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if base := filepath.Base(s.MDPath()); base != "2026-07-18-01-real-title.md" {
+		t.Errorf("titled filename = %s, want 2026-07-18-01-real-title.md", base)
+	}
+}
+
+// TestChatLogStreamSetTitleFailureKeepsStream: when the rename cannot build
+// the new file (read-only dir), SetTitle errors but the stream keeps
+// appending to the OLD filename — it must not go dark mid-rename.
+func TestChatLogStreamSetTitleFailureKeepsStream(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-robust", "", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	oldPath := s.MDPath()
+
+	events := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+	s.HandleEvent(events[0])
+
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0755)
+
+	if err := s.SetTitle("Doomed Title", events); err == nil {
+		t.Fatal("SetTitle in read-only dir succeeded, want error")
+	}
+	if got := s.MDPath(); got != oldPath {
+		t.Errorf("MDPath changed after failed rename: %s, want %s", got, oldPath)
+	}
+	if s.meta.Slug != "untitled" {
+		t.Errorf("meta.Slug mutated by failed rename: %q, want untitled", s.meta.Slug)
+	}
+
+	// The stream survives: subsequent events still land in the old file.
+	e2 := Event{Type: "agentMessage", Text: "still here", Timestamp: 4000}
+	s.HandleEvent(e2)
+	got, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := chatExportMeta{
+		Title: "Untitled", Date: "2026-07-18", Index: "01", Slug: "untitled",
+		Session: "sess-robust", Agent: "claude", Version: "v1 (abc)",
+	}
+	if want := renderChatMarkdown(append(events, e2), meta, nil); string(got) != want {
+		t.Errorf("post-failure append != batch render\n--- got:\n%s\n--- want:\n%s", got, want)
+	}
+
+	// Once the dir is writable again the same rename succeeds and the stream
+	// switches to the new filename.
+	if err := os.Chmod(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	history := append(events, e2)
+	if err := s.SetTitle("Doomed Title", history); err != nil {
+		t.Fatalf("SetTitle retry after chmod: %v", err)
+	}
+	wantPath := filepath.Join(dir, "2026-07-18-01-doomed-title.md")
+	if got := s.MDPath(); got != wantPath {
+		t.Errorf("MDPath after retry = %s, want %s", got, wantPath)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Errorf("old file still exists after successful retry: %v", err)
 	}
 }

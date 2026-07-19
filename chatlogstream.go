@@ -17,7 +17,8 @@ import (
 // chatLogStream appends each renderable chat event to a markdown export file
 // the moment it is published — the curated twin of the JSONL event log. The
 // file is created up front under a provisional `{date}-{NN}-untitled.md` name
-// (NN claimed at creation) with the header already written; every
+// (`{date}-{NN}-untitled-{SESSION_UUID}.md` when that env var is set; NN
+// claimed at creation) with the header already written; every
 // userMessage/agentMessage/verbalReply event then appends one bubble, copying
 // the event's attachments into assets/ at that same moment, while the upload
 // files still exist. All other event types are ignored. Rendering goes through
@@ -65,7 +66,7 @@ func chatLogSessionID(eventLogPath string) string {
 // relative to cwd with the same cannot-escape-cwd rule as export_chat_md's
 // target_dir — except an escaping path is a misconfiguration warning +
 // feature off, not an error: a bad env var must never take the chat down.
-func initChatLogStream(exportDir, cwd, sessionID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
+func initChatLogStream(exportDir, cwd, sessionID, sessionUUID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
 	if exportDir == "" {
 		return nil, nil
 	}
@@ -80,7 +81,7 @@ func initChatLogStream(exportDir, cwd, sessionID, agent, version string, history
 		log.Printf("agent-chat: fatal misconfiguration: AGENT_CHAT_EXPORT_DIR %q resolves outside the working directory %q — streaming chat-log export disabled", exportDir, cwdClean)
 		return nil, nil
 	}
-	return newChatLogStream(dir, sessionID, agent, version, history, now)
+	return newChatLogStream(dir, sessionID, sessionUUID, agent, version, history, now)
 }
 
 // newChatLogStream claims the next daily NN in dir by creating the provisional
@@ -91,7 +92,7 @@ func initChatLogStream(exportDir, cwd, sessionID, agent, version string, history
 // minting a new NN: the renderer fold state (lastTs, assetN, imageMap) is
 // recovered by re-folding history — the same in-memory events the bus replays
 // — never by parsing the markdown.
-func newChatLogStream(dir, sessionID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
+func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
 	}
@@ -104,7 +105,14 @@ func newChatLogStream(dir, sessionID, agent, version string, history []Event, no
 	}
 
 	date := now.Format("2006-01-02")
-	const slug = "untitled"
+	// Provisional slug: tag untitled exports with the host session UUID when
+	// the environment provides one (swe-swe sets SESSION_UUID per session), so
+	// a dangling untitled file is attributable to the session that wrote it.
+	// The display title stays "Untitled"; set_chat_title drops the suffix.
+	slug := "untitled"
+	if suffix := slugifyTitle(sessionUUID); suffix != "" {
+		slug = "untitled-" + suffix
+	}
 	idxNum := nextDailyIndex(dir, date)
 	var (
 		f      *os.File
@@ -126,7 +134,7 @@ func newChatLogStream(dir, sessionID, agent, version string, history []Event, no
 	}
 
 	meta := chatExportMeta{
-		Title:   humanTitle(slug),
+		Title:   humanTitle("untitled"),
 		Date:    date,
 		Index:   idx,
 		Slug:    slug,
@@ -256,37 +264,50 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 		return fmt.Errorf("chat log stream is closed")
 	}
 
-	s.meta.Slug = slug
-	s.meta.Title = humanTitle(slug)
-	newPath := filepath.Join(s.dir, fmt.Sprintf("%s-%s-%s.md", s.meta.Date, s.meta.Index, slug))
+	meta := s.meta
+	meta.Slug = slug
+	meta.Title = humanTitle(slug)
+	newPath := filepath.Join(s.dir, fmt.Sprintf("%s-%s-%s.md", meta.Date, meta.Index, slug))
 
 	// Full rewrite: fresh fold state, but the existing imageMap — assets were
 	// copied when their events streamed and the upload sources may be gone.
 	var st renderState
 	var b strings.Builder
-	b.WriteString(renderChatMarkdown(nil, s.meta, nil))
+	b.WriteString(renderChatMarkdown(nil, meta, nil))
 	for _, e := range history {
 		b.WriteString(renderChatBubble(e, &st, s.imageMap))
 	}
 
-	if s.f != nil {
-		s.f.Close()
-		s.f = nil
-	}
-	if newPath != s.mdPath {
-		// Retire the old name; after chatlog_optout it is already gone.
-		if err := os.Remove(s.mdPath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove %s: %w", s.mdPath, err)
-		}
-		s.mdPath = newPath
-	}
+	// Build the new file and open its append handle BEFORE touching the old
+	// one: if anything here fails, the stream keeps appending to the current
+	// filename instead of going dark mid-rename.
 	if err := os.WriteFile(newPath, []byte(b.String()), 0644); err != nil {
+		if newPath != s.mdPath {
+			os.Remove(newPath) // best-effort: no half-written twin
+		}
 		return fmt.Errorf("rewrite %s: %w", newPath, err)
 	}
 	f, err := os.OpenFile(newPath, os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
+		if newPath != s.mdPath {
+			os.Remove(newPath)
+		}
 		return fmt.Errorf("reopen %s: %w", newPath, err)
 	}
+
+	// Commit the swap. Retiring the old name is best-effort: after
+	// chatlog_optout it is already gone, and a failed remove only leaves a
+	// stale twin behind — never abandon the live stream over it.
+	if s.f != nil {
+		s.f.Close()
+	}
+	if newPath != s.mdPath {
+		if err := os.Remove(s.mdPath); err != nil && !os.IsNotExist(err) {
+			log.Printf("agent-chat: chatlog stream: retire %s: %v", s.mdPath, err)
+		}
+	}
+	s.mdPath = newPath
+	s.meta = meta
 	s.f = f
 	s.st = st
 	s.stopped = false // set_chat_title re-arms a stream stopped by chatlog_optout
