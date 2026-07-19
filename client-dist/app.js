@@ -1033,10 +1033,13 @@ function enableInput(replies, focusInput) {
   }
   updateSendButton(); // re-disable if uploads still pending
   // Focus by default, but let callers opt out: the (re)connect path passes
-  // false so a background reconnect doesn't yank focus into the textarea
-  // (especially disruptive when embedded in an iframe — it steals focus from
-  // the host page). First connect and user-driven callers still focus.
-  if (focusInput !== false) chatInput.focus();
+  // false so a background reconnect doesn't yank focus into the textarea.
+  // Additionally require document.hasFocus(): network-driven callers (replayed
+  // agentMessage/draw after a reconnect, live replies) must never grab focus
+  // while the user is elsewhere — in an iframe that steals focus from the host
+  // page (e.g. its Terminal tab). When the user is already in this document,
+  // focusing the textarea is a no-steal convenience; when they're not, skip.
+  if (focusInput !== false && document.hasFocus()) chatInput.focus();
   // Respect the scroll-position guard: only follow to the bottom if the user
   // is already there. Forcing it here yanked people down on every reconnect
   // (the 'connected' handler calls enableInput) and whenever the agent posted
