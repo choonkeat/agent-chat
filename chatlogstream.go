@@ -38,7 +38,8 @@ type chatLogStream struct {
 	assetN   int               // per-file asset counter (shared numbering with the .md's references)
 	imageMap map[string]string // upload path -> ./assets/... relative URL
 	f        *os.File          // O_APPEND handle
-	stopped  bool              // chatlog_optout
+	stopped  bool              // chatlog_optout / chatlog_close
+	optedOut bool              // chatlog_optout specifically: the .md was deleted
 
 	indexDebounce time.Duration // turn-end debounce for index regeneration (0 = 2s default)
 	indexTimer    *time.Timer   // pending debounced regeneration, if any
@@ -254,14 +255,19 @@ func (s *chatLogStream) recoverFromHistory(history []Event) {
 // rename is always a full rewrite. Afterwards the stream returns to pure
 // appending. history must be the bus's full event history.
 func (s *chatLogStream) SetTitle(title string, history []Event) error {
-	slug := slugifyTitle(title)
-	if slug == "" {
-		return fmt.Errorf("title %q slugifies to nothing — need at least one alphanumeric character", title)
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.f == nil && !s.stopped {
 		return fmt.Errorf("chat log stream is closed")
+	}
+	return s.setTitleLocked(title, history)
+}
+
+// setTitleLocked is SetTitle's body; the caller must hold s.mu.
+func (s *chatLogStream) setTitleLocked(title string, history []Event) error {
+	slug := slugifyTitle(title)
+	if slug == "" {
+		return fmt.Errorf("title %q slugifies to nothing — need at least one alphanumeric character", title)
 	}
 
 	meta := s.meta
@@ -310,7 +316,8 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 	s.meta = meta
 	s.f = f
 	s.st = st
-	s.stopped = false // set_chat_title re-arms a stream stopped by chatlog_optout
+	s.stopped = false // set_chat_title re-arms a stream stopped by chatlog_optout/chatlog_close
+	s.optedOut = false
 	return nil
 }
 
@@ -318,12 +325,78 @@ func (s *chatLogStream) SetTitle(title string, history []Event) error {
 // (assets stay — their content-sha names may be shared with other sessions;
 // orphans are harmless) and regenerate index.html so the archive no longer
 // lists it. SetTitle re-arms.
+// isProvisionalSlug reports whether slug is an auto-generated untitled name
+// (plain, or tagged with the session UUID) rather than an agent-chosen title.
+func isProvisionalSlug(slug string) bool {
+	return slug == "untitled" || strings.HasPrefix(slug, "untitled-")
+}
+
+// CloseOut implements chatlog_close: freeze the .md export so a git commit of
+// the archive stays clean — the file stops changing until set_chat_title
+// re-opens it (which rewrites from full history, so messages arriving while
+// frozen are backfilled, not lost; the JSONL event log keeps recording
+// regardless). A still-untitled export must be named in this call; an
+// already-titled export is never renamed here — a different title errors so
+// filename churn on a committed file is always a deliberate set_chat_title,
+// never a side effect of closing. Idempotent: closing a closed stream returns
+// the same paths again. Returns the exact paths to git add: the .md, its
+// assets, index.html, and the shared viewer assets.
+func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error) {
+	s.mu.Lock()
+	if s.optedOut {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("chatlog_optout deleted this session's export — nothing to close (set_chat_title re-enables the export)")
+	}
+	if isProvisionalSlug(s.meta.Slug) {
+		if strings.TrimSpace(title) == "" {
+			s.mu.Unlock()
+			return nil, fmt.Errorf("export is still untitled (%s) — pass title, or call set_chat_title first", filepath.Base(s.mdPath))
+		}
+		if err := s.setTitleLocked(title, history); err != nil {
+			s.mu.Unlock()
+			return nil, err
+		}
+	} else if slug := slugifyTitle(title); slug != "" && slug != s.meta.Slug {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("export is already titled %q — refusing to rename to %q while closing (a rename would churn an already-committed file; retitle deliberately with set_chat_title, then chatlog_close again)", s.meta.Slug, slug)
+	}
+	if s.indexTimer != nil {
+		s.indexTimer.Stop()
+	}
+	if s.f != nil {
+		s.f.Close()
+		s.f = nil
+	}
+	s.stopped = true
+	dir, mdPath := s.dir, s.mdPath
+	assetPrefix := s.meta.Date + "-" + s.meta.Index + "-"
+	s.mu.Unlock()
+
+	if err := regenerateIndexHTML(dir); err != nil {
+		return nil, fmt.Errorf("regenerate index: %w", err)
+	}
+	paths := []string{mdPath}
+	assets, _ := filepath.Glob(filepath.Join(dir, "assets", assetPrefix+"*"))
+	paths = append(paths, assets...)
+	for _, shared := range []string{
+		filepath.Join(dir, "index.html"),
+		filepath.Join(dir, "assets", "viewer.css"),
+		filepath.Join(dir, "assets", "viewer.js"),
+	} {
+		if _, err := os.Stat(shared); err == nil {
+			paths = append(paths, shared)
+		}
+	}
+	return paths, nil
+}
+
 func (s *chatLogStream) Optout() error {
 	s.mu.Lock()
 	if s.indexTimer != nil {
 		s.indexTimer.Stop()
 	}
 	s.stopped = true
+	s.optedOut = true
 	if s.f != nil {
 		s.f.Close()
 		s.f = nil

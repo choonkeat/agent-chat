@@ -51,6 +51,7 @@ Agent (Claude, etc.)
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |
 | `set_chat_title` | Name the streaming chat-log export (see below): renames the auto-written `…-untitled.md` to `…-{slugified-title}.md` and rewrites its header. Call again anytime to rename; also re-enables the export after `chatlog_optout`. |
+| `chatlog_close` | Close out the streaming chat-log export for a clean git commit: freezes this session's `.md` (kept, unlike `chatlog_optout`), regenerates `index.html`, and returns the exact paths to `git add`. Requires a `title` while the file is still untitled; never renames an already-titled file. `set_chat_title` re-opens with a full-history backfill. |
 | `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
 | `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies attachments to `./agent-chats/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
 
@@ -68,6 +69,12 @@ itself, no `export_chat_md` call needed:
 - The agent names the file via `set_chat_title` (renames + header rewrite;
   callable again to rename). `chatlog_optout` stops the export for the session
   and deletes its `.md`.
+- To commit the archive without it going dirty on the next reply, the agent
+  calls `chatlog_close` (optionally titling in the same call), which freezes
+  the `.md` and returns the exact paths to `git add`. Freezing loses nothing:
+  the JSONL event log keeps recording, and `set_chat_title` re-opens the
+  export with a full-history rewrite that backfills anything that arrived
+  while frozen.
 - `index.html` — the archive landing page — is **regenerated from the `.md`
   files on disk** after each quiet turn, never patched incrementally. That
   makes it merge-friendly: on a git conflict in `index.html`, accept either

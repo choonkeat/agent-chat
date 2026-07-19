@@ -734,6 +734,43 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}, nil, nil
 	})
 
+	type ChatlogCloseParams struct {
+		Title string `json:"title,omitempty" jsonschema:"Chat title, REQUIRED only while the export is still untitled (names it in the same call). An already-titled export ignores a matching title and errors on a different one — retitle deliberately with set_chat_title instead."`
+	}
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "chatlog_close",
+		Description: "Close out the streaming chat-log export so the archive can be git-committed cleanly: freezes this session's .md (no further appends — later messages are backfilled from history if set_chat_title re-opens it; the JSONL event log keeps recording regardless), regenerates index.html one last time, and returns the exact paths to `git add`. If the export is still untitled, `title` is REQUIRED and names it in the same call; an already-titled export is never renamed here. Idempotent. Typical close-out: deliver the final answer → chatlog_close → git add the returned paths → commit.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ChatlogCloseParams) (*mcp.CallToolResult, any, error) {
+		bus.CancelActiveWait()
+		bus.AckLimbo()
+		if chatStream == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: streaming chat-log export is not enabled (AGENT_CHAT_EXPORT_DIR unset) — nothing to close"}},
+				IsError: true,
+			}, nil, nil
+		}
+		events, _ := bus.History()
+		paths, err := chatStream.CloseOut(params.Title, events)
+		if err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "error: " + err.Error()}},
+				IsError: true,
+			}, nil, nil
+		}
+		// Relative paths are friendlier for git add; fall back to absolute.
+		if cwd, err := os.Getwd(); err == nil {
+			for i, p := range paths {
+				if rel, err := filepath.Rel(cwd, p); err == nil && !strings.HasPrefix(rel, "..") {
+					paths[i] = rel
+				}
+			}
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "Streaming chat-log export closed — the .md is frozen (set_chat_title re-opens it with full backfill; the JSONL event log keeps recording). Commit exactly these paths:\n" + strings.Join(paths, "\n")}},
+		}, nil, nil
+	})
+
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "chatlog_optout",
 		Description: "Stop the streaming chat-log export for this session and delete its .md file (assets are left alone — their content-sha names may be shared by other sessions; index.html is regenerated). Use when the user asks not to archive this conversation. Re-enable later by calling set_chat_title.",
