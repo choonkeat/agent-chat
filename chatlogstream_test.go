@@ -552,3 +552,128 @@ func TestChatLogStreamSetTitleFailureKeepsStream(t *testing.T) {
 		t.Errorf("old file still exists after successful retry: %v", err)
 	}
 }
+
+// TestChatLogStreamCloseOut: chatlog_close freezes the .md (append no-ops)
+// without deleting it, demands a title while untitled, refuses to rename an
+// already-titled export, is idempotent, returns the commit paths, and
+// set_chat_title re-opens with a full-history backfill of frozen messages.
+func TestChatLogStreamCloseOut(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-close", "", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+
+	history := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+	s.HandleEvent(history[0])
+
+	// Untitled + no title → refused.
+	if _, err := s.CloseOut("", history); err == nil {
+		t.Fatal("CloseOut on untitled export without title succeeded, want error")
+	}
+
+	// Untitled + title → renames and freezes in one call.
+	paths, err := s.CloseOut("Close Flow", history)
+	if err != nil {
+		t.Fatalf("CloseOut: %v", err)
+	}
+	wantMD := filepath.Join(dir, "2026-07-18-01-close-flow.md")
+	if s.MDPath() != wantMD {
+		t.Errorf("MDPath = %s, want %s", s.MDPath(), wantMD)
+	}
+	wantPaths := map[string]bool{
+		wantMD: false,
+		filepath.Join(dir, "index.html"):           false,
+		filepath.Join(dir, "assets", "viewer.css"): false,
+		filepath.Join(dir, "assets", "viewer.js"):  false,
+	}
+	for _, p := range paths {
+		if _, ok := wantPaths[p]; !ok {
+			t.Errorf("unexpected path in CloseOut result: %s", p)
+		}
+		wantPaths[p] = true
+	}
+	for p, seen := range wantPaths {
+		if !seen {
+			t.Errorf("CloseOut result missing %s", p)
+		}
+	}
+
+	// Frozen: events are dropped from the .md.
+	frozen, err := os.ReadFile(wantMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missed := Event{Type: "agentMessage", Text: "arrived while frozen", Timestamp: 5000}
+	s.HandleEvent(missed)
+	after, err := os.ReadFile(wantMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(frozen) {
+		t.Error("frozen .md changed after HandleEvent")
+	}
+
+	// Idempotent: same paths, no error.
+	again, err := s.CloseOut("", nil)
+	if err != nil {
+		t.Fatalf("second CloseOut: %v", err)
+	}
+	if len(again) != len(paths) {
+		t.Errorf("second CloseOut returned %d paths, want %d", len(again), len(paths))
+	}
+
+	// Same title is a no-op; a different title is refused.
+	if _, err := s.CloseOut("Close Flow", nil); err != nil {
+		t.Errorf("CloseOut with matching title: %v", err)
+	}
+	if _, err := s.CloseOut("Other Name", nil); err == nil {
+		t.Error("CloseOut with different title succeeded, want refusal")
+	}
+
+	// Re-open via set_chat_title: full rewrite backfills the frozen message.
+	history = append(history, missed)
+	if err := s.SetTitle("Close Flow", history); err != nil {
+		t.Fatalf("SetTitle re-open: %v", err)
+	}
+	got, err := os.ReadFile(wantMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := chatExportMeta{
+		Title: "Close Flow", Date: "2026-07-18", Index: "01", Slug: "close-flow",
+		Session: "sess-close", Agent: "claude", Version: "v1 (abc)",
+	}
+	if want := renderChatMarkdown(history, meta, nil); string(got) != want {
+		t.Errorf("re-opened file != batch render incl. frozen-period message\n--- got:\n%s\n--- want:\n%s", got, want)
+	}
+
+	// And appends flow again.
+	e3 := Event{Type: "userMessage", Text: "one more thing", Timestamp: 9000}
+	s.HandleEvent(e3)
+	got, err = os.ReadFile(wantMD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := renderChatMarkdown(append(history, e3), meta, nil); string(got) != want {
+		t.Errorf("post-re-open append != batch render\n--- got:\n%s\n--- want:\n%s", got, want)
+	}
+}
+
+// TestChatLogStreamCloseOutAfterOptout: optout deletes the .md, so a
+// subsequent chatlog_close has nothing to freeze and must error.
+func TestChatLogStreamCloseOutAfterOptout(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-close-optout", "", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	if err := s.Optout(); err != nil {
+		t.Fatalf("Optout: %v", err)
+	}
+	if _, err := s.CloseOut("Some Title", nil); err == nil {
+		t.Fatal("CloseOut after Optout succeeded, want error")
+	}
+}
