@@ -390,6 +390,58 @@ func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error
 	return paths, nil
 }
 
+// chatLogStatus is what an external orchestrator needs to decide whether to
+// offer discarding or committing this session's chat log.
+type chatLogStatus struct {
+	// Enabled is false when AGENT_CHAT_EXPORT_DIR was unset at boot, i.e.
+	// there is no export for this session at all.
+	Enabled bool `json:"enabled"`
+	// Path is the current .md, absolute. It MOVES: an untitled export is
+	// renamed by set_chat_title, so this must be re-read, never cached.
+	Path string `json:"path,omitempty"`
+	Dir  string `json:"dir,omitempty"`
+	Slug string `json:"slug,omitempty"`
+	// Titled distinguishes a real title from the provisional
+	// "untitled-{host session uuid}" name.
+	Titled bool `json:"titled"`
+	// Stopped: no further appends (chatlog_close or chatlog_optout).
+	Stopped bool `json:"stopped"`
+	// OptedOut: the .md was deleted. Stopped is always true too.
+	OptedOut bool `json:"optedOut"`
+	// Exists is a stat of Path -- the honest answer to "is there still a file
+	// to commit or discard", which Stopped alone does not give (a closed
+	// export is stopped but very much still on disk).
+	Exists bool `json:"exists"`
+}
+
+// Status snapshots the export for an external orchestrator. Nil-safe: a nil
+// stream is the feature-off case and reports a zero status rather than
+// panicking, so callers need no separate enabled check.
+func (s *chatLogStream) Status() chatLogStatus {
+	if s == nil {
+		return chatLogStatus{}
+	}
+	s.mu.Lock()
+	st := chatLogStatus{
+		Enabled:  true,
+		Path:     s.mdPath,
+		Dir:      s.dir,
+		Slug:     s.meta.Slug,
+		Titled:   !isProvisionalSlug(s.meta.Slug),
+		Stopped:  s.stopped,
+		OptedOut: s.optedOut,
+	}
+	s.mu.Unlock()
+	// Stat outside the lock: it is filesystem I/O and nothing above depends
+	// on it staying consistent with the fields under mu.
+	if st.Path != "" {
+		if _, err := os.Stat(st.Path); err == nil {
+			st.Exists = true
+		}
+	}
+	return st
+}
+
 func (s *chatLogStream) Optout() error {
 	s.mu.Lock()
 	if s.indexTimer != nil {
