@@ -891,4 +891,46 @@ func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 			Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
 		}, nil, nil
 	})
+
+	type EmptyParams struct{}
+
+	// chatlog_status / chatlog_optout are mirrored here for orchestrators that
+	// need to offer "discard or commit this chat log?" at end-of-session. They
+	// deliberately do NOT touch the bus wait state the way the agent-facing
+	// copies do: an orchestrator asking about the log must never cancel a
+	// send_message the agent is currently blocked on.
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "chatlog_status",
+		Description: "Report this session's streaming chat-log export: whether it is enabled, the current .md path, whether it has been titled, stopped or opted out, and whether the file is still on disk. The path MOVES when set_chat_title renames an untitled export, so re-read it rather than caching. This is the only reliable way to map a session to its .md -- the filename carries the host session uuid only while untitled, and the `session:` header is a hash of the event-log path, not the host session id.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
+		data, err := json.Marshal(chatStream.Status())
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal status: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
+		}, nil, nil
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "chatlog_optout",
+		Description: "Stop this session's streaming chat-log export and delete its .md file (assets are left alone -- their content-sha names may be shared by other sessions; index.html is regenerated). Idempotent. Use when the user chooses to discard the chat log, e.g. while ending the session.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
+		if chatStream == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "streaming chat-log export is not enabled — nothing to discard"}},
+			}, nil, nil
+		}
+		if chatStream.Status().OptedOut {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "chat log was already discarded"}},
+			}, nil, nil
+		}
+		if err := chatStream.Optout(); err != nil {
+			return nil, nil, err
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "chat log discarded: export stopped and this session's .md deleted"}},
+		}, nil, nil
+	})
 }
