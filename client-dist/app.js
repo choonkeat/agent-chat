@@ -995,6 +995,17 @@ dropZone.addEventListener('drop', function(e) {
 // upload when there's a file/image AND no meaningful text — that separates a
 // real screenshot/copied file (no text) from a rich-text paste (has text),
 // which should paste as plain text and ignore the image snapshot.
+// Insert text at the cursor, replacing any selection. Prefers execCommand so
+// the browser keeps native undo history and fires `input` itself.
+function insertAtCursor(text) {
+  if (document.execCommand && document.execCommand('insertText', false, text)) return;
+  var start = chatInput.selectionStart;
+  var end = chatInput.selectionEnd;
+  chatInput.value = chatInput.value.slice(0, start) + text + chatInput.value.slice(end);
+  chatInput.selectionStart = chatInput.selectionEnd = start + text.length;
+  chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 chatInput.addEventListener('paste', function(e) {
   var cd = e.clipboardData;
   if (!cd) return;
@@ -1009,8 +1020,23 @@ chatInput.addEventListener('paste', function(e) {
       }
     }
   }
-  if (files.length === 0) return; // plain text paste — let the browser insert it
   var text = cd.getData('text/plain') || '';
+  if (files.length === 0) {
+    // Plain text paste. iOS "smart paste" prepends a space when it thinks it's
+    // pasting a word after other text — that space breaks an active
+    // autocomplete token ("@ docs/adr" instead of "@docs/adr"). When the
+    // dropdown is open and the cursor still sits inside the trigger token,
+    // strip the leading spaces/tabs the OS added.
+    if (acVisible || acTriggerPos >= 0) {
+      var trimmed = text.replace(/^[ \t]+/, '');
+      if (trimmed !== text && trimmed.length > 0 &&
+          findTrigger(chatInput.value, chatInput.selectionStart)) {
+        e.preventDefault();
+        insertAtCursor(trimmed);
+      }
+    }
+    return; // otherwise let the browser insert it
+  }
   if (text.trim().length > 0) return; // has real text — paste as text, drop the image snapshot
   // Pure file/image paste — upload instead of inserting anything.
   e.preventDefault();
