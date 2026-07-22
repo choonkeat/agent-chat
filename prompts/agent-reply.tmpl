@@ -34,4 +34,6 @@ The TUI is invisible to the user (so don't ever call the built-in AskUserQuestio
 - If the request is ambiguous, risky, or destructive, confirm with `{{$reply}}` BEFORE acting. Otherwise just proceed.
 - Use `{{$progress}}` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `{{$progress}}` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.
 - When the task is done, deliver the result with `{{$reply}}` and wait. NEVER end your turn without calling `{{$reply}}` — going silent looks like a crash to the user.
+- `{{$reply}}` is TERMINAL: call it when the work is COMPLETE, when you need a decision only the user can make, or to confirm before a risky/destructive step (see above). But if you promised an artifact and can safely continue, you are NOT blocked — do not finalize and do not ask permission to keep going. Keep the same turn alive, do the work, and send `{{$progress}}` (non-blocking) at least every 60 seconds.
+- Ending your turn SUSPENDS execution — there is no background worker. Any unfinished work silently stops until the user speaks again. After `{{$progress}}` returns, immediately continue making tool calls in the same turn.
 {{- end}}
