@@ -341,32 +341,82 @@ func TestChatLogStreamEscapesCwd(t *testing.T) {
 	}
 }
 
-// TestChatLogStreamIndexDebounce: index.html is regenerated after the
-// turn-end debounce, not synchronously per event.
-func TestChatLogStreamIndexDebounce(t *testing.T) {
+// TestChatLogStreamLeavesIndexAlone: streaming appends must never touch
+// index.html. It is a tracked file, and the live .md is untracked and still
+// renameable, so writing it here would leave every session with a dirty
+// working tree pointing at soon-to-be-dead links. Only chatlog_close /
+// chatlog_optout / export_chat_md publish to the index.
+func TestChatLogStreamLeavesIndexAlone(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
-	s, err := newChatLogStream(dir, "sess-debounce", "", "claude", "v1", nil, now)
+	s, err := newChatLogStream(dir, "sess-noindex", "", "claude", "v1", nil, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.indexDebounce = 50 * time.Millisecond
 
-	s.HandleEvent(Event{Type: "userMessage", Text: "hi", Timestamp: 1000})
-	if _, err := os.Stat(filepath.Join(dir, "index.html")); !os.IsNotExist(err) {
-		t.Errorf("index.html written synchronously per event; want debounced (err=%v)", err)
+	// A pre-existing index.html standing in for the committed one.
+	idxPath := filepath.Join(dir, "index.html")
+	if err := os.WriteFile(idxPath, []byte("committed index\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		data, err := os.ReadFile(filepath.Join(dir, "index.html"))
-		if err == nil && strings.Contains(string(data), "2026-07-18-01-untitled.md") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("index.html not regenerated after debounce (err=%v)", err)
-		}
-		time.Sleep(10 * time.Millisecond)
+	s.HandleEvent(Event{Type: "userMessage", Text: "hi", Timestamp: 1000})
+	s.HandleEvent(Event{Type: "agentMessage", Text: "hello", Timestamp: 2000})
+	s.Close()
+	time.Sleep(100 * time.Millisecond) // any lingering debounce would fire here
+
+	data, err := os.ReadFile(idxPath)
+	if err != nil {
+		t.Fatalf("read index.html: %v", err)
+	}
+	if string(data) != "committed index\n" {
+		t.Errorf("streaming rewrote index.html; want it untouched\n---\n%s", data)
+	}
+}
+
+// TestRegenerateIndexHTMLSkipsProvisional: an untitled export is never listed
+// — chatlog_close refuses to close one, and set_chat_title will rename the
+// file out from under any entry.
+func TestRegenerateIndexHTMLSkipsProvisional(t *testing.T) {
+	dir := t.TempDir()
+	writeMd(t, dir, "2026-07-18-01-untitled.md", "# raw\n")
+	writeMd(t, dir, "2026-07-18-02-untitled-abcd-1234.md", "# raw\n")
+	writeMd(t, dir, "2026-07-18-03-real-title.md",
+		"<!-- agent-chat export\ntitle: Real Title\ndate: 2026-07-18\nindex: 03\nslug: real-title\n-->\n\n# Real Title\n")
+
+	if err := regenerateIndexHTML(dir); err != nil {
+		t.Fatalf("regenerateIndexHTML: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	if strings.Contains(html, "untitled") {
+		t.Errorf("manifest lists a provisional export\n---\n%s", html)
+	}
+	if !strings.Contains(html, "2026-07-18-03-real-title.md") {
+		t.Errorf("manifest missing the titled export\n---\n%s", html)
+	}
+}
+
+// TestIndexReferencesMD: the "already published?" test that decides whether a
+// set_chat_title rename has to disturb the tracked index.html.
+func TestIndexReferencesMD(t *testing.T) {
+	dir := t.TempDir()
+	if indexReferencesMD(dir, "2026-07-18-01-x.md") {
+		t.Errorf("missing index.html reported as referencing the export")
+	}
+	writeMd(t, dir, "2026-07-18-01-x.md",
+		"<!-- agent-chat export\ntitle: X\ndate: 2026-07-18\nindex: 01\nslug: x\n-->\n\n# X\n")
+	if err := regenerateIndexHTML(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !indexReferencesMD(dir, "2026-07-18-01-x.md") {
+		t.Errorf("published export not detected in index.html")
+	}
+	if indexReferencesMD(dir, "2026-07-18-02-y.md") {
+		t.Errorf("unpublished export detected in index.html")
 	}
 }
 
@@ -389,7 +439,6 @@ func TestChatLogOptout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.indexDebounce = 10 * time.Millisecond
 
 	history := []Event{
 		{Type: "userMessage", Text: "hello", Timestamp: 1000, Files: []FileRef{

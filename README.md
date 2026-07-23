@@ -76,11 +76,18 @@ itself, no `export_chat_md` call needed:
   export with a full-history rewrite that backfills anything that arrived
   while frozen.
 - `index.html` — the archive landing page — is **regenerated from the `.md`
-  files on disk** after each quiet turn, never patched incrementally. That
-  makes it merge-friendly: on a git conflict in `index.html`, accept either
-  side (or delete the file); the next export regenerates it correctly.
-  Duplicate daily `NN`s from parallel branches are fine — the regenerated
-  index lists both, and content-sha asset names never clobber.
+  files on disk**, never patched incrementally. That makes it merge-friendly:
+  on a git conflict in `index.html`, accept either side (or delete the file);
+  the next export regenerates it correctly. Duplicate daily `NN`s from
+  parallel branches are fine — the regenerated index lists both, and
+  content-sha asset names never clobber.
+- `index.html` is a **tracked** file, so it is only rewritten when the export
+  set changes in a committable way: `chatlog_close`, `chatlog_optout`,
+  `export_chat_md`, or a `set_chat_title` that renames an export already in
+  the manifest. Streaming appends never touch it, and still-`untitled`
+  exports are never listed — otherwise every live session would leave the
+  working tree dirty with links to untracked files that `set_chat_title` is
+  about to rename.
 - The header comment carries a `session:` line, so a restarted process
   (same `AGENT_CHAT_EVENT_LOG`) resumes appending to its own file instead of
   minting a new one.

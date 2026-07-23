@@ -2,6 +2,19 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Fixes
+- The chat-archive `index.html` no longer goes dirty on every reply. It was
+  regenerated after each quiet turn, adding manifest entries for `.md` files
+  that were still untracked and still renameable by `set_chat_title` — so
+  every session left `M agent-chats/index.html` in the working tree, and
+  committing it published links to files that did not exist. `index.html` is
+  now rewritten only at commit moments (`chatlog_close`, `chatlog_optout`,
+  `export_chat_md`, and a `set_chat_title` that renames an export already in
+  the manifest), and still-`untitled` exports are never listed. See
+  `docs/adr/2026-07-24-index-html-only-on-commit-moments.md`.
+
 ## [0.8.14] — 2026-07-18
 
 ### Features
