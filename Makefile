@@ -1,7 +1,12 @@
-.PHONY: build bundle-client publish publish-dry test unit-test e2e-test e2e-report bump
+.PHONY: build bundle-client publish publish-dry test unit-test e2e-test e2e-report bump refresh-npx-cache
 
-build: build-platforms
+build: build-platforms refresh-npx-cache
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
+
+# swe-swe launches agent-chat from its npx cache, not from npm-platforms/ — so
+# `npm link` alone leaves new sessions running the last published binary.
+refresh-npx-cache:
+	./scripts/refresh-npx-cache.sh
 
 bundle-client:
 	npx esbuild canvas-entry.ts --bundle --format=iife --global-name=CanvasBundle --outfile=client-dist/canvas-bundle.js --target=es2020
