@@ -1,14 +1,14 @@
 <!-- agent-chat export
-title: Untitled
+title: Publish Status Check
 date: 2026-07-18
 index: 03
-slug: untitled
+slug: publish-status-check
 session: 661053820081c406
 agent: claude
 version: 0.8.14 (b858a6b)
 -->
 
-# Untitled
+# Publish Status Check
 
 _2026-07-18 · 03 · claude · agent-chat 0.8.14 (b858a6b)_
 
