@@ -14,7 +14,7 @@ Ctrl+C. In text mode, typing "stop" and waiting for the agent to call
 
 Detect interrupt phrases in both voice transcripts and typed messages. When
 detected, send a `postMessage` to the parent frame (swe-swe terminal) carrying
-an Esc-Esc signal to abort the agent's current tool call.
+an Esc signal to abort the agent's current tool call.
 
 **Interrupt phrases:** `stop`, `wait`, `cancel`, `hold on`, `abort`, `halt`,
 `pause`
@@ -25,7 +25,19 @@ an Esc-Esc signal to abort the agent's current tool call.
 1. Client detects phrase → sets `pendingInterrupt = true`
 2. Message is queued normally via WebSocket
 3. `postMessage({type: 'agent-chat-interrupt'})` sent to parent frame
-4. Parent frame writes Esc-Esc to agent's PTY
+4. Parent frame writes a single Esc to agent's PTY, waits 300ms, then types
+   the nudge text and Enter
+
+**Why one Esc, not two** (corrected 2026-07-23): two Escs written back-to-back
+arrive at the agent's input parser as the byte pair `ESC ESC`, which that
+parser reads as a meta sequence (the same convention that makes `ESC` + `b`
+mean Alt+Left) and usually discards -- so the interrupt silently did nothing.
+The first Esc already does the right thing in every state the agent can be in
+(interrupt a running turn, dismiss a permission prompt, close an autocomplete
+popup, clear a draft line); the second only advances one state further, and
+from an idle prompt Claude Code binds Esc-Esc to the "jump to a previous
+message" rewind picker, which then swallows the nudge text as filter input and
+lets the trailing Enter select a rewind target.
 
 ## Alternatives Considered
 
