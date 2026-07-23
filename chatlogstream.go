@@ -40,9 +40,6 @@ type chatLogStream struct {
 	f        *os.File          // O_APPEND handle
 	stopped  bool              // chatlog_optout / chatlog_close
 	optedOut bool              // chatlog_optout specifically: the .md was deleted
-
-	indexDebounce time.Duration // turn-end debounce for index regeneration (0 = 2s default)
-	indexTimer    *time.Timer   // pending debounced regeneration, if any
 }
 
 // chatLogSessionID derives the stable identity written to the `session:`
@@ -360,9 +357,6 @@ func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error
 		s.mu.Unlock()
 		return nil, fmt.Errorf("export is already titled %q — refusing to rename to %q while closing (a rename would churn an already-committed file; retitle deliberately with set_chat_title, then chatlog_close again)", s.meta.Slug, slug)
 	}
-	if s.indexTimer != nil {
-		s.indexTimer.Stop()
-	}
 	if s.f != nil {
 		s.f.Close()
 		s.f = nil
@@ -444,9 +438,6 @@ func (s *chatLogStream) Status() chatLogStatus {
 
 func (s *chatLogStream) Optout() error {
 	s.mu.Lock()
-	if s.indexTimer != nil {
-		s.indexTimer.Stop()
-	}
 	s.stopped = true
 	s.optedOut = true
 	if s.f != nil {
@@ -462,46 +453,19 @@ func (s *chatLogStream) Optout() error {
 	return regenerateIndexHTML(dir)
 }
 
-// scheduleIndexRegen (call with s.mu held) debounces the turn-end
-// housekeeping: index.html is regenerated once the event stream has been
-// quiet for the debounce window, not on every append.
-func (s *chatLogStream) scheduleIndexRegen() {
-	d := s.indexDebounce
-	if d == 0 {
-		d = 2 * time.Second
-	}
-	if s.indexTimer != nil {
-		s.indexTimer.Stop()
-	}
-	dir := s.dir
-	s.indexTimer = time.AfterFunc(d, func() {
-		if err := regenerateIndexHTML(dir); err != nil {
-			log.Printf("agent-chat: chatlog stream: regenerate index: %v", err)
-		}
-	})
-}
-
-// Close flushes and closes the stream's file and runs a final index
-// regeneration (the SIGTERM path — nothing else needs writing at session end;
-// every bubble is already on disk). Subsequent HandleEvent calls are no-ops.
+// Close flushes and closes the stream's file (the SIGTERM path — nothing else
+// needs writing at session end; every bubble is already on disk). It
+// deliberately does NOT regenerate index.html: index.html is a tracked file
+// and must only change when the export set changes in a committable way (see
+// regenerateIndexHTML's contract), which a session merely ending is not.
+// Subsequent HandleEvent calls are no-ops.
 func (s *chatLogStream) Close() {
 	s.mu.Lock()
-	if s.indexTimer != nil {
-		s.indexTimer.Stop()
-	}
-	closed := false
+	defer s.mu.Unlock()
 	if s.f != nil {
 		s.f.Sync()
 		s.f.Close()
 		s.f = nil
-		closed = true
-	}
-	dir := s.dir
-	s.mu.Unlock()
-	if closed {
-		if err := regenerateIndexHTML(dir); err != nil {
-			log.Printf("agent-chat: chatlog stream: final index regeneration: %v", err)
-		}
 	}
 }
 
@@ -550,5 +514,4 @@ func (s *chatLogStream) HandleEvent(e Event) {
 		return
 	}
 	s.f.Sync()
-	s.scheduleIndexRegen()
 }

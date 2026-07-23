@@ -720,14 +720,23 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 			}, nil, nil
 		}
 		events, _ := bus.History()
+		// Whether the index needs rewriting is decided against the name the
+		// file had BEFORE the rename: only an export already in the manifest
+		// (i.e. previously closed out, and probably committed) would be left
+		// pointing at a filename that no longer exists. An export still
+		// private to this session is left out of the tracked index.html.
+		oldBase := filepath.Base(chatStream.MDPath())
+		published := indexReferencesMD(chatStream.Dir(), oldBase)
 		if err := chatStream.SetTitle(params.Title, events); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "error: " + err.Error()}},
 				IsError: true,
 			}, nil, nil
 		}
-		if err := regenerateIndexHTML(chatStream.Dir()); err != nil {
-			return nil, nil, err
+		if published {
+			if err := regenerateIndexHTML(chatStream.Dir()); err != nil {
+				return nil, nil, err
+			}
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: "Chat log renamed to " + chatStream.MDPath()}},

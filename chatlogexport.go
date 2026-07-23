@@ -473,12 +473,34 @@ func readChatHeader(path string) map[string]string {
 	return fields
 }
 
+// indexReferencesMD reports whether dir/index.html already carries a manifest
+// entry for the given .md basename. It is the "is this export already
+// published?" test that keeps index.html — a tracked file — from being dirtied
+// on behalf of an export that is still private to the running session: a
+// rename only has to be reflected in the index if the old name was in there.
+// A missing or unreadable index.html answers false.
+func indexReferencesMD(dir, mdBase string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "'./"+mdBase+"'")
+}
+
 // regenerateIndexHTML rewrites dir/index.html from scratch: the embedded
 // template plus a MANIFEST derived entirely from the `*.md` export files
 // present in dir (newest first; title read from each file's header comment,
 // falling back to humanTitle(slug)). Because the output is a pure function of
 // the directory contents it is idempotent, and a corrupted index.html (e.g.
 // git merge markers) is healed by simply being rewritten.
+//
+// index.html is tracked by git, so callers must only invoke this at moments
+// the export set changes in a *committable* way: chatlog_close, chatlog_optout
+// (which may remove an already-committed entry), export_chat_md, and a
+// set_chat_title that renames an export already present in the manifest.
+// Notably NOT on every appended bubble — regenerating live would leave the
+// working tree permanently dirty with manifest entries pointing at untracked,
+// still-renameable `untitled-{uuid}.md` files.
 func regenerateIndexHTML(dir string) error {
 	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
@@ -498,6 +520,14 @@ func regenerateIndexHTML(dir string) error {
 			continue
 		}
 		date, idx, slug := m[1], m[2], m[3]
+		// A provisional `untitled` / `untitled-{uuid}` export is by definition
+		// not commit-ready — chatlog_close refuses to close one — and its
+		// filename still changes under set_chat_title. Listing it would put a
+		// soon-to-be-dead link into a tracked file, so it stays out of the
+		// manifest until it has a real title.
+		if isProvisionalSlug(slug) {
+			continue
+		}
 		idxNum, err := strconv.Atoi(idx)
 		if err != nil {
 			continue
