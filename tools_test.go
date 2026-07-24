@@ -60,6 +60,45 @@ func TestFormatMessagesVoice(t *testing.T) {
 	}
 }
 
+func TestFormatMessagesTemplatePlaceholder(t *testing.T) {
+	msgs := []UserMessage{{Text: "fix the login bug", Template: "Reply concisely.\n\n{{message}}"}}
+	got := FormatMessages(msgs)
+	want := "Reply concisely.\n\nfix the login bug"
+	if got != want {
+		t.Errorf("FormatMessages template placeholder:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatMessagesTemplatePreamble(t *testing.T) {
+	// No {{message}} placeholder — the template is prepended as a preamble.
+	msgs := []UserMessage{{Text: "fix the login bug", Template: "Be direct."}}
+	got := FormatMessages(msgs)
+	want := "Be direct.\n\nfix the login bug"
+	if got != want {
+		t.Errorf("FormatMessages template preamble:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatMessagesTemplateVoiceStripsPrefixFirst(t *testing.T) {
+	// The 🎤 voice prefix is stripped before the template wraps the text, and
+	// the result still flows through the voice framing.
+	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red", Template: "Be brief.\n\n{{message}}"}}
+	got := FormatMessages(msgs)
+	want := "Decoded user's speech to text (may be inaccurate): Be brief.\n\nturn the box red"
+	if got != want {
+		t.Errorf("FormatMessages template voice:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+func TestFormatMessagesEmptyTemplateUnchanged(t *testing.T) {
+	msgs := []UserMessage{{Text: "hello", Template: "   "}}
+	got := FormatMessages(msgs)
+	want := "hello"
+	if got != want {
+		t.Errorf("FormatMessages empty template:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestFormatMessagesWithFileAttachment(t *testing.T) {
 	msgs := []UserMessage{{
 		Text: "check this file",

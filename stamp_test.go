@@ -157,7 +157,7 @@ func TestPublishConsumed_StampsEvent(t *testing.T) {
 // forwards toolName/toolSeq through to the published consumed event.
 func TestDrainMessagesStamped_PropagatesToolStamp(t *testing.T) {
 	bus := NewEventBus()
-	bus.ReceiveUserMessage("hi", nil)
+	bus.ReceiveUserMessage("hi", nil, "")
 
 	ch := bus.Subscribe()
 	defer bus.Unsubscribe(ch)
@@ -188,7 +188,7 @@ func TestDrainMessagesStamped_PropagatesToolStamp(t *testing.T) {
 // also threads the stamp.
 func TestWaitForMessagesStamped_PropagatesToolStamp(t *testing.T) {
 	bus := NewEventBus()
-	bus.ReceiveUserMessage("hi", nil)
+	bus.ReceiveUserMessage("hi", nil, "")
 
 	ch := bus.Subscribe()
 	defer bus.Unsubscribe(ch)
@@ -225,7 +225,7 @@ func TestWaitForMessagesStamped_PropagatesToolStamp(t *testing.T) {
 // unstamped events (zero/empty fields) for callers that don't track ordinals.
 func TestDrainMessages_LegacyUnstamped(t *testing.T) {
 	bus := NewEventBus()
-	bus.ReceiveUserMessage("hi", nil)
+	bus.ReceiveUserMessage("hi", nil, "")
 
 	ch := bus.Subscribe()
 	defer bus.Unsubscribe(ch)
