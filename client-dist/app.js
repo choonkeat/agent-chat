@@ -1779,7 +1779,7 @@ voiceSelect.addEventListener('change', function() {
 var MSG_STYLE_KEY = 'msg-style';
 var msgStylePresets = {
   concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.\n\n{{message}}',
-  nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase.\n\n{{message}}',
+  nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase. Don\'t use analogies.\n\n{{message}}',
   direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.\n\n{{message}}'
 };
 
