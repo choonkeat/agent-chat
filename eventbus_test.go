@@ -141,14 +141,14 @@ func TestEventBusRehydratesPendingQueueOnRestart(t *testing.T) {
 		t.Fatalf("NewEventBusWithLog (session 1): %v", err)
 	}
 	// One message consumed, one withdrawn, one left pending in the queue.
-	bus1.ReceiveUserMessage("consumed-me", nil)
+	bus1.ReceiveUserMessage("consumed-me", nil, "")
 	bus1.DrainMessages() // publishes userMessagesConsumed for the above
-	delID := bus1.ReceiveUserMessage("delete-me", nil)
+	delID := bus1.ReceiveUserMessage("delete-me", nil, "")
 	if !bus1.RemoveFromQueue(delID) {
 		t.Fatalf("expected delete-me to be in the queue")
 	}
 	bus1.Publish(Event{Type: "userMessageDeleted", ID: delID})
-	pendingID := bus1.ReceiveUserMessage("still-pending", nil)
+	pendingID := bus1.ReceiveUserMessage("still-pending", nil, "")
 	bus1.Close() // queue is in-memory — the pending message is only in the log now
 
 	// Restart on the same log file.

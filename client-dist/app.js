@@ -1174,6 +1174,10 @@ function sendMessage(text, files) {
     if (files && files.length > 0) {
       msg.files = files;
     }
+    // Attach the message-style template (localStorage). The server wraps the
+    // agent-facing text with it; the displayed bubble stays as the raw text.
+    var tpl = getMsgStyle();
+    if (tpl) msg.template = tpl;
     activeWs.send(JSON.stringify(msg));
   }
 }
@@ -1766,6 +1770,79 @@ voiceSelect.addEventListener('change', function() {
     speechSynthesis.speak(preview);
   }
 });
+
+// --- Message style settings ---
+// A per-browser template that wraps every message before the agent sees it.
+// Stored in localStorage; sent as `template` on each message. The server
+// applies it (FormatMessages) so the displayed chat bubble stays as raw text.
+
+var MSG_STYLE_KEY = 'msg-style';
+var msgStylePresets = {
+  concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.\n\n{{message}}',
+  nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase.\n\n{{message}}',
+  direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.\n\n{{message}}'
+};
+
+function getMsgStyle() {
+  try { return (localStorage.getItem(MSG_STYLE_KEY) || '').trim(); }
+  catch (e) { return ''; }
+}
+
+function setMsgStyle(v) {
+  try {
+    if (v && v.trim()) localStorage.setItem(MSG_STYLE_KEY, v);
+    else localStorage.removeItem(MSG_STYLE_KEY);
+  } catch (e) { /* ignore quota/privacy-mode errors */ }
+}
+
+var btnSettings = document.getElementById('btn-settings');
+var settingsPanel = document.getElementById('settings-panel');
+var msgStyleInput = document.getElementById('msg-style-input');
+var settingsStatus = document.getElementById('settings-status');
+var btnSettingsDone = document.getElementById('btn-settings-done');
+
+function updateSettingsStatus() {
+  if (!settingsStatus) return;
+  settingsStatus.textContent = getMsgStyle() ? 'Active' : 'Off (default)';
+  if (btnSettings) btnSettings.classList.toggle('active', !!getMsgStyle());
+}
+
+function openSettings() {
+  if (!settingsPanel) return;
+  msgStyleInput.value = getMsgStyle();
+  settingsPanel.hidden = false;
+  updateSettingsStatus();
+  msgStyleInput.focus();
+}
+
+function closeSettings() {
+  if (settingsPanel) settingsPanel.hidden = true;
+}
+
+if (btnSettings) {
+  btnSettings.addEventListener('click', function () {
+    if (settingsPanel.hidden) openSettings(); else closeSettings();
+  });
+}
+if (msgStyleInput) {
+  msgStyleInput.addEventListener('input', function () {
+    setMsgStyle(msgStyleInput.value);
+    updateSettingsStatus();
+  });
+}
+if (settingsPanel) {
+  settingsPanel.addEventListener('click', function (e) {
+    var btn = e.target.closest('.preset-btn');
+    if (!btn) return;
+    var key = btn.dataset.preset;
+    msgStyleInput.value = key ? (msgStylePresets[key] || '') : '';
+    setMsgStyle(msgStyleInput.value);
+    updateSettingsStatus();
+    msgStyleInput.focus();
+  });
+}
+if (btnSettingsDone) btnSettingsDone.addEventListener('click', closeSettings);
+updateSettingsStatus();
 
 // Split text into sentence-sized chunks for TTS.
 // Keeps each chunk short enough to avoid the iOS/WebKit ~15-second truncation bug.

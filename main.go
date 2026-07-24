@@ -638,11 +638,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		var m struct {
-			Type    string    `json:"type"`
-			Text    string    `json:"text"`
-			Files   []FileRef `json:"files"`
-			ID      string    `json:"id"`
-			Message string    `json:"message"`
+			Type     string    `json:"type"`
+			Text     string    `json:"text"`
+			Files    []FileRef `json:"files"`
+			ID       string    `json:"id"`
+			Message  string    `json:"message"`
+			Template string    `json:"template"`
 		}
 		if json.Unmarshal(msg, &m) != nil {
 			continue
@@ -664,7 +665,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					// ReceiveUserMessage publishes the userMessage event BEFORE
 					// queuing so browsers always see the bubble before any
 					// consumption signal that the agent may race-fire.
-					bus.ReceiveUserMessage(m.Text, m.Files)
+					bus.ReceiveUserMessage(m.Text, m.Files, m.Template)
 					// Notify browser that message is queued — it waits for this
 					// before telling the parent frame to call check_messages.
 					select {

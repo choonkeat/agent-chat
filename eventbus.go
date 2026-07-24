@@ -30,6 +30,12 @@ type UserMessage struct {
 	ID    string    `json:"id,omitempty"`
 	Text  string    `json:"text"`
 	Files []FileRef `json:"files,omitempty"`
+	// Template, when non-empty, is a per-message wrapper the browser attached
+	// from its localStorage "message style" setting. It only affects what the
+	// agent sees (applied in FormatMessages) — the displayed bubble always
+	// shows the raw Text. A "{{message}}" placeholder is substituted with the
+	// message; if absent, the template is prepended as a preamble.
+	Template string `json:"template,omitempty"`
 }
 
 // Event represents a chat event sent to browser clients.
@@ -307,10 +313,13 @@ func (eb *EventBus) pushUserMessage(msg UserMessage) {
 // bubble before any consumption signal) and then queues the message for the
 // agent. The returned ID is the same one carried by the userMessage event and
 // the eventual userMessagesConsumed event.
-func (eb *EventBus) ReceiveUserMessage(text string, files []FileRef) string {
+func (eb *EventBus) ReceiveUserMessage(text string, files []FileRef, template string) string {
 	id := uuid.New().String()
+	// The broadcast event carries the raw text only — the browser bubble must
+	// show what the user actually typed. The template rides on the queued
+	// UserMessage so it wraps the text only when the agent drains it.
 	eb.Publish(Event{Type: "userMessage", ID: id, Text: text, Files: files})
-	eb.pushUserMessage(UserMessage{ID: id, Text: text, Files: files})
+	eb.pushUserMessage(UserMessage{ID: id, Text: text, Files: files, Template: template})
 	return id
 }
 
@@ -550,6 +559,24 @@ func (eb *EventBus) RemoveFromQueue(targetID string) bool {
 	}
 }
 
+// messageTemplatePlaceholder marks where the user's message is substituted into
+// their message-style template. If a template omits it, the template is treated
+// as a preamble prepended to the message.
+const messageTemplatePlaceholder = "{{message}}"
+
+// applyMessageTemplate wraps a single user message with the browser-supplied
+// style template. An empty template (the default) returns the text unchanged.
+func applyMessageTemplate(template, text string) string {
+	template = strings.TrimSpace(template)
+	if template == "" {
+		return text
+	}
+	if strings.Contains(template, messageTemplatePlaceholder) {
+		return strings.ReplaceAll(template, messageTemplatePlaceholder, text)
+	}
+	return template + "\n\n" + text
+}
+
 // FormatMessages joins user messages into a single string with file attachment info.
 func FormatMessages(msgs []UserMessage) string {
 	data := formatMessagesData{}
@@ -559,6 +586,7 @@ func FormatMessages(msgs []UserMessage) string {
 		if isVoice {
 			text = strings.TrimPrefix(text, "\U0001f3a4 ")
 		}
+		text = applyMessageTemplate(m.Template, text)
 		data.Messages = append(data.Messages, messageData{Text: text, IsVoice: isVoice})
 		for _, f := range m.Files {
 			mime := f.Type
