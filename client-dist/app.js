@@ -1174,7 +1174,7 @@ function sendMessage(text, files) {
     if (files && files.length > 0) {
       msg.files = files;
     }
-    // Attach the message-style template (localStorage). The server wraps the
+    // Attach the message-style template (cookie). The server wraps the
     // agent-facing text with it; the displayed bubble stays as the raw text.
     var tpl = getMsgStyle();
     if (tpl) msg.template = tpl;
@@ -1773,10 +1773,19 @@ voiceSelect.addEventListener('change', function() {
 
 // --- Message style settings ---
 // A per-browser template that wraps every message before the agent sees it.
-// Stored in localStorage; sent as `template` on each message. The server
-// applies it (FormatMessages) so the displayed chat bubble stays as raw text.
+// Sent as `template` on each message. The server applies it (FormatMessages)
+// so the displayed chat bubble stays as raw text.
+//
+// Stored in a cookie, not localStorage: every session gets its own port, and
+// localStorage is scoped per origin (scheme + host + PORT), so a localStorage
+// value would silently reset on the next session. Cookies ignore the port, so
+// one setting follows the user across sessions on the same host — the same
+// reason the theme toggle uses a cookie. An empty cookie means "explicitly
+// off"; the textarea's maxlength keeps any template well inside the ~4KB
+// cookie limit.
 
-var MSG_STYLE_KEY = 'msg-style';
+var MSG_STYLE_COOKIE = 'agent-chat-msg-style';
+var MSG_STYLE_MAX_AGE = 60 * 60 * 24 * 365;
 var msgStylePresets = {
   concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.\n\n{{message}}',
   nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase. Don\'t use analogies.\n\n{{message}}',
@@ -1785,39 +1794,170 @@ var msgStylePresets = {
 };
 
 function getMsgStyle() {
-  try { return (localStorage.getItem(MSG_STYLE_KEY) || '').trim(); }
-  catch (e) { return ''; }
+  return (getCookie(MSG_STYLE_COOKIE) || '').trim();
 }
 
 function setMsgStyle(v) {
+  writeStyleCookie(MSG_STYLE_COOKIE, (v || '').trim());
+}
+
+function writeStyleCookie(name, value) {
   try {
-    if (v && v.trim()) localStorage.setItem(MSG_STYLE_KEY, v);
-    else localStorage.removeItem(MSG_STYLE_KEY);
-  } catch (e) { /* ignore quota/privacy-mode errors */ }
+    document.cookie = name + '=' + encodeURIComponent(value) +
+      '; path=/; max-age=' + MSG_STYLE_MAX_AGE + '; SameSite=Lax';
+    return getCookie(name) === value;
+  } catch (e) { return false; /* privacy mode */ }
+}
+
+// --- Saved custom styles ---
+// Edited text is lost the moment another preset pill is tapped, so a style
+// worth keeping gets a name and its own pill. Saved as one JSON cookie
+// ([{n: name, t: template}]) so it travels between sessions like the active
+// style does. Bounded by MSG_STYLES_MAX so the cookie stays under ~4KB.
+
+var MSG_STYLES_COOKIE = 'agent-chat-msg-styles';
+var MSG_STYLES_MAX = 3500;
+
+function getSavedStyles() {
+  var raw = getCookie(MSG_STYLES_COOKIE);
+  if (!raw) return [];
+  try {
+    var list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    return list.filter(function (s) { return s && s.n && s.t; });
+  } catch (e) { return []; }
+}
+
+/** Returns false when the styles don't fit in a cookie; nothing is saved then. */
+function putSavedStyles(list) {
+  var json = JSON.stringify(list);
+  if (encodeURIComponent(json).length > MSG_STYLES_MAX) return false;
+  return writeStyleCookie(MSG_STYLES_COOKIE, json);
+}
+
+/** Save under `name`, replacing any style already using that name. */
+function saveStyle(name, text) {
+  var kept = getSavedStyles().filter(function (s) { return s.n !== name; });
+  kept.push({ n: name, t: text });
+  return putSavedStyles(kept);
+}
+
+function deleteStyle(name) {
+  putSavedStyles(getSavedStyles().filter(function (s) { return s.n !== name; }));
 }
 
 var btnSettings = document.getElementById('btn-settings');
 var settingsPanel = document.getElementById('settings-panel');
+var settingsPresets = document.getElementById('settings-presets');
 var msgStyleInput = document.getElementById('msg-style-input');
 var settingsStatus = document.getElementById('settings-status');
 var btnSettingsDone = document.getElementById('btn-settings-done');
+var btnStyleSave = document.getElementById('btn-style-save');
+var styleSaveRow = document.getElementById('style-save-row');
+var styleSaveName = document.getElementById('style-save-name');
+var btnStyleSaveConfirm = document.getElementById('btn-style-save-confirm');
+var btnStyleSaveCancel = document.getElementById('btn-style-save-cancel');
+var settingsActions = document.querySelector('.settings-actions');
+var pillUnsaved = document.getElementById('preset-unsaved');
 
-function updateSettingsStatus() {
+/** Rebuild the saved-style pills, keeping them ahead of the "Off" pill. */
+function renderSavedStyles() {
+  if (!settingsPresets) return;
+  var existing = settingsPresets.querySelectorAll('.preset-btn.custom');
+  for (var i = 0; i < existing.length; i++) existing[i].remove();
+  // Saved styles sit after the built-ins, ahead of "Custom" and "Off".
+  var off = pillUnsaved || settingsPresets.querySelector('.preset-btn[data-preset=""]');
+  getSavedStyles().forEach(function (s) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'preset-btn custom';
+    btn.dataset.custom = s.n;
+    btn.appendChild(document.createTextNode(s.n));
+    var del = document.createElement('span');
+    del.className = 'preset-del';
+    del.dataset.del = s.n;
+    del.title = 'Delete "' + s.n + '"';
+    del.textContent = '×';
+    btn.appendChild(del);
+    settingsPresets.insertBefore(btn, off);
+  });
+}
+
+/** The template a pill stands for, so a pill can be matched to the live text. */
+function pillTemplate(btn) {
+  if (btn.dataset.custom) {
+    var saved = getSavedStyles().filter(function (s) { return s.n === btn.dataset.custom; })[0];
+    return saved ? saved.t : null;
+  }
+  var key = btn.dataset.preset;
+  return key ? (msgStylePresets[key] || null) : '';
+}
+
+/** Fill the one pill whose template is the current text — a saved style first,
+    since its name is what the status line shows. Text belonging to no pill is
+    the "Custom" pill, which appears only then; "Save as…" gives it a name. */
+function highlightSelectedPill() {
+  if (!settingsPresets) return null;
+  var text = getMsgStyle();
+  var pills = settingsPresets.querySelectorAll('.preset-btn');
+  var matches = [];
+  for (var i = 0; i < pills.length; i++) {
+    var pill = pills[i];
+    pill.classList.remove('selected');
+    if (pill === pillUnsaved) continue;
+    if (pillTemplate(pill) === text) matches.push(pill);
+  }
+  var picked = matches.filter(function (b) { return b.dataset.custom; })[0] || matches[0];
+  if (!picked && text && pillUnsaved) picked = pillUnsaved;
+  if (pillUnsaved) pillUnsaved.hidden = picked !== pillUnsaved;
+  if (picked) picked.classList.add('selected');
+  return picked || null;
+}
+
+function updateSettingsStatus(note) {
   if (!settingsStatus) return;
-  settingsStatus.textContent = getMsgStyle() ? 'Active' : 'Off (default)';
-  if (btnSettings) btnSettings.classList.toggle('active', !!getMsgStyle());
+  var active = getMsgStyle();
+  var naming = styleSaveRow && !styleSaveRow.hidden;
+  // The status line names whichever pill is filled, so the two never disagree
+  // when a saved style holds the same text as a built-in preset.
+  var pill = highlightSelectedPill();
+  var name = pill && pill.dataset.custom;
+  var unsaved = !!pill && pill === pillUnsaved;
+  settingsStatus.textContent = note
+    || (naming ? 'Name it, then tap Save'
+      : !active ? 'Off (default)'
+        : name ? 'Active: ' + name
+          : unsaved ? 'Active · unsaved' : 'Active');
+  if (btnSettings) btnSettings.classList.toggle('active', !!active);
+  // "Save as…" only ever names the Custom pill: anything else already has a
+  // pill to tap, so there is nothing to keep.
+  if (btnStyleSave) {
+    btnStyleSave.disabled = !unsaved;
+    btnStyleSave.classList.toggle('attention', unsaved);
+  }
+  // While naming, "Save as…"/"Done" would compete with "Save"/"Cancel".
+  if (settingsActions) settingsActions.hidden = !!naming;
 }
 
 function openSettings() {
   if (!settingsPanel) return;
   msgStyleInput.value = getMsgStyle();
+  renderSavedStyles();
+  hideSaveRow();
   settingsPanel.hidden = false;
   updateSettingsStatus();
   msgStyleInput.focus();
 }
 
 function closeSettings() {
+  hideSaveRow();
   if (settingsPanel) settingsPanel.hidden = true;
+}
+
+function hideSaveRow() {
+  if (!styleSaveRow || styleSaveRow.hidden) return;
+  styleSaveRow.hidden = true;
+  updateSettingsStatus();
 }
 
 if (btnSettings) {
@@ -1833,16 +1973,66 @@ if (msgStyleInput) {
 }
 if (settingsPanel) {
   settingsPanel.addEventListener('click', function (e) {
+    var del = e.target.closest('.preset-del');
+    if (del) {
+      deleteStyle(del.dataset.del);
+      renderSavedStyles();
+      updateSettingsStatus();
+      return;
+    }
     var btn = e.target.closest('.preset-btn');
     if (!btn) return;
-    var key = btn.dataset.preset;
-    msgStyleInput.value = key ? (msgStylePresets[key] || '') : '';
+    // The Custom pill is already what the box holds — tapping it changes nothing.
+    if (btn === pillUnsaved) { msgStyleInput.focus(); return; }
+    if (btn.dataset.custom) {
+      var saved = getSavedStyles().filter(function (s) { return s.n === btn.dataset.custom; })[0];
+      msgStyleInput.value = saved ? saved.t : '';
+    } else {
+      var key = btn.dataset.preset;
+      msgStyleInput.value = key ? (msgStylePresets[key] || '') : '';
+    }
     setMsgStyle(msgStyleInput.value);
+    hideSaveRow();
     updateSettingsStatus();
     msgStyleInput.focus();
   });
 }
+
+function openSaveRow() {
+  if (!styleSaveRow || !getMsgStyle()) return;
+  // Typing a name already in use replaces that style, which is how an edited
+  // style is updated — so start blank rather than guessing.
+  styleSaveName.value = '';
+  styleSaveRow.hidden = false;
+  updateSettingsStatus();
+  styleSaveName.focus();
+  styleSaveName.select();
+}
+
+function confirmSaveStyle() {
+  var name = (styleSaveName.value || '').trim();
+  var text = getMsgStyle();
+  if (!name || !text) return;
+  if (!saveStyle(name, text)) {
+    updateSettingsStatus('Too many saved styles to fit — delete one first');
+    return;
+  }
+  styleSaveRow.hidden = true;
+  renderSavedStyles();
+  updateSettingsStatus();
+}
+
+if (btnStyleSave) btnStyleSave.addEventListener('click', openSaveRow);
+if (btnStyleSaveConfirm) btnStyleSaveConfirm.addEventListener('click', confirmSaveStyle);
+if (btnStyleSaveCancel) btnStyleSaveCancel.addEventListener('click', hideSaveRow);
+if (styleSaveName) {
+  styleSaveName.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); confirmSaveStyle(); }
+    else if (e.key === 'Escape') { e.preventDefault(); hideSaveRow(); }
+  });
+}
 if (btnSettingsDone) btnSettingsDone.addEventListener('click', closeSettings);
+renderSavedStyles();
 updateSettingsStatus();
 
 // Split text into sentence-sized chunks for TTS.

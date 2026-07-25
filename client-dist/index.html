@@ -25,12 +25,21 @@
             <button type="button" class="preset-btn" data-preset="nontechnical">Non-technical</button>
             <button type="button" class="preset-btn" data-preset="direct">Direct</button>
             <button type="button" class="preset-btn" data-preset="adhd">ADHD</button>
+            <button type="button" class="preset-btn unsaved" id="preset-unsaved" data-unsaved="1" hidden>Custom</button>
             <button type="button" class="preset-btn" data-preset="">Off</button>
           </div>
-          <textarea id="msg-style-input" rows="4" placeholder="e.g. Reply concisely and non-technically.&#10;&#10;{{message}}"></textarea>
+          <textarea id="msg-style-input" rows="4" maxlength="2000" placeholder="e.g. Reply concisely and non-technically.&#10;&#10;{{message}}"></textarea>
+          <div id="style-save-row" hidden>
+            <input type="text" id="style-save-name" maxlength="40" placeholder="Name this style">
+            <button type="button" id="btn-style-save-confirm">Save</button>
+            <button type="button" id="btn-style-save-cancel">Cancel</button>
+          </div>
           <div class="settings-row">
             <span id="settings-status"></span>
-            <button type="button" id="btn-settings-done">Done</button>
+            <span class="settings-actions">
+              <button type="button" id="btn-style-save">Save as…</button>
+              <button type="button" id="btn-settings-done">Done</button>
+            </span>
           </div>
         </div>
       </div>
