@@ -91,6 +91,28 @@ async function pastePng(page, text) {
   }, text || null);
 }
 
+/**
+ * Dispatch a synthetic plain-text paste (no file) on #chat-input. Returns
+ * whether the handler intercepted it (staged it as an attachment).
+ */
+async function pasteText(page, text) {
+  return page.evaluate((textPayload) => {
+    const el = document.getElementById('chat-input');
+    const dt = new DataTransfer();
+    dt.setData('text/plain', textPayload);
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    el.dispatchEvent(evt);
+    return evt.defaultPrevented;
+  }, text);
+}
+
+/** n lines of filler text, joined by newlines. */
+function lines(n) {
+  return Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
+}
+
 test.describe('Paste to upload', () => {
   /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
   let server = null;
@@ -131,6 +153,39 @@ test.describe('Paste to upload', () => {
       const prevented = await pastePng(page, '   \n\t ');
       expect(prevented).toBe(true);
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // PASTE_AS_FILE_MIN_LINES in client-dist/app.js is 30.
+  test('30-line text paste is staged as a .txt attachment, not inserted', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pasteText(page, lines(30));
+      expect(prevented).toBe(true); // default text insert suppressed
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-30-lines.txt');
+      await expect(textarea).toHaveValue(''); // composer left clean
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('29-line text paste stays inline, no attachment', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteText(page, lines(29));
+      expect(prevented).toBe(false); // browser inserts it as usual
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('trailing newline does not push a 29-line paste over the threshold', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteText(page, lines(29) + '\n');
+      expect(prevented).toBe(false);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
     } finally { await context.close().catch(() => {}); }
   });
 });
