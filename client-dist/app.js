@@ -1780,7 +1780,8 @@ var MSG_STYLE_KEY = 'msg-style';
 var msgStylePresets = {
   concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.\n\n{{message}}',
   nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase. Don\'t use analogies.\n\n{{message}}',
-  direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.\n\n{{message}}'
+  direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.\n\n{{message}}',
+  adhd: 'Reply for a reader with ADHD: lead with the next action, number multi-step work, restate progress ("step 3 of 5 done"), suppress tangents (finish one thing, then offer the next as a separate question), and cut all preamble, recap, and closers.\n\n{{message}}'
 };
 
 function getMsgStyle() {
