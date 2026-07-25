@@ -196,6 +196,25 @@ body {
   color: var(--text-muted);
 }
 
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.settings-actions[hidden] {
+  display: none;
+}
+
+/* Only the pill matching the current template is filled — a saved style must
+   not look selected just because it exists. */
+.preset-btn.selected,
+.preset-btn.selected:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #fff;
+}
+
 #btn-settings-done {
   padding: 0.3rem 0.85rem;
   font-size: 0.78rem;
@@ -205,6 +224,108 @@ body {
   background: #2563eb;
   color: #fff;
   cursor: pointer;
+}
+
+/* Saved custom styles: a pill per style, with an inline delete. */
+.preset-btn.custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* The "Custom" pill stands for text no saved style holds — dashed until named. */
+.preset-btn.unsaved {
+  border-style: dashed;
+}
+
+.preset-btn.unsaved[hidden] {
+  display: none;
+}
+
+.preset-del {
+  font-size: 0.85rem;
+  line-height: 1;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.preset-del:hover {
+  color: #ef4444;
+}
+
+.preset-btn.selected .preset-del {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.preset-btn.selected .preset-del:hover {
+  color: #fff;
+}
+
+#style-save-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+#style-save-row[hidden] {
+  display: none;
+}
+
+#style-save-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 6px;
+}
+
+#style-save-name:focus {
+  outline: none;
+  border-color: #2563eb;
+}
+
+#btn-style-save-confirm {
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 14px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
+#btn-style-save,
+#btn-style-save-cancel {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.78rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+#btn-style-save:hover,
+#btn-style-save-cancel:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+/* Unsaved edits: nudge the user toward keeping them. */
+#btn-style-save.attention {
+  border-color: #2563eb;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+#btn-style-save[disabled] {
+  opacity: 0.45;
+  cursor: default;
 }
 
 #messages {
