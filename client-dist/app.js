@@ -995,6 +995,17 @@ dropZone.addEventListener('drop', function(e) {
 // upload when there's a file/image AND no meaningful text — that separates a
 // real screenshot/copied file (no text) from a rich-text paste (has text),
 // which should paste as plain text and ignore the image snapshot.
+// A plain-text paste this many lines or longer is staged as a .txt attachment
+// instead of being inserted — a dump that long is unreadable in the composer
+// and more useful to the agent as a file it can open.
+var PASTE_AS_FILE_MIN_LINES = 30;
+
+// Line count, ignoring one trailing newline so a copied 3-line block that ends
+// in \n counts as 3, not 4.
+function countLines(text) {
+  return text.replace(/\n$/, '').split('\n').length;
+}
+
 // Insert text at the cursor, replacing any selection. Prefers execCommand so
 // the browser keeps native undo history and fires `input` itself.
 function insertAtCursor(text) {
@@ -1022,6 +1033,15 @@ chatInput.addEventListener('paste', function(e) {
   }
   var text = cd.getData('text/plain') || '';
   if (files.length === 0) {
+    // Long multi-line paste — stage it as a .txt attachment instead of
+    // flooding the composer. Named with its line count so the chip says what
+    // it swallowed.
+    var lineCount = countLines(text);
+    if (lineCount >= PASTE_AS_FILE_MIN_LINES) {
+      e.preventDefault();
+      addStagedFiles([new File([text], 'pasted-' + lineCount + '-lines.txt', { type: 'text/plain' })]);
+      return;
+    }
     // Plain text paste. iOS "smart paste" prepends a space when it thinks it's
     // pasting a word after other text — that space breaks an active
     // autocomplete token ("@ docs/adr" instead of "@docs/adr"). When the

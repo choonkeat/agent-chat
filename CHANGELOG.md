@@ -4,6 +4,14 @@ All notable changes to agent-chat are documented in this file.
 
 ## [Unreleased]
 
+### Features
+- Pasting 30 or more lines of plain text into the composer now stages it as a
+  `pasted-<n>-lines.txt` attachment instead of inserting it. A log dump or whole
+  file is unreadable in the textarea and more useful to the agent as a file it
+  can open. Shorter pastes are unaffected, and pastes that carry an actual
+  file/image keep their existing upload behavior. The threshold is
+  `PASTE_AS_FILE_MIN_LINES` in `client-dist/app.js`.
+
 ### Fixes
 - The chat-archive `index.html` no longer goes dirty on every reply. It was
   regenerated after each quiet turn, adding manifest entries for `.md` files
