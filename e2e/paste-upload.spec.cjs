@@ -108,6 +108,24 @@ async function pasteText(page, text) {
   }, text);
 }
 
+/**
+ * Dispatch a paste that carries no file and no text — the shape iOS produces
+ * when "Share > Copy" hands over a file the page cannot read. `types` seeds
+ * extra clipboard entries (e.g. a file URL) so the handler can name the chip.
+ */
+async function pasteNothing(page, entries) {
+  return page.evaluate((seed) => {
+    const el = document.getElementById('chat-input');
+    const dt = new DataTransfer();
+    for (const [type, value] of seed) dt.setData(type, value);
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    el.dispatchEvent(evt);
+    return evt.defaultPrevented;
+  }, entries || []);
+}
+
 /** n lines of filler text, joined by newlines. */
 function lines(n) {
   return Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
@@ -175,6 +193,53 @@ test.describe('Paste to upload', () => {
       await ready(page, server.url);
       const prevented = await pasteText(page, lines(29));
       expect(prevented).toBe(false); // browser inserts it as usual
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('empty paste stages a failed chip instead of doing nothing', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteNothing(page, []);
+      expect(prevented).toBe(true);
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await expect(chip).toHaveClass(/paste-failed/);
+      await expect(chip).toHaveClass(/upload-failed/); // reuses the red style
+      await expect(page.locator('#file-staging .file-name')).toHaveText('clipboard-empty');
+      await expect(page.locator('#btn-send')).toBeEnabled(); // never blocks sending
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('empty paste carrying a file URL names the chip after the real file', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteNothing(page, [['text/uri-list', 'file:///private/var/mobile/Scan%20Jul%2031.pdf']]);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('Scan Jul 31.pdf', { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-icon')).toHaveText('PDF');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('empty paste advertising only a MIME type names the chip by extension', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteNothing(page, [['application/pdf', '']]);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('clipboard-empty.pdf', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('removing the failed paste chip clears the staging area', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteNothing(page, []);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+      await page.locator('#file-staging .file-remove').click();
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
     } finally { await context.close().catch(() => {}); }
   });

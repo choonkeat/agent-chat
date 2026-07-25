@@ -828,6 +828,48 @@ function addStagedFiles(fileList) {
   updateSendButton();
 }
 
+// Stage a chip that is born failed: the paste carried nothing we could read
+// (iOS "Share > Copy" of a PDF hands the page a reference it cannot open), so
+// there is no File to upload. Shown in the failed style so a silent paste has a
+// visible outcome. It never blocks Send and is dropped when the message goes.
+function addFailedPasteChip(name) {
+  stagedFiles.push({
+    file: null,
+    name: name,
+    previewUrl: null,
+    ref: null,
+    uploading: false,
+    uploadFailed: false,
+    pasteFailed: true,
+    abortController: null
+  });
+  renderStaging();
+  updateSendButton();
+}
+
+// Best-effort filename for a paste that arrived empty. The clipboard usually
+// still advertises what it *meant* to carry: a file URL (real filename) or a
+// bare MIME type (kind only). Falls back to a name with no extension.
+function pasteFailureName(cd) {
+  var types = cd.types ? Array.prototype.slice.call(cd.types) : [];
+  var urlish = ['text/uri-list', 'text/x-moz-url', 'URL', 'public.file-url'];
+  for (var i = 0; i < urlish.length; i++) {
+    var raw = '';
+    try { raw = cd.getData(urlish[i]) || ''; } catch (e) { raw = ''; }
+    var first = raw.split('\n')[0].trim();
+    if (!first) continue;
+    var base = decodeURIComponent(first.split('?')[0].split('#')[0]).split('/').pop();
+    if (base && base.indexOf('.') > 0) return base;
+  }
+  for (var j = 0; j < types.length; j++) {
+    var slash = types[j].indexOf('/');
+    if (slash < 0 || types[j].indexOf('text/') === 0) continue;
+    var ext = types[j].slice(slash + 1).replace(/^x-/, '').split('+')[0];
+    if (ext && ext.length <= 4) return 'clipboard-empty.' + ext;
+  }
+  return 'clipboard-empty';
+}
+
 function startUpload(entry, isRetry) {
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   entry.abortController = controller;
@@ -909,7 +951,8 @@ function renderStaging() {
     var chip = document.createElement('div');
     chip.className = 'file-chip';
     if (sf.uploading) chip.classList.add('uploading');
-    if (sf.uploadFailed) chip.classList.add('upload-failed');
+    if (sf.uploadFailed || sf.pasteFailed) chip.classList.add('upload-failed');
+    if (sf.pasteFailed) chip.classList.add('paste-failed');
 
     if (sf.previewUrl) {
       var img = document.createElement('img');
@@ -927,7 +970,9 @@ function renderStaging() {
     var nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
     nameSpan.textContent = sf.name;
-    nameSpan.title = sf.uploadFailed ? 'Upload failed \u2014 remove and re-add' : sf.name;
+    nameSpan.title = sf.pasteFailed
+      ? 'Nothing came through on paste \u2014 use the paperclip button to attach the file'
+      : sf.uploadFailed ? 'Upload failed \u2014 remove and re-add' : sf.name;
     chip.appendChild(nameSpan);
 
     var removeBtn = document.createElement('button');
@@ -1033,6 +1078,13 @@ chatInput.addEventListener('paste', function(e) {
   }
   var text = cd.getData('text/plain') || '';
   if (files.length === 0) {
+    // Nothing readable at all. Usually iOS handing over a file the page can't
+    // open — surface it as a failed chip instead of doing nothing at all.
+    if (text.length === 0) {
+      e.preventDefault();
+      addFailedPasteChip(pasteFailureName(cd));
+      return;
+    }
     // Long multi-line paste — stage it as a .txt attachment instead of
     // flooding the composer. Named with its line count so the chip says what
     // it swallowed.
