@@ -561,7 +561,9 @@ func (eb *EventBus) RemoveFromQueue(targetID string) bool {
 
 // messageTemplatePlaceholder marks where the user's message is substituted into
 // their message-style template. If a template omits it, the template is treated
-// as a preamble prepended to the message.
+// as a preamble prepended to the message — which is what the browser now always
+// sends, since styles combine and the message always lands at the bottom. The
+// placeholder is still honoured for templates saved by an older client.
 const messageTemplatePlaceholder = "{{message}}"
 
 // applyMessageTemplate wraps a single user message with the browser-supplied
