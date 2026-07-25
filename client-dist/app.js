@@ -1783,18 +1783,31 @@ voiceSelect.addEventListener('change', function() {
 // reason the theme toggle uses a cookie. An empty cookie means "explicitly
 // off"; the textarea's maxlength keeps any template well inside the ~4KB
 // cookie limit.
+//
+// The message always lands at the bottom, below the template, so a style is
+// just a list of instructions — which is what lets several of them combine.
 
 var MSG_STYLE_COOKIE = 'agent-chat-msg-style';
 var MSG_STYLE_MAX_AGE = 60 * 60 * 24 * 365;
 var msgStylePresets = {
-  concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.\n\n{{message}}',
-  nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase. Don\'t use analogies.\n\n{{message}}',
-  direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.\n\n{{message}}',
-  adhd: 'Reply for a reader with ADHD: lead with the next action, number multi-step work, restate progress ("step 3 of 5 done"), suppress tangents (finish one thing, then offer the next as a separate question), and cut all preamble, recap, and closers.\n\n{{message}}'
+  concise: 'Reply as concisely as possible: short sentences, no preamble, no recap. Get straight to the point.',
+  nontechnical: 'Explain in plain, non-technical language a non-engineer can follow. Avoid jargon; if a technical term is unavoidable, define it in one short phrase. Don\'t use analogies.',
+  direct: 'Be direct. Lead with the answer or recommendation, then the reason. Skip hedging and filler.',
+  adhd: 'Reply for a reader with ADHD: lead with the next action, number multi-step work, restate progress ("step 3 of 5 done"), suppress tangents (finish one thing, then offer the next as a separate question), and cut all preamble, recap, and closers.'
 };
 
+// What a browser that has never touched the panel starts with. Tapping "Off"
+// writes an empty cookie, which is a real answer — no cookie at all is not.
+var MSG_STYLE_DEFAULTS = ['nontechnical', 'adhd'];
+
+function defaultMsgStyle() {
+  return MSG_STYLE_DEFAULTS.map(function (k) { return msgStylePresets[k]; }).join('\n\n');
+}
+
 function getMsgStyle() {
-  return (getCookie(MSG_STYLE_COOKIE) || '').trim();
+  var raw = getCookie(MSG_STYLE_COOKIE);
+  if (raw === null) return defaultMsgStyle();
+  return raw.trim();
 }
 
 function setMsgStyle(v) {
@@ -1860,17 +1873,17 @@ var btnStyleSaveCancel = document.getElementById('btn-style-save-cancel');
 var settingsActions = document.querySelector('.settings-actions');
 var pillUnsaved = document.getElementById('preset-unsaved');
 
-/** Rebuild the saved-style pills, keeping them ahead of the "Off" pill. */
+/** Rebuild the saved-style pills, keeping them ahead of the "Custom" pill. */
 function renderSavedStyles() {
   if (!settingsPresets) return;
   var existing = settingsPresets.querySelectorAll('.preset-btn.custom');
   for (var i = 0; i < existing.length; i++) existing[i].remove();
-  // Saved styles sit after the built-ins, ahead of "Custom" and "Off".
-  var off = pillUnsaved || settingsPresets.querySelector('.preset-btn[data-preset=""]');
+  var last = pillUnsaved; // saved styles sit after the built-ins, before "Custom"
   getSavedStyles().forEach(function (s) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'preset-btn custom';
+    btn.setAttribute('aria-pressed', 'false');
     btn.dataset.custom = s.n;
     btn.appendChild(document.createTextNode(s.n));
     var del = document.createElement('span');
@@ -1879,61 +1892,116 @@ function renderSavedStyles() {
     del.title = 'Delete "' + s.n + '"';
     del.textContent = '×';
     btn.appendChild(del);
-    settingsPresets.insertBefore(btn, off);
+    settingsPresets.insertBefore(btn, last);
   });
 }
 
-/** The template a pill stands for, so a pill can be matched to the live text. */
+/** The template a pill stands for, so a pill can be matched to the live text.
+    The "Custom" pill stands for no template, which is how it is told apart from
+    the checkable pills. */
 function pillTemplate(btn) {
   if (btn.dataset.custom) {
     var saved = getSavedStyles().filter(function (s) { return s.n === btn.dataset.custom; })[0];
-    return saved ? saved.t : null;
+    return saved ? saved.t.trim() : null;
   }
   var key = btn.dataset.preset;
-  return key ? (msgStylePresets[key] || null) : '';
+  return key ? ((msgStylePresets[key] || '').trim() || null) : null;
 }
 
-/** Fill the one pill whose template is the current text — a saved style first,
-    since its name is what the status line shows. Text belonging to no pill is
-    the "Custom" pill, which appears only then; "Save as…" gives it a name. */
-function highlightSelectedPill() {
-  if (!settingsPresets) return null;
-  var text = getMsgStyle();
+/** The pills that can be checked, in the order they are shown — built-ins,
+    then saved styles. Display order is also the order they appear in the text. */
+function checkablePills() {
+  if (!settingsPresets) return [];
+  var out = [];
   var pills = settingsPresets.querySelectorAll('.preset-btn');
-  var matches = [];
+  for (var i = 0; i < pills.length; i++) {
+    var tmpl = pillTemplate(pills[i]);
+    if (tmpl) out.push({ btn: pills[i], tmpl: tmpl });
+  }
+  return out;
+}
+
+// Templates written before the message moved to the bottom carry a {{message}}
+// marker; drop it rather than leave it loose in the user's own words.
+var MSG_STYLE_LEGACY_MARK = /\{\{message\}\}/g;
+
+/** Which pills the text is built from, plus whatever text belongs to none.
+    A pill is checked when its words appear verbatim in the box, so hand-edited
+    text still lights up the pills it contains. Longest template first, so a
+    saved style that spans a preset's words claims them once, not twice. */
+function parseStyle(text) {
+  var rest = String(text || '').replace(MSG_STYLE_LEGACY_MARK, '');
+  var hit = [];
+  checkablePills().slice().sort(function (a, b) { return b.tmpl.length - a.tmpl.length; })
+    .forEach(function (p) {
+      var at = rest.indexOf(p.tmpl);
+      if (at < 0) return;
+      hit.push(p.btn);
+      rest = rest.slice(0, at) + rest.slice(at + p.tmpl.length);
+    });
+  var ordered = checkablePills().filter(function (p) { return hit.indexOf(p.btn) >= 0; });
+  return {
+    checked: ordered.map(function (p) { return p.btn; }),
+    rest: rest.replace(/\n{3,}/g, '\n\n').trim()
+  };
+}
+
+/** Rebuild the template: checked pills in pill order, then the words matching
+    no pill, collated at the bottom. The message itself follows below. */
+function composeStyle(checked, rest) {
+  var parts = [];
+  checkablePills().forEach(function (p) {
+    if (checked.indexOf(p.btn) >= 0) parts.push(p.tmpl);
+  });
+  if (rest) parts.push(rest);
+  return parts.join('\n\n');
+}
+
+function applyStyleText(text) {
+  msgStyleInput.value = text;
+  setMsgStyle(text);
+  updateSettingsStatus();
+}
+
+// What the Custom pill last took out of the box, so tapping it again puts the
+// same words back. Unticking any other pill is undone the same way — by tapping
+// it again — and the Custom pill has no saved copy to fall back on.
+var stashedRest = '';
+
+/** Fill every pill the text contains. Words belonging to no pill are the
+    "Custom" pill, which appears only then; "Save as…" gives them a name. */
+function refreshPills() {
+  if (!settingsPresets) return { checked: [], rest: '' };
+  var text = getMsgStyle();
+  var sel = parseStyle(text);
+  var pills = settingsPresets.querySelectorAll('.preset-btn');
   for (var i = 0; i < pills.length; i++) {
     var pill = pills[i];
-    pill.classList.remove('selected');
-    if (pill === pillUnsaved) continue;
-    if (pillTemplate(pill) === text) matches.push(pill);
+    var on = pill === pillUnsaved ? !!sel.rest : sel.checked.indexOf(pill) >= 0;
+    pill.classList.toggle('selected', on);
+    if (pill.hasAttribute('aria-pressed')) {
+      pill.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
   }
-  var picked = matches.filter(function (b) { return b.dataset.custom; })[0] || matches[0];
-  if (!picked && text && pillUnsaved) picked = pillUnsaved;
-  if (pillUnsaved) pillUnsaved.hidden = picked !== pillUnsaved;
-  if (picked) picked.classList.add('selected');
-  return picked || null;
+  // The pill stays put while its words are stashed — it is what puts them back.
+  if (pillUnsaved) pillUnsaved.hidden = !sel.rest && !stashedRest;
+  return sel;
 }
 
 function updateSettingsStatus(note) {
   if (!settingsStatus) return;
   var active = getMsgStyle();
   var naming = styleSaveRow && !styleSaveRow.hidden;
-  // The status line names whichever pill is filled, so the two never disagree
-  // when a saved style holds the same text as a built-in preset.
-  var pill = highlightSelectedPill();
-  var name = pill && pill.dataset.custom;
-  var unsaved = !!pill && pill === pillUnsaved;
-  settingsStatus.textContent = note
-    || (naming ? 'Name it, then tap Save'
-      : !active ? 'Off (default)'
-        : name ? 'Active: ' + name
-          : unsaved ? 'Active · unsaved' : 'Active');
+  var sel = refreshPills();
+  // The pills already show what is on; a second line of status text only
+  // squeezed the buttons next to it. Speak up for naming and for errors only.
+  settingsStatus.textContent = note || (naming ? 'Name it, then tap Save' : '');
   if (btnSettings) btnSettings.classList.toggle('active', !!active);
   // "Save as…" only ever names the Custom pill: anything else already has a
   // pill to tap, so there is nothing to keep.
   if (btnStyleSave) {
-    btnStyleSave.disabled = !unsaved;
-    btnStyleSave.classList.toggle('attention', unsaved);
+    btnStyleSave.disabled = !sel.rest;
+    btnStyleSave.classList.toggle('attention', !!sel.rest);
   }
   // While naming, "Save as…"/"Done" would compete with "Save"/"Cancel".
   if (settingsActions) settingsActions.hidden = !!naming;
@@ -1982,24 +2050,31 @@ if (settingsPanel) {
     }
     var btn = e.target.closest('.preset-btn');
     if (!btn) return;
-    // The Custom pill is already what the box holds — tapping it changes nothing.
-    if (btn === pillUnsaved) { msgStyleInput.focus(); return; }
-    if (btn.dataset.custom) {
-      var saved = getSavedStyles().filter(function (s) { return s.n === btn.dataset.custom; })[0];
-      msgStyleInput.value = saved ? saved.t : '';
-    } else {
-      var key = btn.dataset.preset;
-      msgStyleInput.value = key ? (msgStylePresets[key] || '') : '';
+    var sel = parseStyle(getMsgStyle());
+    if (btn === pillUnsaved) {
+      // Ticks off the words no pill owns, and ticking it again brings them back.
+      if (sel.rest) stashedRest = sel.rest;
+      applyStyleText(composeStyle(sel.checked, sel.rest ? '' : stashedRest));
+      hideSaveRow();
+      msgStyleInput.focus();
+      return;
     }
-    setMsgStyle(msgStyleInput.value);
+    var tmpl = pillTemplate(btn);
+    if (!tmpl) return; // a saved style deleted mid-tap has nothing to add
+    // Pills are checkboxes: tapping one adds or drops its words, leaving the
+    // rest of the template — and the other pills — as they were. Untick them
+    // all and the box is empty, which is how the styles are switched off.
+    var checked = sel.checked.slice();
+    var at = checked.indexOf(btn);
+    if (at >= 0) checked.splice(at, 1); else checked.push(btn);
+    applyStyleText(composeStyle(checked, sel.rest));
     hideSaveRow();
-    updateSettingsStatus();
     msgStyleInput.focus();
   });
 }
 
 function openSaveRow() {
-  if (!styleSaveRow || !getMsgStyle()) return;
+  if (!styleSaveRow || !parseStyle(getMsgStyle()).rest) return;
   // Typing a name already in use replaces that style, which is how an edited
   // style is updated — so start blank rather than guessing.
   styleSaveName.value = '';
@@ -2009,14 +2084,17 @@ function openSaveRow() {
   styleSaveName.select();
 }
 
+/** Name the words matching no pill — only those, so the new pill combines with
+    the presets instead of swallowing a copy of them. */
 function confirmSaveStyle() {
   var name = (styleSaveName.value || '').trim();
-  var text = getMsgStyle();
-  if (!name || !text) return;
-  if (!saveStyle(name, text)) {
+  var rest = parseStyle(getMsgStyle()).rest;
+  if (!name || !rest) return;
+  if (!saveStyle(name, rest)) {
     updateSettingsStatus('Too many saved styles to fit — delete one first');
     return;
   }
+  stashedRest = ''; // the words have a pill of their own now
   styleSaveRow.hidden = true;
   renderSavedStyles();
   updateSettingsStatus();

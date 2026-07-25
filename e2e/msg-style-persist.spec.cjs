@@ -58,6 +58,13 @@ async function waitForServer(url) {
   throw new Error(`server never answered: ${url}`);
 }
 
+/** Untick everything, the way a user would when they want no style at all. */
+async function clearStyle(page) {
+  const on = page.locator('#settings-presets .preset-btn.selected');
+  for (let n = await on.count(); n > 0; n = await on.count()) await on.first().click();
+  await expect(page.locator('#msg-style-input')).toHaveValue('');
+}
+
 async function openSettings(page, url) {
   await waitForServer(url);
   // The shared browser occasionally refuses a freshly-bound ephemeral port;
@@ -94,43 +101,118 @@ test.describe('message style persistence', () => {
     }
   });
 
+  test('a browser that never touched the panel starts on Non-technical + ADHD', async () => {
+    const page = await context.newPage();
+    await openSettings(page, a.url);
+
+    await expect(page.locator('.preset-btn[data-preset="nontechnical"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'false');
+    const text = await page.locator('#msg-style-input').inputValue();
+    expect(text).toContain('non-technical language');
+    expect(text).toContain('ADHD');
+
+    // Unticking every pill is a real answer, and it outlasts the defaults on
+    // the next session — the defaults are only for a browser that never chose.
+    await clearStyle(page);
+    const next = await context.newPage();
+    await openSettings(next, b.url);
+    await expect(next.locator('#msg-style-input')).toHaveValue('');
+    await expect(next.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'false');
+  });
+
   test('a preset chosen on one session applies to the next session (different port)', async () => {
     expect(new URL(a.url).port).not.toBe(new URL(b.url).port);
 
     const first = await context.newPage();
     await openSettings(first, a.url);
+    await clearStyle(first);
     await first.locator('.preset-btn[data-preset="adhd"]').click();
     const chosen = await first.locator('#msg-style-input').inputValue();
     expect(chosen).toContain('ADHD');
-    await expect(first.locator('#settings-status')).toHaveText('Active');
+    expect(chosen).not.toContain('{{message}}');
+    await expect(first.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'true');
 
     // A second session: same browser, different port.
     const second = await context.newPage();
     await openSettings(second, b.url);
     await expect(second.locator('#msg-style-input')).toHaveValue(chosen);
-    await expect(second.locator('#settings-status')).toHaveText('Active');
+    await expect(second.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('pills are checkboxes: several combine, and each unticks on its own', async () => {
+    const page = await context.newPage();
+    await openSettings(page, a.url);
+    await clearStyle(page);
+
+    await page.locator('.preset-btn[data-preset="concise"]').click();
+    await page.locator('.preset-btn[data-preset="adhd"]').click();
+    const both = await page.locator('#msg-style-input').inputValue();
+    expect(both).toContain('as concisely as possible');
+    expect(both).toContain('ADHD');
+    await expect(page.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'true');
+
+    // Unticking one leaves the other's words untouched.
+    await page.locator('.preset-btn[data-preset="concise"]').click();
+    const left = await page.locator('#msg-style-input').inputValue();
+    expect(left).not.toContain('as concisely as possible');
+    expect(left).toContain('ADHD');
+    await expect(page.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'true');
+
+    // Unticking the last pill empties the box — that is "no style".
+    await page.locator('.preset-btn[data-preset="adhd"]').click();
+    await expect(page.locator('#msg-style-input')).toHaveValue('');
+    await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('words matching no pill are collated below the ticked styles', async () => {
+    const page = await context.newPage();
+    await openSettings(page, a.url);
+
+    // Typed first, so only re-composing can move it to the bottom.
+    await page.locator('#msg-style-input').fill('Always cite the file and line.');
+    await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#preset-unsaved')).toBeVisible();
+    await page.locator('.preset-btn[data-preset="direct"]').click();
+
+    const text = await page.locator('#msg-style-input').inputValue();
+    expect(text.indexOf('Be direct.')).toBeLessThan(text.indexOf('Always cite'));
+    expect(text.trimEnd().endsWith('Always cite the file and line.')).toBe(true);
+    await expect(page.locator('#preset-unsaved')).toHaveAttribute('aria-pressed', 'true');
+
+    // Tapping Custom takes those words out, and tapping it again puts them back.
+    await page.locator('#preset-unsaved').click();
+    await expect(page.locator('#msg-style-input')).not.toHaveValue(/Always cite/);
+    await expect(page.locator('#preset-unsaved')).toBeVisible();
+    await expect(page.locator('#preset-unsaved')).toHaveAttribute('aria-pressed', 'false');
+    await page.locator('#preset-unsaved').click();
+    await expect(page.locator('#msg-style-input')).toHaveValue(text);
+    await expect(page.locator('#preset-unsaved')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('clearing the style on one session clears it on the next', async () => {
     const first = await context.newPage();
     await openSettings(first, a.url);
+    await clearStyle(first);
     await first.locator('.preset-btn[data-preset="concise"]').click();
-    await expect(first.locator('#settings-status')).toHaveText('Active');
+    await expect(first.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'true');
 
     const second = await context.newPage();
     await openSettings(second, b.url);
-    await expect(second.locator('#settings-status')).toHaveText('Active');
+    await expect(second.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'true');
     await second.locator('#msg-style-input').fill('');
-    await expect(second.locator('#settings-status')).toHaveText('Off (default)');
+    await expect(second.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'false');
 
     const third = await context.newPage();
     await openSettings(third, a.url);
     await expect(third.locator('#msg-style-input')).toHaveValue('');
-    await expect(third.locator('#settings-status')).toHaveText('Off (default)');
+    await expect(third.locator('.preset-btn[data-preset="concise"]')).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('an edited style saved under a name becomes a pill on the next session', async () => {
-    const mine = 'Answer in exactly one sentence.\n\n{{message}}';
+    const mine = 'Answer in exactly one sentence.';
 
     const first = await context.newPage();
     await openSettings(first, a.url);
@@ -139,33 +221,35 @@ test.describe('message style persistence', () => {
     await first.locator('#style-save-name').fill('One-liner');
     await first.locator('#btn-style-save-confirm').click();
     await expect(first.locator('.preset-btn[data-custom="One-liner"]')).toBeVisible();
-    await expect(first.locator('#settings-status')).toHaveText('Active: One-liner');
+    await expect(first.locator('.preset-btn[data-custom="One-liner"]')).toHaveAttribute('aria-pressed', 'true');
 
-    // Next session: the pill is there, and tapping a built-in preset then the
-    // saved pill brings the custom text back instead of losing it.
+    // Next session: the pill is there, ticking a built-in preset adds to it
+    // rather than replacing it, and unticking takes only its own words away.
     const second = await context.newPage();
     await openSettings(second, b.url);
     await expect(second.locator('.preset-btn[data-custom="One-liner"]')).toBeVisible();
     await second.locator('.preset-btn[data-preset="direct"]').click();
-    await expect(second.locator('#msg-style-input')).not.toHaveValue(mine);
+    await expect(second.locator('#msg-style-input')).toHaveValue(new RegExp('Be direct[\\s\\S]*' + mine));
+    await expect(second.locator('.preset-btn[data-custom="One-liner"]')).toHaveAttribute('aria-pressed', 'true');
     await second.locator('.preset-btn[data-custom="One-liner"]').click();
-    await expect(second.locator('#msg-style-input')).toHaveValue(mine);
-    await expect(second.locator('#settings-status')).toHaveText('Active: One-liner');
+    await expect(second.locator('#msg-style-input')).not.toHaveValue(new RegExp(mine));
+    await expect(second.locator('.preset-btn[data-custom="One-liner"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(second.locator('.preset-btn[data-preset="direct"]')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('text belonging to no pill shows as Custom until it is named', async () => {
     const page = await context.newPage();
     await openSettings(page, a.url);
 
+    await clearStyle(page);
     await page.locator('.preset-btn[data-preset="adhd"]').click();
     await expect(page.locator('#preset-unsaved')).toBeHidden();
     await expect(page.locator('.preset-btn[data-preset="adhd"]')).toHaveClass(/selected/);
     await expect(page.locator('#btn-style-save')).toBeDisabled();
 
-    await page.locator('#msg-style-input').fill('Answer in haiku.\n\n{{message}}');
+    await page.locator('#msg-style-input').fill('Answer in haiku.');
     await expect(page.locator('#preset-unsaved')).toBeVisible();
     await expect(page.locator('#preset-unsaved')).toHaveClass(/selected/);
-    await expect(page.locator('#settings-status')).toHaveText('Active · unsaved');
     await expect(page.locator('#btn-style-save')).toBeEnabled();
 
     // Naming it replaces Custom with a pill of that name.
@@ -175,7 +259,6 @@ test.describe('message style persistence', () => {
     await page.locator('#btn-style-save-confirm').click();
     await expect(page.locator('#preset-unsaved')).toBeHidden();
     await expect(page.locator('.preset-btn[data-custom="Haiku"]')).toHaveClass(/selected/);
-    await expect(page.locator('#settings-status')).toHaveText('Active: Haiku');
     await expect(page.locator('#btn-style-save')).toBeDisabled();
   });
 

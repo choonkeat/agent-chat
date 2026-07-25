@@ -191,28 +191,52 @@ body {
   justify-content: space-between;
 }
 
+/* Empty most of the time — the pills already say which styles are on, and a
+   second line of text squeezed the buttons on a phone. */
 #settings-status {
   font-size: 0.72rem;
   color: var(--text-muted);
+  min-width: 0;
 }
 
 .settings-actions {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  flex: none;
+  white-space: nowrap;
 }
 
 .settings-actions[hidden] {
   display: none;
 }
 
-/* Only the pill matching the current template is filled — a saved style must
+/* Filled means the pill's words are in the box right now — a saved style must
    not look selected just because it exists. */
 .preset-btn.selected,
 .preset-btn.selected:hover {
   background: #2563eb;
   border-color: #2563eb;
   color: #fff;
+}
+
+/* Styles combine, so every checkable pill carries a tick — dim when unticked,
+   which keeps the pill from resizing as it is switched on and off. */
+.preset-btn[aria-pressed] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.preset-btn[aria-pressed]::before {
+  content: '✓';
+  font-size: 0.9em;
+  line-height: 1;
+  opacity: 0.3;
+}
+
+.preset-btn.selected[aria-pressed]::before {
+  opacity: 1;
 }
 
 #btn-settings-done {
