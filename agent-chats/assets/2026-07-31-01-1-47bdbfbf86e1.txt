@@ -1,0 +1,5 @@
+[REDACTED]
+
+The original 42-line paste was removed before committing; only its role in the
+conversation matters here — it was a long multi-line paste, which the composer
+turns into a .txt attachment instead of flooding the text box.
