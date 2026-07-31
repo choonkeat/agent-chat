@@ -164,6 +164,32 @@ function scrollToBottom(force) {
   window.scrollTo(0, document.documentElement.scrollHeight);
 }
 
+// --- Re-pin on viewport change ---
+//
+// #chat-footer is position: sticky, so it paints over flow content whenever the
+// document is not scrolled to the very end. Opening the on-screen keyboard
+// shortens the visible area without moving the scroll offset, which puts the
+// last messages underneath the footer. Re-pin to the bottom, unless the reader
+// deliberately scrolled up.
+//
+// Two listeners, not one: inside an iframe the host resizes the frame and the
+// inner window fires `resize`; in a standalone iOS Safari tab the keyboard is an
+// overlay, the layout viewport does not change, and only visualViewport reports
+// it.
+function repinOnViewportChange() {
+  // Twice: once now, because requestAnimationFrame is throttled to a standstill
+  // while the page is in a background tab, and once a frame later, because
+  // Safari has not finished settling the viewport when the event fires — so the
+  // scrollHeight read now can be stale. scrollToBottom is idempotent.
+  scrollToBottom(false);
+  requestAnimationFrame(function () { scrollToBottom(false); });
+}
+
+window.addEventListener('resize', repinOnViewportChange);
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', repinOnViewportChange);
+}
+
 // --- Timestamp helper ---
 
 function ts() {
