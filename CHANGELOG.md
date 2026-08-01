@@ -13,6 +13,17 @@ All notable changes to agent-chat are documented in this file.
   `PASTE_AS_FILE_MIN_LINES` in `client-dist/app.js`.
 
 ### Fixes
+- A user bubble no longer claims to be read when nothing received it. Breaking
+  out of the agent's blocking `send_message` in the host terminal leaves a dead
+  server-side waiter that still drains the queue, so the reply flipped straight
+  to "read" — and lost its `⋯` menu, hiding **Send as interrupting** at the one
+  moment it would have fixed things. A bubble now stays in the existing unread
+  state (dim, tooltip, `⋯` menu, below the loader) until the agent *proves* it
+  received the message: new `userMessagesRead` event, published by
+  `bus.ProveDelivery()` at the top of every agent-chat tool handler. Draining
+  the queue only sets `data-handed-over`, which hides **Delete** (an unsend can
+  no longer pull the message back) and leaves the interrupt recovery in place.
+  See `docs/adr/2026-08-01-unread-until-proven-read.md`.
 - The chat-archive `index.html` no longer goes dirty on every reply. It was
   regenerated after each quiet turn, adding manifest entries for `.md` files
   that were still untracked and still renameable by `set_chat_title` — so

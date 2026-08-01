@@ -789,8 +789,12 @@ body {
 }
 
 /* User bubble awaiting agent receipt — dimmed and rendered below the loader
-   until the matching userMessagesConsumed event clears it. cursor:help nudges
-   users to hover for the tooltip. position:relative anchors the × control. */
+   until the matching userMessagesRead event clears it. A hand-over off the
+   queue (userMessagesConsumed) is NOT a receipt and deliberately does not
+   change this styling: a terminal break-out leaves a dead request that drains
+   the queue and reads nothing, so the bubble must keep saying "unread".
+   cursor:help nudges users to hover for the tooltip. position:relative anchors
+   the ⋯ control. */
 .bubble.user.pending-agent {
   opacity: 0.55;
   cursor: help;
@@ -803,7 +807,8 @@ body {
    bubble's left edge because user bubbles are right-aligned. Faintly visible at
    rest so it stays reachable on touch devices (no hover), fully opaque on
    hover/focus. Only ever exists on .pending-agent bubbles — we don't render it
-   for consumed ones. Opens a menu (Delete + Send as interrupting). */
+   once the agent has proven receipt. Opens a menu (Delete + Send as
+   interrupting; Delete drops off once the message has been handed over). */
 .bubble-pending-menu {
   position: absolute;
   left: -32px;

@@ -496,14 +496,23 @@ function positionMenuBelow(menu, btn) {
 }
 
 // --- Pending user-bubble "⋯" menu (Delete + Send as interrupting) ---
-// Unread user bubbles (still queued, not yet drained by the agent) carry a small
-// "⋯" button. Delete pulls this one message back out of the queue (unsend) and
-// is offered on EVERY pending bubble. Send as interrupting aborts the agent's
-// current tool and makes it drain its whole queue now (see
-// interruptWithPendingMessage); because that is a queue-level action it is only
-// offered on the bottom-most (newest) pending bubble.
+// Unread user bubbles carry a small "⋯" button. "Unread" is one state, not two:
+// a message stays .pending-agent until the agent PROVES it received it
+// (userMessagesRead). A hand-over off the queue (userMessagesConsumed) proves
+// nothing — a terminal break-out leaves a dead request that drains the queue and
+// reads nothing — so it changes only one thing: data-handed-over, which hides
+// Delete. Everything else about the bubble (dim, tooltip, "⋯", position below
+// the loader) is the unread treatment that already existed.
+//
+// Delete pulls this one message back out of the queue (unsend), which is
+// impossible once it has been handed over — nothing is left in the queue to
+// pull. Send as interrupting aborts the agent's current tool and makes it drain
+// its whole queue now (see interruptWithPendingMessage); because that is a
+// queue-level action it is only offered on the bottom-most pending bubble. It
+// stays available after a hand-over precisely because that is the
+// terminal-breakout case: the one-click recovery.
 
-// True when `bubble` is the last pending (queued, unread) user bubble in the
+// True when `bubble` is the last pending (unread) user bubble in the
 // transcript — the anchor for the queue-level "Send as interrupting" row.
 function isLastPendingBubble(bubble) {
   var pending = messages.querySelectorAll('.bubble.user.pending-agent');
@@ -516,17 +525,23 @@ function openPendingMenuFor(btn, messageId, text) {
   menu.ownerBtn = btn;
   menu.addEventListener('click', function (e) { e.stopPropagation(); });
 
-  var del = makeMenuItem('delete', 'Delete', ICON_TRASH);
-  del.addEventListener('click', function () {
-    closeBubbleMenu();
-    sendUnsend(messageId);
-  });
-  menu.appendChild(del);
+  var bubble = btn.closest('.bubble');
+
+  // Delete is an unsend against the agent's queue. Once handed over the message
+  // has already left that queue, so the server would reject it (see the
+  // unsendFailed branch) — don't offer an action that cannot work.
+  if (bubble && !bubble.dataset.handedOver) {
+    var del = makeMenuItem('delete', 'Delete', ICON_TRASH);
+    del.addEventListener('click', function () {
+      closeBubbleMenu();
+      sendUnsend(messageId);
+    });
+    menu.appendChild(del);
+  }
 
   // Interrupting drains the entire queue, so only offer it on the bottom-most
-  // pending bubble. It carries no per-message text (file-only messages included),
-  // so there's no text-presence guard.
-  var bubble = btn.closest('.bubble');
+  // pending bubble. It carries no per-message text (file-only messages
+  // included), so there's no text-presence guard.
   if (bubble && isLastPendingBubble(bubble)) {
     var interrupt = makeMenuItem('interrupt', 'Send as interrupting', ICON_INTERRUPT);
     interrupt.addEventListener('click', function () {
@@ -572,9 +587,9 @@ function removePendingMenuBtn(bubble) {
 // reads ALL queued messages through the normal agent-chat channel — with full
 // redelivery/ordering/file-attachment semantics. We deliberately do NOT unsend
 // and do NOT promote any bubble: each pending bubble stays "pending" until the
-// server's real userMessagesConsumed broadcast flips it (markMessagesConsumed),
-// exactly like a message drained without an interrupt. Because check_messages
-// drains the whole queue, this is only offered on the bottom-most pending bubble.
+// server's real userMessagesRead broadcast flips it (markMessagesRead), exactly
+// like a message drained without an interrupt. Because check_messages drains
+// the whole queue, this is only offered on the bottom-most pending bubble.
 function interruptWithPendingMessage() {
   if (window.parent === window) {
     addAgentMessage('Cannot interrupt: host terminal not connected.', null, 'warning', Date.now());
@@ -674,11 +689,11 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
       div.appendChild(createTtsButton(div));
     }
   }
-  // User bubbles arriving with a server-assigned ID start in the "pending"
-  // state — dimmed and rendered after the loader so they're visually
-  // disconnected from the conversation until the agent has actually read
-  // them (via check_messages or send_message). Cleared by the
-  // userMessagesConsumed event.
+  // User bubbles arriving with a server-assigned ID start "pending" — dimmed
+  // and rendered after the loader so they're visually disconnected from the
+  // conversation until the agent has actually read them. Cleared by the
+  // userMessagesRead event, i.e. only once the agent has PROVEN receipt;
+  // userMessagesConsumed (the hand-over) merely drops the Delete action.
   if (role === 'user' && messageId) {
     div.dataset.msgId = messageId;
     div.classList.add('pending-agent');
@@ -1239,18 +1254,34 @@ function removeLoading() {
   sendBtn.classList.remove('agent-busy');
 }
 
-// Clear the "pending" state on user bubbles whose IDs the agent has just
-// consumed. Re-parents them above the loader so the conversation reads
-// chronologically again, and strips the × control (unsend no longer applies
-// once the agent has read the message).
-function markMessagesConsumed(ids) {
+// The queue handed these IDs to a waiting request. That is NOT proof they
+// arrived — if the user broke out of the tool call in the host terminal, the
+// waiter is dead and nothing read them — so the bubble stays exactly as unread
+// as it was: dim, tooltipped, below the loader, "⋯" menu intact. The only
+// change is that Delete no longer applies, because the message has left the
+// queue an unsend would have pulled it from.
+function markMessagesHandedOver(ids) {
+  if (!ids || ids.length === 0) return;
+  for (var i = 0; i < ids.length; i++) {
+    var bubble = messages.querySelector('.bubble.user[data-msg-id="' + ids[i] + '"]');
+    if (!bubble) continue;
+    bubble.dataset.handedOver = '1';
+  }
+}
+
+// Clear the "pending" state on user bubbles the agent has PROVEN it received
+// (userMessagesRead — it made another chat-tool call after the hand-over).
+// Re-parents them above the loader so the conversation reads chronologically
+// again, and strips the "⋯" control (neither unsend nor interrupt applies once
+// the agent has the message).
+function markMessagesRead(ids) {
   if (!ids || ids.length === 0) return;
   var loader = document.getElementById('loading-bubble');
   for (var i = 0; i < ids.length; i++) {
-    var id = ids[i];
-    var bubble = messages.querySelector('.bubble.user[data-msg-id="' + id + '"]');
+    var bubble = messages.querySelector('.bubble.user[data-msg-id="' + ids[i] + '"]');
     if (!bubble) continue;
     bubble.classList.remove('pending-agent');
+    delete bubble.dataset.handedOver;
     bubble.removeAttribute('title');
     removePendingMenuBtn(bubble);
     if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
@@ -2771,11 +2802,16 @@ function replayHistory(history) {
   console.log('[' + ts() + '] Replaying ' + history.length + ' history events');
   clearMessages();
 
-  // First pass: find which user-message IDs were withdrawn (userMessageDeleted)
-  // or consumed (userMessagesConsumed). Withdrawn IDs are skipped entirely;
-  // consumed IDs render as normal bubbles (no .pending-agent class).
+  // First pass: classify every user-message ID by what the log records, so a
+  // reconnecting tab rebuilds what a live tab is showing:
+  //   deleted  — withdrawn before the agent saw it; skipped entirely
+  //   read     — userMessagesRead: proven received; normal bubble
+  //   consumed — handed over but never proven; still a pending bubble, minus
+  //              Delete (data-handed-over)
+  //   neither  — still queued; plain pending bubble
   var deletedIds = {};
   var consumedIds = {};
+  var readIds = {};
   for (var k = 0; k < history.length; k++) {
     var hev = history[k];
     if (hev.type === 'userMessageDeleted' && hev.id) {
@@ -2783,6 +2819,10 @@ function replayHistory(history) {
     } else if (hev.type === 'userMessagesConsumed' && hev.ids) {
       for (var ki = 0; ki < hev.ids.length; ki++) {
         consumedIds[hev.ids[ki]] = true;
+      }
+    } else if (hev.type === 'userMessagesRead' && hev.ids) {
+      for (var kr = 0; kr < hev.ids.length; kr++) {
+        readIds[hev.ids[kr]] = true;
       }
     }
   }
@@ -2821,11 +2861,16 @@ function replayHistory(history) {
         if (event.text || (event.files && event.files.length > 0)) {
           var isVoiceMsg = event.text && event.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? event.text.replace('\ud83c\udfa4 ', '') : event.text;
-          // Only pass the ID when the message is still pending in history \u2014
-          // otherwise rendering as a normal (consumed) bubble matches what
-          // every other tab is showing.
-          var stillPending = event.id && !consumedIds[event.id];
+          // Only pass the ID while the message is still unread \u2014 that's what
+          // gives the bubble its pending styling and its "\u22ef" menu. A
+          // proven-read message renders as a plain bubble, matching what every
+          // other tab is showing.
+          var stillPending = event.id && !readIds[event.id];
           addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts, stillPending ? event.id : undefined);
+          // Handed over but never proven: same pending bubble, no Delete.
+          if (stillPending && consumedIds[event.id]) {
+            markMessagesHandedOver([event.id]);
+          }
         }
         break;
       case 'draw':
@@ -3007,10 +3052,15 @@ function connect() {
         break;
 
       case 'userMessagesConsumed':
-        // Agent has drained the queue (or the server consumed inline via
-        // the permission / ack path). Flip the matching bubbles out of the
-        // "pending" state and re-parent them above the loader.
-        markMessagesConsumed(data.ids || []);
+        // The queue handed these off to a waiting request. No proof anything
+        // received them, so the bubble stays unread — only Delete drops off.
+        markMessagesHandedOver(data.ids || []);
+        break;
+
+      case 'userMessagesRead':
+        // The agent made another chat-tool call after the hand-over, which
+        // proves it arrived. NOW the bubble stops being pending.
+        markMessagesRead(data.ids || []);
         break;
 
       case 'userMessageDeleted':
