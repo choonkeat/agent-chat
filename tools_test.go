@@ -29,6 +29,7 @@ func mustParseTime(t *testing.T, s string) time.Time {
 // Common expected substrings for reply instructions (shared across tests).
 const (
 	replyInstructionsBody = "The TUI is invisible to the user (so don't ever call the built-in AskUserQuestion tool). EVERY user-visible message — questions, status, final answers, errors — must go through `send_message` or `send_progress`. Plain text in your response is never seen by the user.\n\n" +
+		"- FIRST, before any other work: call `send_progress` with one line naming what you are about to do. The user's bubble stays dim and unread until an agent-chat tool call reaches the server, so this is what marks their message read — a reply at the end of the turn marks it far too late.\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_message` BEFORE acting. Otherwise just proceed.\n" +
 		"- Use `send_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
 		"- When the task is done, deliver the result with `send_message` and wait. NEVER end your turn without calling `send_message` — going silent looks like a crash to the user.\n" +
@@ -38,6 +39,7 @@ const (
 	replyInstructionsVoiceBody = "User can only hear you now; keep it conversational, no markdown.\n" +
 		"IMPORTANT: Never put more than one question in a single message. Wait for the answer before asking the next question.\n\n" +
 		"The TUI is invisible to the user (so don't ever call the built-in AskUserQuestion tool). EVERY user-visible message — questions, status, final answers, errors — must go through `send_verbal_reply` or `send_verbal_progress`. Plain text in your response is never seen by the user.\n\n" +
+		"- FIRST, before any other work: call `send_verbal_progress` with one line naming what you are about to do. The user's bubble stays dim and unread until an agent-chat tool call reaches the server, so this is what marks their message read — a reply at the end of the turn marks it far too late.\n" +
 		"- If the request is ambiguous, risky, or destructive, confirm with `send_verbal_reply` BEFORE acting. Otherwise just proceed.\n" +
 		"- Use `send_verbal_progress` for non-blocking status updates during long work. If the user sends a barge-in message while you are working, it will be appended to the next `send_verbal_progress` return value after a `---BARGE-IN---` sentinel — treat that as a new instruction. You do NOT need to poll for it.\n" +
 		"- When the task is done, deliver the result with `send_verbal_reply` and wait. NEVER end your turn without calling `send_verbal_reply` — going silent looks like a crash to the user.\n" +
@@ -178,6 +180,46 @@ func TestVoiceSuffixVoiceMessage(t *testing.T) {
 	got := voiceSuffix(msgs)
 	if got != replyInstructionsVoiceBody {
 		t.Errorf("voiceSuffix voice:\ngot:  %q\nwant: %q", got, replyInstructionsVoiceBody)
+	}
+}
+
+// A user bubble only turns read when an agent-chat tool call reaches the server
+// (bus.ProveDelivery). If the agent's first call back is the final reply, the
+// bubble sits unread for the whole turn even though the agent read it
+// immediately — the mark lands with the answer instead of with the receipt. The
+// fix is instructional, not structural: the reply instructions lead with an
+// acknowledgement, so the FIRST call back happens before the work does. Pin it
+// as the first bullet — order is the whole point, a mention buried at the bottom
+// does not get acted on first.
+func TestReplyInstructionsLeadWithAcknowledgement(t *testing.T) {
+	tests := []struct {
+		name string
+		msgs []UserMessage
+		want string
+	}{
+		{
+			name: "text",
+			msgs: []UserMessage{{Text: "hello"}},
+			want: "- FIRST, before any other work: call `send_progress` with one line naming what you are about to do. The user's bubble stays dim and unread until an agent-chat tool call reaches the server, so this is what marks their message read — a reply at the end of the turn marks it far too late.",
+		},
+		{
+			name: "voice",
+			msgs: []UserMessage{{Text: "\U0001f3a4 do something"}},
+			want: "- FIRST, before any other work: call `send_verbal_progress` with one line naming what you are about to do. The user's bubble stays dim and unread until an agent-chat tool call reaches the server, so this is what marks their message read — a reply at the end of the turn marks it far too late.",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := voiceSuffix(tc.msgs)
+			bullets := strings.Split(got, "\n- ")
+			if len(bullets) < 2 {
+				t.Fatalf("reply instructions have no bullet list:\n%s", got)
+			}
+			first := "- " + bullets[1]
+			if first != tc.want {
+				t.Errorf("first bullet of reply instructions:\ngot:  %q\nwant: %q", first, tc.want)
+			}
+		})
 	}
 }
 
