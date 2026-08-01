@@ -9,6 +9,7 @@
 // moment any history exists.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -69,7 +70,7 @@ test.describe('Blank-chat welcome quick replies', () => {
   test('default welcome replies appear on a genuinely empty chat', async ({ page }) => {
     const server = await startServer();
     try {
-      await page.goto(server.url);
+      await gotoRetry(page, server.url);
       await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
       const chips = page.locator('#quick-replies .chip');
@@ -87,7 +88,7 @@ test.describe('Blank-chat welcome quick replies', () => {
   test('-welcome-replies overrides the defaults', async ({ page }) => {
     const server = await startServer(['-welcome-replies', 'Start a task,Ask a question']);
     try {
-      await page.goto(server.url);
+      await gotoRetry(page, server.url);
       await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
       const chips = page.locator('#quick-replies .chip');
@@ -103,7 +104,7 @@ test.describe('Blank-chat welcome quick replies', () => {
   test('-welcome-replies="" disables welcome replies entirely', async ({ page }) => {
     const server = await startServer(['-welcome-replies', '']);
     try {
-      await page.goto(server.url);
+      await gotoRetry(page, server.url);
       await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
       // Give the historyEnd handler a beat to run; no chips should appear.

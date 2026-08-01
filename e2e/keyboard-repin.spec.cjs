@@ -14,6 +14,7 @@
 // simulated here, so it is covered structurally instead — see the last test.
 const { test, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -85,24 +86,9 @@ async function openPage() {
   return { context, page };
 }
 
-/**
- * Navigate and wait for the WebSocket-enabled textarea.
- *
- * The goto is retried: the browser reaches this container's ports through a
- * forwarder that takes a few seconds to notice a freshly bound port, so the
- * first navigation after startServer() often gets ERR_CONNECTION_REFUSED.
- */
+/** Navigate (retrying past the port-forwarder delay) and wait for the textarea. */
 async function ready(page, url) {
-  const deadline = Date.now() + 20000;
-  for (;;) {
-    try {
-      await page.goto(url, { timeout: 5000 });
-      break;
-    } catch (err) {
-      if (Date.now() > deadline) throw err;
-      await page.waitForTimeout(500);
-    }
-  }
+  await gotoRetry(page, url);
   await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
   await page.waitForTimeout(SETTLE_MS);
 }

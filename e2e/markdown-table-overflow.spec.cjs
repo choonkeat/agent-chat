@@ -6,6 +6,7 @@
 // Driven through the real UI so we exercise the shipped renderMarkdown() + CSS.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -79,7 +80,7 @@ test.describe('renderMarkdown — wide table overflow', () => {
   test('wide table scrolls within its bubble and does not widen the page', async ({ page }) => {
     // Narrow viewport so a 12-column table is guaranteed wider than the bubble.
     await page.setViewportSize({ width: 640, height: 800 });
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate((md) => {
