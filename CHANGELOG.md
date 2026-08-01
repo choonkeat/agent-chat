@@ -5,12 +5,23 @@ All notable changes to agent-chat are documented in this file.
 ## [Unreleased]
 
 ### Features
-- Pasting 30 or more lines of plain text into the composer now stages it as a
-  `pasted-<n>-lines.txt` attachment instead of inserting it. A log dump or whole
-  file is unreadable in the textarea and more useful to the agent as a file it
-  can open. Shorter pastes are unaffected, and pastes that carry an actual
-  file/image keep their existing upload behavior. The threshold is
-  `PASTE_AS_FILE_MIN_LINES` in `client-dist/app.js`.
+- Markdown links to workspace files now open in the embedder's Files pane. A
+  bare workspace path — `[main.go](cmd/main.go)` — used to resolve against the
+  parent app, which never served those paths and 404'd. When the embedder
+  passes `files_url` (its per-session file-browser origin), such links get an
+  absolute Files-pane href: cmd-click opens a real tab, a plain click posts
+  `agent-chat-open-files` to the parent. Absolute links are covered too — the
+  server inlines its symlink-resolved working directory as `WORKSPACE_ROOT`,
+  and a `/`-prefixed link underneath it (what `@/` autocomplete produces) is
+  rewritten the same way. Root-anchored links outside it (`/api/fork/…`,
+  `/.swe-swe/uploads/…`) and images still resolve against the parent. No
+  `files_url` means the feature stays off, so a new client inside an older
+  embedder behaves exactly as before.
+- Agents are now instructed to open every turn with a one-line `send_progress`
+  call. A user's bubble stays dim until an agent-chat tool call reaches the
+  server, so an agent that only replies at the end of a long turn left the
+  bubble looking unread for minutes. The expected prompt text is pinned in
+  `tools_test.go`.
 
 ### Fixes
 - A user bubble no longer claims to be read when nothing received it. Breaking
@@ -24,6 +35,97 @@ All notable changes to agent-chat are documented in this file.
   the queue only sets `data-handed-over`, which hides **Delete** (an unsend can
   no longer pull the message back) and leaves the interrupt recovery in place.
   See `docs/adr/2026-08-01-unread-until-proven-read.md`.
+- The on-screen keyboard no longer hides the newest messages. The sticky
+  `#chat-footer` paints over flow content whenever the document is not
+  scrolled to the very end, and opening the keyboard shortens the visible area
+  without moving the scroll offset — parking the input bar on top of about 40%
+  of an iPhone screen. The view now re-pins on both `window` resize (iframe
+  embedding, where the host resizes the frame) and `visualViewport` resize
+  (standalone iOS Safari, where the keyboard is an overlay and the layout
+  viewport never changes). `isUserScrolledUp` is honoured, so a reader who
+  scrolled back through history is not yanked forward.
+- Chat text no longer grows on its own on iPhone. Mobile Safari re-runs text
+  autosizing whenever the layout shifts — keyboard opening, iframe resize,
+  rotation — and inflated the type until the next reload. `html`/`body` now
+  set `text-size-adjust: 100%` (plus the `-webkit-` prefix); the sizes here
+  are already chosen for phone widths.
+
+### Tests
+- All 53 E2E navigations go through `gotoRetry()`. Each spec spawns its own
+  server on a random port, and the CDP browser reaches it through a forwarder
+  that takes a few seconds to notice a freshly bound port — 29 of 93 specs
+  failed at connect that way in a full run, with zero assertion failures among
+  them. `gotoRetry()` retries connection-level failures (including the
+  `chrome-error://` interrupted-navigation shape) for up to 20s and costs
+  nothing on a warm port. Full suite now 94/94, twice in a row.
+
+### What to test before releasing
+- **Read receipt.** Send a message, let the agent take a long turn: the bubble
+  should clear as soon as the agent's first tool call lands, not at the end.
+  Then break out of a blocking `send_message` in the host terminal (Esc) and
+  send another message — that bubble must stay dim and keep its `⋯` menu with
+  **Send as interrupting** (and no **Delete** once it has been drained).
+- **iPhone keyboard.** Open the chat on a phone, tap the composer: the newest
+  message must stay visible above the input bar. Check both standalone Safari
+  and inside the swe-swe iframe. Scroll back through history first and confirm
+  you are *not* yanked to the bottom.
+- **iPhone text size.** Open the keyboard, rotate, resize the iframe — the
+  type must not grow.
+- **Workspace-file links.** With an embedder that passes `files_url`, click a
+  `[file](path)` link: plain click lands in the Files pane, cmd-click opens a
+  tab. Confirm `/api/fork/…` links and images still work, and that a client
+  with no `files_url` behaves as before.
+- **E2E suite.** `make test` — expect 94/94 (warm the CDP endpoint first).
+
+## [0.8.21] — 2026-07-31
+
+### Features
+- Pasting 30 or more lines of plain text into the composer now stages it as a
+  `pasted-<n>-lines.txt` attachment instead of inserting it. A log dump or whole
+  file is unreadable in the textarea and more useful to the agent as a file it
+  can open. Shorter pastes are unaffected, and pastes that carry an actual
+  file/image keep their existing upload behavior. The threshold is
+  `PASTE_AS_FILE_MIN_LINES` in `client-dist/app.js`.
+- A paste that carries nothing usable now stages a red "nothing arrived" chip.
+  iOS **Share > Copy** of a PDF hands the page a file reference it cannot open,
+  so the paste event carries no `File` and no text and the composer did nothing
+  at all — the paste simply looked broken. The chip is born failed, reuses the
+  failed-upload red, names itself from whatever the clipboard still advertises
+  (file URL → real filename, bare MIME type → `clipboard-empty.pdf`, nothing →
+  `clipboard-empty`), never blocks **Send**, and clears when the message goes.
+
+## [0.8.20] — 2026-07-25
+
+### Features
+- New **message style** settings panel: the browser stores a template that
+  wraps every outgoing user message, so the agent sees the wrapped text while
+  the chat bubble always shows the raw text typed. The template rides on the
+  queued `UserMessage` (never on the broadcast `userMessage` event), so
+  browsers render the un-wrapped bubble before any consumption signal. The
+  orchestrator send-message path passes an empty template.
+- Styles combine, as checkboxes. Picking "Non-technical" used to throw away
+  "ADHD"; each pill now adds or drops only its own words, and which pills are
+  filled is read from the text alone (by containment, so a hand-edited template
+  still lights up every style inside it). The `{{message}}` marker is gone —
+  the message always lands at the bottom — though the server still honours it
+  for templates saved by an older client. "Off" is gone too: unticking every
+  pill empties the box. A browser that never opened the panel starts on
+  **Non-technical + ADHD**; an emptied box is a real answer and outlasts that
+  default.
+- **ADHD** preset: lead with the next action, number multi-step work, restate
+  progress, suppress tangents, cut preamble/recap/closers. **Non-technical**
+  preset also now says "don't use analogies".
+- **Save as…** names an edited template and gives it its own pill, stored in a
+  cookie beside the active style so it survives the next session. It is
+  enabled only for the dashed **Custom** pill, since naming Custom is its whole
+  job. The naming row hides **Save as…**/**Done** so only **Save**/**Cancel**
+  compete for the tap, the "Active: …" line is gone (the pills already say what
+  is on, and it squeezed the buttons on a phone), and the settings icon is a
+  speech bubble instead of a sun.
+
+## [0.8.19] — 2026-07-23
+
+### Fixes
 - The chat-archive `index.html` no longer goes dirty on every reply. It was
   regenerated after each quiet turn, adding manifest entries for `.md` files
   that were still untracked and still renameable by `set_chat_title` — so
@@ -33,6 +135,87 @@ All notable changes to agent-chat are documented in this file.
   `export_chat_md`, and a `set_chat_title` that renames an export already in
   the manifest), and still-`untitled` exports are never listed. See
   `docs/adr/2026-07-24-index-html-only-on-commit-moments.md`.
+
+### Build
+- `make build` now refreshes the swe-swe npx cache. swe-swe launches each
+  session's binary from
+  `$SWE_SWE_HOME/npx-cache/@choonkeat/agent-chat-<platform>@<version>/bin/agent-chat`
+  — not from `npm-platforms/` and not through `bin/agent-chat.js` — and
+  `npm link` does not touch that cache, so a rebuilt fix silently never
+  reached a newly started session. `scripts/refresh-npx-cache.sh` copies the
+  freshly built host-platform binary over the cached copies, renaming the old
+  inode aside first (a live session is executing that exact file, so a plain
+  `cp` fails with `ETXTBSY`). Never fatal: a machine without the cache skips.
+
+## [0.8.18] — 2026-07-22
+
+### Fixes
+- `send_message` is now documented as **terminal** and `send_progress` as
+  **non-terminal**, in the reply-instructions template and in the
+  `send_message` / `send_verbal_reply` / `send_progress` /
+  `send_verbal_progress` tool descriptions. Agents (notably codex) would call
+  `send_message` mid-task and stall: the blocking reply ends the turn, there is
+  no background worker, and any remaining work silently paused until the user
+  spoke again. The existing confirm-first carve-out for risky steps is kept.
+- Pasting into an autocomplete trigger no longer kills the dropdown. iOS smart
+  paste prepends a space when pasting after existing text, so typing `@` then
+  pasting `docs/adr` yielded `@ docs/adr`. When the dropdown is open and the
+  cursor still sits inside the trigger token, leading spaces/tabs are stripped
+  and the text inserted via `execCommand`, so native undo and the input event
+  (which re-queries autocomplete) still work.
+
+## [0.8.17] — 2026-07-22
+
+### Features
+- `chatlog_status` and `chatlog_optout` are exposed on the orchestrator
+  server, so the swe-swe server can offer "discard or commit this chat log?"
+  when a session ends instead of routing every chat-log action through the
+  agent. Identifying the file from outside does not work — `set_chat_title`
+  drops the `SESSION_UUID` from the filename, and the `session:` header is a
+  sha256 of the event-log path — so only the stream knows where its file is.
+  `chatLogStream.Status()` reports enabled, path, dir, slug, titled, stopped,
+  optedOut and a stat-backed exists. Unlike the agent-facing copies, these do
+  **not** call `CancelActiveWait` or `AckLimbo`: an orchestrator asking about
+  the log must never cancel a `send_message` the agent is blocked on.
+  `optout` is idempotent, so a double-click cannot error.
+
+## [0.8.16] — 2026-07-19
+
+### Features
+- New `chatlog_close` — the finalize twin of `chatlog_optout`. Committing the
+  streaming archive always went dirty one turn later, because the "committed"
+  reply is itself a chat event that re-appends to the just-committed `.md`.
+  `chatlog_close` freezes this session's `.md` (keeps it, unlike optout), stops
+  the index debounce, regenerates `index.html` once, and returns the exact
+  repo-relative paths to `git add`. Renames only ever fill a blank: a still-
+  untitled export must be named in the close call, an already-titled one is
+  never renamed here. Idempotent, and freezing loses nothing — the JSONL event
+  log keeps recording, and `set_chat_title` re-opens the export with a
+  full-history rewrite.
+
+### Fixes
+- The provisional export is now `{date}-{NN}-untitled-{SESSION_UUID}.md` when
+  the `SESSION_UUID` env var is non-blank, so a dangling untitled file is
+  attributable to the session that wrote it. The display title stays
+  "Untitled" and `set_chat_title` drops the suffix.
+- A failed retitle no longer goes dark. `SetTitle` used to close and remove the
+  old file before building the new one, so a failed rewrite or reopen left
+  `s.f == nil` and every subsequent event silently dropped. It now builds the
+  new file and opens its append handle first, committing the swap only after
+  both succeed — any failure leaves the stream appending to the old filename
+  and a later retry works.
+
+## [0.8.15] — 2026-07-19
+
+### Fixes
+- The chat never grabs focus from an unfocused document. 102b934 stopped the
+  `connected` reconnect path from stealing focus, but reconnects replay missed
+  events through the normal live handlers, and `agentMessage` with quick
+  replies, `historyEnd` deferred replies, and `draw` all call `enableInput()`
+  without the `focusInput` flag — so in the common case (user in the host's
+  Terminal tab, iframe websocket drops, agent replies while disconnected) the
+  replayed message yanked focus into the chat textarea. The focus call is now
+  gated on `document.hasFocus()`.
 
 ## [0.8.14] — 2026-07-18
 
