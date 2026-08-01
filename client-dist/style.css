@@ -37,6 +37,12 @@
 
 html, body {
   height: 100%;
+  /* Mobile Safari re-runs text autosizing whenever the layout shifts — the
+     keyboard opening, the swe-swe iframe resizing, a rotation — and inflates
+     the type in a narrow column until the next reload. Opt out; the sizes here
+     are already chosen for phone widths. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
