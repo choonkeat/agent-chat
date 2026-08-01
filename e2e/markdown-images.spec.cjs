@@ -4,6 +4,7 @@
 // is declared at the top level of a classic script, so it lives on `window`.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -79,7 +80,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('![alt](url) renders an <img> tag', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -93,7 +94,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('![](url) renders <img> with empty alt', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -105,7 +106,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('plain [text](url) link still renders (regression)', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -117,7 +118,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('relative path: ![](/foo.png) renders <img> too', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -129,7 +130,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('relative path link: [words](/relative/path) renders <a>', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -141,7 +142,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('relative link without leading slash: [docs](foo/bar) renders <a>', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -152,7 +153,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('javascript: URL link is rejected (no <a href> emitted)', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -163,7 +164,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('javascript: URL is rejected (no <img> emitted)', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>
@@ -174,7 +175,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('parent base set: leading-slash link resolves against parent origin', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() => {
@@ -186,7 +187,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('parent base set: no-leading-slash link resolves against parent path', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() => {
@@ -197,7 +198,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('parent base set: relative image src resolves against parent', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() => {
@@ -208,7 +209,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('parent base set: absolute URL is left unchanged', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() => {
@@ -219,7 +220,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('no parent base: relative link keeps own-origin behaviour', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() => {
@@ -230,7 +231,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('parent_url query param is read into parentBaseUrl on load', async ({ page }) => {
-    await page.goto(server.url + '/?parent_url=' + encodeURIComponent('https://parent.example/app/'));
+    await gotoRetry(page, server.url + '/?parent_url=' + encodeURIComponent('https://parent.example/app/'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const base = await page.evaluate(() => window.parentBaseUrl);
@@ -241,7 +242,7 @@ test.describe('renderMarkdown — images', () => {
   });
 
   test('mixed: image and link together', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const html = await page.evaluate(() =>

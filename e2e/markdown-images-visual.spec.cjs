@@ -5,6 +5,7 @@
 //   npx playwright test -c playwright.config.cjs e2e/markdown-images-visual.spec.cjs
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -72,7 +73,7 @@ test.describe('renderMarkdown — visual', () => {
   });
 
   test('side-by-side bubbles: before vs after image markdown', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Two bubbles for the same input:

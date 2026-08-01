@@ -1,6 +1,7 @@
 // @ts-check
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
@@ -99,7 +100,7 @@ const test = base.extend({
  *   3. browser_click on the textarea
  */
 async function setupPage(page, url) {
-  await page.goto(url);
+  await gotoRetry(page, url);
   const textarea = page.locator('#chat-input');
   await expect(textarea).toBeEnabled({ timeout: 5000 });
   await textarea.click();

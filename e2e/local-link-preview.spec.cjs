@@ -12,6 +12,7 @@
 // classifier is reachable on `window` and the handler is wired to #messages.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -83,7 +84,7 @@ test.describe('local link → App Preview interceptor', () => {
 
   // --- classifier: which hosts are "local" (→ Preview) vs real sites (→ tab) ---
   test('isLocalPreviewHost classifies local hosts, including *.lvh.me vhosts', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const got = await page.evaluate(() => {
@@ -119,7 +120,7 @@ test.describe('local link → App Preview interceptor', () => {
   // real navigation from a non-intercepted anchor; the parent window captures
   // the posted agent-chat-open-preview URL.
   async function embed(page) {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await page.evaluate((base) => {
       window.__preview = [];
       window.addEventListener('message', (e) => {
@@ -205,7 +206,7 @@ test.describe('local link → App Preview interceptor', () => {
   test('standalone chat (not embedded) does not intercept local links', async ({ page }) => {
     // Top-level page, no parent_url: window.parent === window, so the handler
     // must bail and let the local link open normally (new tab).
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const prevented = await page.evaluate(() => {

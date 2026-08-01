@@ -13,6 +13,7 @@
 // state directly with `page.evaluate`, bypassing the WS round-trip.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -115,7 +116,7 @@ test.describe('Frozen quick-reply placement', () => {
   });
 
   test('unused chips land immediately after the originating agent bubble, even when a pending user bubble exists', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Build the exact DOM shape that the permission-while-pending scenario
@@ -161,7 +162,7 @@ test.describe('Frozen quick-reply placement', () => {
   });
 
   test('with no pre-existing pending bubble, frozen chips still land after the agent bubble', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => {
@@ -184,7 +185,7 @@ test.describe('Frozen quick-reply placement', () => {
   });
 
   test('no agent bubble present → frozen chips fall back to appendMessage placement', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Edge case: chips are active but no agent bubble exists in #messages.

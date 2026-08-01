@@ -7,6 +7,7 @@
 // Phase 2 covers the rendered button on agent bubbles + the confirm/open flow.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -77,7 +78,7 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
   });
 
   test('fork_session query param is read into forkSession on load', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-abc-123'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-abc-123'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const fs2 = await page.evaluate(() => window.forkSession);
@@ -85,7 +86,7 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
   });
 
   test('no fork_session param: forkSession is empty', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const fs2 = await page.evaluate(() => window.forkSession);
@@ -93,7 +94,7 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
   });
 
   test('forkUrl(seq) builds absolute /api/fork URL against parentBaseUrl', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-abc-123')
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-abc-123')
       + '&parent_url=' + encodeURIComponent('https://parent.example/app/page'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
@@ -102,7 +103,7 @@ test.describe('fork button — URL plumbing (Phase 1)', () => {
   });
 
   test('forkUrl encodes the session uuid', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('a/b c')
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('a/b c')
       + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
@@ -127,7 +128,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('fork_session set: agent bubble shows a ⋯ menu button, not a standalone play button', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -139,7 +140,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('no fork_session: agent bubble keeps the plain play button, no menu', async ({ page }) => {
-    await page.goto(server.url);
+    await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -148,7 +149,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('agent bubble without a seq: no menu, falls back to plain play button', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Locally-generated agent notices (e.g. "Clearing context...") carry no seq.
@@ -158,7 +159,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('non-forkable progress bubble: no ⋯ menu, falls back to plain play button', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // A send_progress bubble has a seq (server-stamped) but is NOT forkable —
@@ -170,7 +171,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('isForkableTool: only reply tools are forkable', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     const results = await page.evaluate(() => ({
@@ -190,7 +191,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('user bubble never shows a menu or play button', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addUserMessage('hi from user', null, null, Date.now()));
@@ -200,7 +201,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('clicking ⋯ opens a menu with speak + fork rows', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -213,7 +214,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('clicking ⋯ again toggles the menu closed', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -225,7 +226,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('clicking outside dismisses the menu', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -238,7 +239,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('Escape dismisses the menu', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -250,7 +251,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('"Fork from here" opens forkUrl in a new tab and closes the menu', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1')
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1')
       + '&parent_url=' + encodeURIComponent('https://parent.example/app/'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
@@ -272,7 +273,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('"Speak aloud" triggers TTS and closes the menu', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => {
@@ -292,7 +293,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('menu rows are comfortable tap targets (fat-finger guard)', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
@@ -306,7 +307,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
   });
 
   test('open menu stays within the viewport', async ({ page }) => {
-    await page.goto(server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
+    await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));

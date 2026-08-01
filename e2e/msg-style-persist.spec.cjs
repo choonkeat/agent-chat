@@ -7,6 +7,7 @@
 
 const { test, expect } = require('@playwright/test');
 const { chromium } = require('playwright');
+const { gotoRetry } = require('./goto-retry.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -71,7 +72,7 @@ async function openSettings(page, url) {
   // node has already confirmed the server answers, so retry until it lands.
   for (let i = 0; ; i++) {
     try {
-      await page.goto(url);
+      await gotoRetry(page, url);
       break;
     } catch (e) {
       if (i >= 9) throw e;
