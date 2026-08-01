@@ -356,16 +356,36 @@ function autolinkFilePaths(html, filePaths) {
     }
     if (anchorDepth > 0) return part;
     return part.replace(matcher, function (raw) {
-      var entry = byRaw[raw];
-      var filesPath = entry && workspaceFilePath(entry.path);
-      if (!filesPath) return raw;
-      var absolute = entry.path;
-      try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
-      return '<a href="' + absolute.replace(/"/g, '&quot;')
-        + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
-        + '" target="_blank" rel="noopener">@' + filesPath + (entry.dir ? '/' : '') + '</a>';
+      return filePathAnchor(byRaw[raw]) || raw;
     });
   }).join('');
+}
+
+// The anchor a workspace path renders as — same shape the markdown-link rule
+// emits (absolute href + data-files-path), so click routing and cmd-click work
+// with no new handler. Returns '' when there is nothing to link, so callers can
+// fall back to whatever they had.
+function filePathAnchor(entry) {
+  var filesPath = entry && filesBaseUrl && workspaceFilePath(entry.path);
+  if (!filesPath) return '';
+  var absolute = entry.path;
+  try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
+  return '<a href="' + absolute.replace(/"/g, '&quot;')
+    + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
+    + '" target="_blank" rel="noopener">@' + filesPath + (entry.dir ? '/' : '') + '</a>';
+}
+
+// Look up a code span's exact content in the bubble's file_paths. Whole-content
+// match only: `see docs/adr` stays literal code, `docs/adr` becomes a link.
+// Anything partial would re-open the hole the code-span stash exists to close.
+function filePathEntryFor(content, filePaths) {
+  if (!filePaths || !filePaths.length) return null;
+  var wanted = (content || '').trim();
+  if (!wanted) return null;
+  for (var i = 0; i < filePaths.length; i++) {
+    if (filePaths[i] && filePaths[i].raw === wanted) return filePaths[i];
+  }
+  return null;
 }
 
 function renderMarkdown(text, filePaths) {
@@ -387,9 +407,18 @@ function renderMarkdown(text, filePaths) {
   // Inline code (same line only to prevent dangling backtick eating content).
   // Stash code spans behind placeholders so later inline rules (bold/italic/links)
   // don't mangle their contents — per CommonMark, code span text is literal.
+  //
+  // One exception: a span whose ENTIRE content is a path the server confirmed
+  // exists becomes a link instead of <code>. Backticks are the most natural way
+  // to write a path in chat, and leaving those unlinked while a bare one linked
+  // was the first thing to bite after the feature shipped. Fenced blocks stay
+  // literal, so they remain the way to show a path without linking it. The
+  // anchor lands in the stash, which is restored after autolinkFilePaths, so it
+  // can never be double-wrapped.
   var codeSpans = [];
   html = html.replace(/`([^`\n]+)`/g, function(_, content) {
-    var idx = codeSpans.push('<code>' + content + '</code>') - 1;
+    var linked = filePathAnchor(filePathEntryFor(content, filePaths));
+    var idx = codeSpans.push(linked || '<code>' + content + '</code>') - 1;
     return '\u0000CODE' + idx + '\u0000';
   });
   // Tables
