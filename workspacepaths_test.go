@@ -120,6 +120,19 @@ func TestExtractWorkspacePaths_FindsRealPaths(t *testing.T) {
 			want: []string{"client-dist/app.js"},
 		},
 		{
+			// Extraction is markdown-blind on purpose: the client decides what
+			// to do with a backticked path, and it can only do that if the
+			// path is in the list to begin with.
+			name: "inside a code span",
+			text: "see `client-dist/app.js` for details",
+			want: []string{"client-dist/app.js"},
+		},
+		{
+			name: "inside a fenced code block",
+			text: "```\nclient-dist/app.js\n```",
+			want: []string{"client-dist/app.js"},
+		},
+		{
 			name: "leading ./ is normalised away",
 			text: "./client-dist/app.js is the file",
 			want: []string{"client-dist/app.js"},
