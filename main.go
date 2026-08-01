@@ -219,6 +219,9 @@ func main() {
 	welcomeReplies = parseWelcomeReplies(*welcomeRepliesFlag)
 	cwd, _ := os.Getwd()
 	filepathRoots = parseFilepathRoots(*filepathRootsFlag, cwd)
+	// Resolved once: every published bubble resolves its bare paths against it,
+	// and the two syscalls behind it must not run per message.
+	workspacePathRoot = workspaceRootPath()
 
 	if *showVersion {
 		fmt.Printf("agent-chat %s (%s)\n", version, commit)
