@@ -311,15 +311,78 @@ function parseTableAlign(sep) {
 
 // --- Markdown rendering ---
 
-function renderMarkdown(text) {
+// --- Bare workspace-path autolinking ---
+// The server attaches `file_paths` to a bubble: the paths its text names that
+// really exist on disk (it is the only side that can stat). Each entry is
+// {raw, path, dir} — `raw` is the exact substring to find, `path` is
+// workspace-relative for the href, and the visible text is composed from
+// path+dir so `./docs/adr`, `docs/adr/` and `@docs/adr` all read `@docs/adr/`.
+//
+// Without `files_url` there is no Files pane for a link to open, so the whole
+// thing stays off and paths render as the plain text they always were.
+function autolinkFilePaths(html, filePaths) {
+  if (!filesBaseUrl || !filePaths || !filePaths.length) return html;
+
+  // Longest raw first: regex alternation takes the first branch that matches at
+  // a position, so `docs/adr/x.md` must be offered before `docs/adr`.
+  var entries = filePaths.slice().sort(function (a, b) {
+    return (b.raw || '').length - (a.raw || '').length;
+  });
+  var byRaw = {};
+  var alternatives = [];
+  entries.forEach(function (entry) {
+    if (!entry || !entry.raw || byRaw[entry.raw]) return;
+    byRaw[entry.raw] = entry;
+    alternatives.push(entry.raw.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&'));
+  });
+  if (!alternatives.length) return html;
+
+  // Path characters on either side veto a match, so `docs/adr` does not fire
+  // inside `docs/adrenaline`.
+  var matcher = new RegExp(
+    '(?<![A-Za-z0-9_.@~/-])(' + alternatives.join('|') + ')(?![A-Za-z0-9_.@~/-])',
+    'g'
+  );
+
+  // Split on tags so substitution only touches text, never an attribute value,
+  // and track anchor depth so a path inside an existing link's text (a bare URL
+  // that happens to contain one) is left alone rather than nested.
+  var anchorDepth = 0;
+  return html.split(/(<[^>]*>)/).map(function (part, i) {
+    if (i % 2) {
+      if (/^<a\b/i.test(part)) anchorDepth++;
+      else if (/^<\/a\s*>/i.test(part) && anchorDepth > 0) anchorDepth--;
+      return part;
+    }
+    if (anchorDepth > 0) return part;
+    return part.replace(matcher, function (raw) {
+      var entry = byRaw[raw];
+      var filesPath = entry && workspaceFilePath(entry.path);
+      if (!filesPath) return raw;
+      var absolute = entry.path;
+      try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
+      return '<a href="' + absolute.replace(/"/g, '&quot;')
+        + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
+        + '" target="_blank" rel="noopener">@' + filesPath + (entry.dir ? '/' : '') + '</a>';
+    });
+  }).join('');
+}
+
+function renderMarkdown(text, filePaths) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  // Code blocks with syntax highlighting; use &#10; for newlines to prevent table regex matching inside
+  // Code blocks with syntax highlighting; use &#10; for newlines to prevent table regex matching inside.
+  // Stashed behind a placeholder like the inline spans below, so no later rule
+  // can reach inside rendered code — the workspace-path autolink in particular
+  // would happily rewrite a path shown as an example. Restored before the
+  // block-level newline cleanup, which still needs to see the real <pre>.
+  var codeBlocks = [];
   html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
     var highlighted = lang ? highlightCode(code, lang) : code;
     highlighted = highlighted.replace(/\n/g, '&#10;');
     var cls = lang ? ' class="language-' + lang + '"' : '';
-    return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
+    var idx = codeBlocks.push('<pre><code' + cls + '>' + highlighted + '</code></pre>') - 1;
+    return '\u0000PRE' + idx + '\u0000';
   });
   // Inline code (same line only to prevent dangling backtick eating content).
   // Stash code spans behind placeholders so later inline rules (bold/italic/links)
@@ -417,6 +480,15 @@ function renderMarkdown(text) {
   });
   // Bare URLs
   html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  // Bare workspace paths the server confirmed exist. Runs here, after the two
+  // link rules, so an already-linked path is never re-wrapped and the anchors
+  // above are skipped as tags.
+  html = autolinkFilePaths(html, filePaths);
+  // Restore fenced code blocks: after every rule that could have reached into
+  // them, before the block-level cleanup below that expects a real <pre>.
+  html = html.replace(/\u0000PRE(\d+)\u0000/g, function(_, idx) {
+    return codeBlocks[parseInt(idx, 10)];
+  });
   // Clean up newlines adjacent to block-level elements to avoid double spacing
   html = html.replace(/\n*(<\/?(h[1-6]|hr|ul|ol|li|pre|table|thead|tbody|tr|th|td|blockquote)[\s>])/g, '$1');
   html = html.replace(/(<\/(h[1-6]|hr|ul|ol|li|pre|table|thead|tbody|tr|th|td|blockquote)>)\n*/g, '$1');
@@ -698,7 +770,7 @@ function isForkableTool(toolName) {
   return toolName === 'send_message' || toolName === 'send_verbal_reply';
 }
 
-function addBubble(text, role, files, extraClass, timestamp, messageId, seq, forkable) {
+function addBubble(text, role, files, extraClass, timestamp, messageId, seq, forkable, filePaths) {
   // Show elapsed time before agent messages (how long the agent took to reply)
   if (role !== 'user' && timestamp && lastBubbleTs) {
     var delta = timestamp - lastBubbleTs;
@@ -726,7 +798,7 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
   var div = document.createElement('div');
   div.className = 'bubble ' + role + (extraClass ? ' ' + extraClass : '');
   if (text) {
-    div.innerHTML = renderMarkdown(text);
+    div.innerHTML = renderMarkdown(text, filePaths);
   }
   var attachments = renderFileAttachments(files);
   if (attachments) {
@@ -774,9 +846,9 @@ function sendUnsend(messageId) {
   if (bubble) bubble.remove();
 }
 
-function addAgentMessage(text, files, extraClass, timestamp, seq, forkable) {
+function addAgentMessage(text, files, extraClass, timestamp, seq, forkable, filePaths) {
   if (text || (files && files.length > 0)) {
-    addBubble(text, 'agent', files, extraClass, timestamp, undefined, seq, forkable);
+    addBubble(text, 'agent', files, extraClass, timestamp, undefined, seq, forkable, filePaths);
   }
 }
 
@@ -2890,7 +2962,7 @@ function replayHistory(history) {
     switch (event.type) {
       case 'agentMessage':
         if (event.text || (event.files && event.files.length > 0)) {
-          addBubble(event.text, 'agent', event.files, null, event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name));
+          addBubble(event.text, 'agent', event.files, null, event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name), event.file_paths);
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
@@ -2922,7 +2994,7 @@ function replayHistory(history) {
           // proven-read message renders as a plain bubble, matching what every
           // other tab is showing.
           var stillPending = event.id && !readIds[event.id];
-          addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts, stillPending ? event.id : undefined);
+          addBubble(displayText, 'user', event.files, isVoiceMsg ? 'voice' : null, event.ts, stillPending ? event.id : undefined, undefined, undefined, event.file_paths);
           // Handed over but never proven: same pending bubble, no Delete.
           if (stillPending && consumedIds[event.id]) {
             markMessagesHandedOver([event.id]);
@@ -2938,7 +3010,7 @@ function replayHistory(history) {
       case 'verbalReply':
         if (event.text || (event.files && event.files.length > 0)) {
           var hasReplies = event.quick_replies && event.quick_replies.length > 0;
-          addBubble(event.text, 'agent', event.files, hasReplies ? 'voice lmk' : 'voice brb', event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name));
+          addBubble(event.text, 'agent', event.files, hasReplies ? 'voice lmk' : 'voice brb', event.ts, undefined, event.seq, isForkableTool(event.agent_tool_name), event.file_paths);
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
@@ -3051,7 +3123,7 @@ function connect() {
 
       case 'agentMessage':
         console.log('[' + ts() + '] Agent message received: "' + data.text + '"');
-        addAgentMessage(data.text || '', data.files, null, data.ts, data.seq, isForkableTool(data.agent_tool_name));
+        addAgentMessage(data.text || '', data.files, null, data.ts, data.seq, isForkableTool(data.agent_tool_name), data.file_paths);
         // With quick_replies: agent is waiting for input — show replies, hide loading
         // Without quick_replies: progress update — loading stays visible
         if (data.quick_replies && data.quick_replies.length > 0) {
@@ -3075,7 +3147,7 @@ function connect() {
       case 'verbalReply':
         console.log('[' + ts() + '] Verbal reply received: "' + data.text + '", ttsUnlocked=' + ttsUnlocked + ', isSpeaking=' + isSpeaking);
         var isProgress = !(data.quick_replies && data.quick_replies.length > 0);
-        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice lmk', data.ts, data.seq, isForkableTool(data.agent_tool_name));
+        addAgentMessage(data.text || '', data.files, isProgress ? 'voice brb' : 'voice lmk', data.ts, data.seq, isForkableTool(data.agent_tool_name), data.file_paths);
         if (isSpeaking) {
           console.log('[' + ts() + '] TTS busy — queuing reply');
           ttsQueue.push({ text: data.text || '', quickReplies: data.quick_replies });
@@ -3095,7 +3167,7 @@ function connect() {
           var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
           // Pass the server-assigned ID so addBubble can mark this bubble
           // "pending" until userMessagesConsumed clears it.
-          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id);
+          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id, undefined, undefined, data.file_paths);
         }
         // Re-enable input and clear the text now that the message is confirmed
         chatInput.value = '';
