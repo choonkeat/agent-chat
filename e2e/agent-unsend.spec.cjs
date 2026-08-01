@@ -3,7 +3,7 @@
 //   - A user bubble in .pending-agent state shows a "⋯" actions button
 //   - The menu offers Delete and Send as interrupting
 //   - Clicking Delete removes the bubble locally and from the agent's queue
-//   - A consumed (non-pending) bubble exposes no ⋯ menu at all
+//   - A read bubble exposes no ⋯ menu at all
 //   - The agent's subsequent check_messages does NOT see the unsent text
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
@@ -203,7 +203,7 @@ test.describe('Unsend pending user message', () => {
     await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(1);
   });
 
-  test('a consumed (non-pending) bubble does not expose the ⋯ menu', async ({ page }) => {
+  test('a read bubble does not expose the ⋯ menu', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -211,15 +211,18 @@ test.describe('Unsend pending user message', () => {
     await sendBtn.click();
     await page.waitForTimeout(SETTLE_MS);
 
-    // Drain so the bubble flips to consumed.
+    // First drain only hands the message over — still unread.
+    await mcpCall(server.url, '/mcp', 'check_messages');
+    await page.waitForTimeout(SETTLE_MS);
+    // A second agent-chat call proves the hand-over arrived → read.
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 
-    const consumed = page.locator('.bubble.user', { hasText: 'already seen' });
-    await expect(consumed).toHaveCount(1);
-    await expect(consumed).not.toHaveClass(/pending-agent/);
-    // The ⋯ control must NOT be present on consumed bubbles — the agent
-    // has already processed the text, so Delete/interrupt would be misleading.
-    await expect(consumed.locator('.bubble-pending-menu')).toHaveCount(0);
+    const read = page.locator('.bubble.user', { hasText: 'already seen' });
+    await expect(read).toHaveCount(1);
+    await expect(read).not.toHaveClass(/pending-agent/);
+    // The ⋯ control must NOT be present on read bubbles — the agent has
+    // already processed the text, so Delete/interrupt would be misleading.
+    await expect(read.locator('.bubble-pending-menu')).toHaveCount(0);
   });
 });

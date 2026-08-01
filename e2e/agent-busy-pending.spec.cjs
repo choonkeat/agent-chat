@@ -3,8 +3,8 @@
 //   1. #btn-send turns yolo orange whenever the agent typing/loading
 //      indicator (#loading-bubble) is in the DOM
 //   2. A user speech bubble is rendered "pending" (dim + tooltip + below
-//      the loader) until the server emits userMessagesConsumed, at which
-//      point it moves above the loader and loses the pending styling
+//      the loader) until the server emits userMessagesRead, at which point it
+//      moves above the loader and loses the pending styling
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
@@ -187,7 +187,7 @@ test.describe('Pending user bubble until consumed', () => {
     }
   });
 
-  test('user bubble is dim + below loader until userMessagesConsumed; then normal + above', async ({ page }) => {
+  test('user bubble is dim + below loader until userMessagesRead; then normal + above', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -214,11 +214,15 @@ test.describe('Pending user bubble until consumed', () => {
     await page.screenshot({ path: 'test-results/screenshots/03-user-bubble-pending-below-loader.png', fullPage: true });
 
     // Drain the queue by calling the MCP `check_messages` tool — this is what
-    // a real agent would do. The server should publish userMessagesConsumed.
+    // a real agent would do. The first call is only a hand-over; the second is
+    // the agent proving it received the batch (userMessagesRead), which is what
+    // actually clears the pending state. See read-receipt-states.spec.cjs.
+    await mcpCall(server.url, '/mcp', 'check_messages');
+    await page.waitForTimeout(SETTLE_MS);
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 
-    // After consume: class is gone, and bubble is now BEFORE the loader.
+    // After the receipt: class is gone, and bubble is now BEFORE the loader.
     await expect(userBubble).not.toHaveClass(/pending-agent/);
     const afterOrder = await page.evaluate(() => {
       const loader = document.getElementById('loading-bubble');

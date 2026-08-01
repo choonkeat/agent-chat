@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -777,4 +780,121 @@ func TestKeepaliveForRequestNoTokenNoOp(t *testing.T) {
 	// never panic.
 	stop := keepaliveForRequest(context.Background(), &mcp.CallToolRequest{}, "waiting")
 	stop()
+}
+
+// --- read-receipt proof at every agent-chat tool entry ---
+//
+// A bubble only becomes "read" when the agent makes its NEXT chat-tool call
+// (bus.ProveDelivery). That makes the proof a property of the tool ENTRY, not
+// of any one handler's happy path: it must be recorded even when the handler
+// returns early (voice-mode rejection, disabled chat-log export, ...), and it
+// must run before CancelActiveWait kills the previous waiter. A handler that
+// forgets it strands the previous batch's bubbles at "handed over" forever, so
+// this is enforced structurally over tools.go rather than per-handler.
+//
+// Every agent-chat tool handler is identified by its bus.CancelActiveWait()
+// call — the existing marker for "an agent-chat MCP call just arrived".
+
+// busCallsIn returns, in source order, the names of bus.<Method>() calls made
+// directly inside fn (nested func literals included).
+func busCallsIn(fn ast.Node) []string {
+	var calls []string
+	ast.Inspect(fn, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "bus" {
+			calls = append(calls, sel.Sel.Name)
+		}
+		return true
+	})
+	return calls
+}
+
+func indexOfCall(calls []string, name string) int {
+	for i, c := range calls {
+		if c == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestEveryAgentChatToolProvesPreviousDelivery(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "tools.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse tools.go: %v", err)
+	}
+
+	handlers := 0
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "AddTool" {
+			return true
+		}
+		fn, ok := call.Args[len(call.Args)-1].(*ast.FuncLit)
+		if !ok {
+			return true
+		}
+		calls := busCallsIn(fn)
+		cancelAt := indexOfCall(calls, "CancelActiveWait")
+		if cancelAt < 0 {
+			return true // not an agent-chat entry point
+		}
+		handlers++
+		name := toolNameOf(call)
+		proveAt := indexOfCall(calls, "ProveDelivery")
+		if proveAt < 0 {
+			t.Errorf("%s: handler never calls bus.ProveDelivery() — the previous delivery stays unproven and its bubbles never turn read", name)
+			return true
+		}
+		if proveAt > cancelAt {
+			t.Errorf("%s: bus.ProveDelivery() must come before bus.CancelActiveWait()", name)
+		}
+		return true
+	})
+
+	// All ten agent-chat tools: send_message, send_verbal_reply, draw,
+	// send_progress, send_verbal_progress, check_messages, set_chat_title,
+	// chatlog_close, chatlog_optout, export_chat_md.
+	if handlers != 10 {
+		t.Errorf("found %d agent-chat tool handlers, want 10 — a new tool must prove delivery too", handlers)
+	}
+}
+
+// toolNameOf digs the Name: "..." field out of the &mcp.Tool{...} literal
+// passed to AddTool, for readable failure messages.
+func toolNameOf(call *ast.CallExpr) string {
+	for _, arg := range call.Args {
+		unary, ok := arg.(*ast.UnaryExpr)
+		if !ok {
+			continue
+		}
+		lit, ok := unary.X.(*ast.CompositeLit)
+		if !ok {
+			continue
+		}
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Name" {
+				if v, ok := kv.Value.(*ast.BasicLit); ok {
+					return strings.Trim(v.Value, `"`)
+				}
+			}
+		}
+	}
+	return "<unknown tool>"
 }

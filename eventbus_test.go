@@ -301,6 +301,183 @@ func TestSetLimboUnionForRedelivery(t *testing.T) {
 	}
 }
 
+// --- three-state read receipts (queued / handed over / read) ---
+//
+// Background: userMessagesConsumed fires the instant a waiter takes messages
+// off the queue, but a waiter can be a zombie (the user broke out of the tool
+// call client-side and the harness sent no notifications/cancelled). Rendering
+// that hand-over as "read" is a lie. ProveDelivery is the promotion: the
+// agent's NEXT chat-tool call is the proof that the previous hand-over really
+// reached it, and only then does userMessagesRead fire.
+
+// eventTypesOf returns the types of every logged event, in order.
+func eventTypesOf(bus *EventBus) []string {
+	var types []string
+	for _, e := range bus.EventsSince(0) {
+		types = append(types, e.Type)
+	}
+	return types
+}
+
+// readEventIDs returns the IDs carried by every userMessagesRead event logged.
+func readEventIDs(bus *EventBus) [][]string {
+	var out [][]string
+	for _, e := range bus.EventsSince(0) {
+		if e.Type == "userMessagesRead" {
+			out = append(out, e.IDs)
+		}
+	}
+	return out
+}
+
+func hasType(types []string, want string) bool {
+	for _, t := range types {
+		if t == want {
+			return true
+		}
+	}
+	return false
+}
+
+// A drain hands the message over but proves nothing: consumed fires, read does not.
+func TestDrainPublishesConsumedWithoutRead(t *testing.T) {
+	bus := NewEventBus()
+	bus.ReceiveUserMessage("hello", nil, "")
+	bus.DrainMessages()
+
+	types := eventTypesOf(bus)
+	if !hasType(types, "userMessagesConsumed") {
+		t.Fatalf("expected userMessagesConsumed, got %v", types)
+	}
+	if hasType(types, "userMessagesRead") {
+		t.Fatalf("a bare drain must not publish userMessagesRead: %v", types)
+	}
+}
+
+// The agent's next chat-tool call promotes the handed-over batch to "read",
+// carrying exactly the IDs that were handed over. A second call is a no-op —
+// there is nothing left unproven.
+func TestProveDeliveryPromotesHandedOverIDsOnce(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.ReceiveUserMessage("hello", nil, "")
+	bus.DrainMessages()
+
+	bus.ProveDelivery()
+	reads := readEventIDs(bus)
+	if len(reads) != 1 {
+		t.Fatalf("expected exactly 1 userMessagesRead event, got %d: %v", len(reads), reads)
+	}
+	if len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("userMessagesRead IDs: got %v, want [%s]", reads[0], id)
+	}
+
+	bus.ProveDelivery()
+	if reads := readEventIDs(bus); len(reads) != 1 {
+		t.Fatalf("second ProveDelivery must be a no-op, got %d read events", len(reads))
+	}
+}
+
+// Nothing handed over — nothing to prove.
+func TestProveDeliveryWithoutHandoverIsNoOp(t *testing.T) {
+	bus := NewEventBus()
+	bus.ProveDelivery()
+	if types := eventTypesOf(bus); len(types) != 0 {
+		t.Fatalf("ProveDelivery on an idle bus published %v", types)
+	}
+}
+
+// The blocking-wait path (send_message) registers its batch as unproven too.
+func TestWaitForMessagesRegistersUnproven(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.ReceiveUserMessage("hello", nil, "")
+	if _, err := bus.WaitForMessages(context.Background()); err != nil {
+		t.Fatalf("WaitForMessages: %v", err)
+	}
+	if hasType(eventTypesOf(bus), "userMessagesRead") {
+		t.Fatal("the wait itself must not publish userMessagesRead")
+	}
+	bus.ProveDelivery()
+	reads := readEventIDs(bus)
+	if len(reads) != 1 || len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("ProveDelivery after a wait: got %v, want [[%s]]", reads, id)
+	}
+}
+
+// A later hand-over supersedes an unproven earlier one only by accumulating:
+// both batches are still awaiting proof, so one ProveDelivery covers both.
+func TestProveDeliveryCoversEveryUnprovenBatch(t *testing.T) {
+	bus := NewEventBus()
+	first := bus.ReceiveUserMessage("first", nil, "")
+	bus.DrainMessages()
+	second := bus.ReceiveUserMessage("second", nil, "")
+	bus.DrainMessages()
+
+	bus.ProveDelivery()
+	reads := readEventIDs(bus)
+	if len(reads) != 1 {
+		t.Fatalf("expected 1 read event, got %v", reads)
+	}
+	if len(reads[0]) != 2 || reads[0][0] != first || reads[0][1] != second {
+		t.Fatalf("read IDs: got %v, want [%s %s]", reads[0], first, second)
+	}
+}
+
+// The server-side consume paths (permission prompt, ack reply) are genuine
+// receipts — the server itself read the message — so they must emit both
+// events and never strand a bubble at "handed over".
+func TestPublishConsumedUserMessageEmitsConsumedThenRead(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.PublishConsumedUserMessage("acked inline", nil)
+
+	types := eventTypesOf(bus)
+	want := []string{"userMessage", "userMessagesConsumed", "userMessagesRead"}
+	if len(types) != len(want) {
+		t.Fatalf("event types: got %v, want %v", types, want)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("event types: got %v, want %v", types, want)
+		}
+	}
+	reads := readEventIDs(bus)
+	if len(reads) != 1 || len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("read IDs: got %v, want [[%s]]", reads, id)
+	}
+	// Nothing is left unproven, so the agent's next tool call adds nothing.
+	bus.ProveDelivery()
+	if reads := readEventIDs(bus); len(reads) != 1 {
+		t.Fatalf("ProveDelivery re-published a receipt: %v", reads)
+	}
+}
+
+// A restart is not evidence of a live disconnect. Old hand-overs restored from
+// the log must not sit unproven, or a later tool call would emit receipts for
+// historic bubbles the browser has long since rendered as read.
+func TestRestartStartsWithNothingUnproven(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	bus1, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 1): %v", err)
+	}
+	bus1.ReceiveUserMessage("handed over, never proven", nil, "")
+	bus1.DrainMessages()
+	bus1.Close()
+
+	bus2, err := NewEventBusWithLog(path)
+	if err != nil {
+		t.Fatalf("NewEventBusWithLog (session 2): %v", err)
+	}
+	defer bus2.Close()
+
+	before := len(bus2.EventsSince(0))
+	bus2.ProveDelivery()
+	if got := len(bus2.EventsSince(0)); got != before {
+		t.Fatalf("ProveDelivery after restart published %d event(s); the unproven set must start empty", got-before)
+	}
+}
+
 func TestCancelActiveWaitAbortsBlockedWaiterWithoutConsuming(t *testing.T) {
 	bus := NewEventBus()
 	wctx, endWait := bus.BeginBlockingWait(context.Background())

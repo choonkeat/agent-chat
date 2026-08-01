@@ -43,12 +43,15 @@ type UserMessage struct {
 // For userMessage events, ID is the message's unique ID (so the browser can
 // tag the bubble). For userMessagesConsumed events, IDs lists the message IDs
 // the agent has just drained from the queue (or that the server consumed
-// inline via the permission/ack paths).
+// inline via the permission/ack paths) — that is a HAND-OVER, not a receipt.
+// For userMessagesRead events, IDs lists the messages a later agent-chat tool
+// call has proven actually reached the agent; only then does the browser render
+// the bubble as read.
 type Event struct {
-	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "draw"
+	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "userMessagesRead", "draw"
 	Seq          int64     `json:"seq"`                    // monotonic sequence number
 	ID           string    `json:"id,omitempty"`           // userMessage: the message's unique ID
-	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed: which IDs were consumed
+	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed / userMessagesRead: which IDs
 	Text         string    `json:"text,omitempty"`
 	AckID        string    `json:"ack_id,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
@@ -121,6 +124,17 @@ type EventBus struct {
 	limboMu sync.Mutex
 	limbo   []UserMessage
 
+	// unprovenIDs are message IDs handed to the agent (userMessagesConsumed
+	// published) with no proof they actually arrived. Breaking out of a
+	// blocking send_message client-side leaves a zombie waiter that still
+	// drains the queue, so a hand-over alone must not render as "read". The
+	// agent's next agent-chat tool call IS the proof (ProveDelivery), which
+	// promotes them with userMessagesRead. Deliberately separate from limbo:
+	// send_message/send_verbal_reply skip AckLimbo (they may be a recap after
+	// a lost delivery) but they DO prove the previous delivery.
+	unprovenMu  sync.Mutex
+	unprovenIDs []string
+
 	// activeWait is the cancel handle of the current blocking wait. The
 	// harness serializes agent-chat calls, so a NEW call arriving proves any
 	// still-blocked previous call is dead client-side; cancelling it stops
@@ -184,6 +198,11 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 		default:
 		}
 	}
+	// Hand-overs recorded in the restored log are NOT carried forward as
+	// unproven: a restart says nothing about whether the agent received them,
+	// and the first post-restart tool call would otherwise emit receipts for
+	// long-settled bubbles.
+	eb.clearUnproven()
 	return eb, nil
 }
 
@@ -328,10 +347,14 @@ func (eb *EventBus) ReceiveUserMessage(text string, files []FileRef, template st
 // interceptor and the ack-reply path). It broadcasts the userMessage event,
 // then immediately broadcasts userMessagesConsumed for the same ID so the
 // browser never shows a stuck "pending" bubble.
+// The server reading the message IS the receipt here (no agent round-trip can
+// confirm it later), so it also broadcasts userMessagesRead — otherwise these
+// bubbles would sit at "handed over, unacknowledged" forever.
 func (eb *EventBus) PublishConsumedUserMessage(text string, files []FileRef) string {
 	id := uuid.New().String()
 	eb.Publish(Event{Type: "userMessage", ID: id, Text: text, Files: files})
 	eb.Publish(Event{Type: "userMessagesConsumed", IDs: []string{id}})
+	eb.Publish(Event{Type: "userMessagesRead", IDs: []string{id}})
 	return id
 }
 
@@ -359,6 +382,37 @@ func (eb *EventBus) publishConsumed(msgs []UserMessage, toolName string, toolSeq
 		AgentToolName: toolName,
 		AgentToolSeq:  toolSeq,
 	})
+	// Handed over, not proven read. The agent's next agent-chat call promotes
+	// these via ProveDelivery; until then the browser shows them as delivered
+	// but unacknowledged, with the interrupt escape hatch still attached.
+	eb.unprovenMu.Lock()
+	eb.unprovenIDs = append(eb.unprovenIDs, ids...)
+	eb.unprovenMu.Unlock()
+}
+
+// ProveDelivery promotes every handed-over-but-unproven message to "read" by
+// broadcasting userMessagesRead. Called at the top of every agent-chat tool
+// handler: the call itself is the proof that the agent is alive on this channel
+// and therefore that the previous hand-over reached it. No-op when nothing is
+// awaiting proof.
+func (eb *EventBus) ProveDelivery() {
+	eb.unprovenMu.Lock()
+	ids := eb.unprovenIDs
+	eb.unprovenIDs = nil
+	eb.unprovenMu.Unlock()
+	if len(ids) == 0 {
+		return
+	}
+	eb.Publish(Event{Type: "userMessagesRead", IDs: ids})
+}
+
+// clearUnproven drops the unproven set without publishing. Used on startup
+// rehydration: a restart is not evidence of a live disconnect, and hand-overs
+// restored from the log must not produce receipts for historic bubbles.
+func (eb *EventBus) clearUnproven() {
+	eb.unprovenMu.Lock()
+	eb.unprovenIDs = nil
+	eb.unprovenMu.Unlock()
 }
 
 // PublishToolMarker records an MCP tool invocation that ticked its per-tool

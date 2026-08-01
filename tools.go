@@ -337,10 +337,16 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		// and the stamp-side count must advance together.
 		toolSeq := sendMessageCount.Add(1)
 
-		// A new call proves any previously blocked call is dead client-side;
-		// kill it before it can steal the next user reply. No AckLimbo here:
-		// this call might be a recap after a lost delivery, and its own
-		// successful return overwrites limbo anyway.
+		// This call is the agent's proof of life on the channel: whatever was
+		// handed over earlier really did arrive, so promote those bubbles from
+		// "delivered" to "read" before anything can return early (voice-mode
+		// rejection below).
+		//
+		// A new call also proves any previously blocked call is dead
+		// client-side; kill it before it can steal the next user reply. No
+		// AckLimbo here: this call might be a recap after a lost delivery, and
+		// its own successful return overwrites limbo anyway.
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 
 		// Reject send_message when user is in voice mode — agent must use send_verbal_reply
@@ -430,6 +436,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		Description: "Send a spoken reply to the user in voice mode. Use this tool when the user's message starts with 🎙 (microphone emoji), indicating they are using voice input. Keep replies conversational, concise, and plain text only — no markdown, no code blocks, no links. The text will be spoken aloud via browser text-to-speech. After speaking, the browser automatically listens for the user's next voice input.\n\nThis tool is TERMINAL: call it when the task is COMPLETE, when you need a decision only the user can make, or to confirm before a risky/destructive step. But if you can safely continue the work, you are NOT blocked — keep the same turn alive and send non-blocking send_verbal_progress updates at least every 60 seconds instead. Ending your turn SUSPENDS execution; there is no background worker.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings. Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalReplyParams) (*mcp.CallToolResult, any, error) {
 		toolSeq := sendVerbalReplyCount.Add(1)
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 
 		if err := ensureHTTPServer(); err != nil {
@@ -530,6 +537,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
 		// Kill any orphaned blocking wait, and ack limbo: a draw call means
 		// the agent is actively working, so the previous delivery arrived.
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 
@@ -621,6 +629,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		toolSeq := sendProgressCount.Add(1)
 		// A progress update means the agent is actively working: kill any
 		// orphaned blocking wait and ack the previous delivery as received.
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 
@@ -650,6 +659,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Description: "Send a spoken progress update to the user in voice mode without blocking. Use this for non-blocking status updates that should be spoken aloud (e.g., 'Looking into that now', 'Found the issue'). Unlike send_verbal_reply, this returns immediately without waiting for a response and is NON-TERMINAL: it does not end your turn. This is the correct tool whenever work remains — after it returns, immediately continue making tool calls in the same turn. The text will be spoken via browser text-to-speech. Keep it conversational, concise, and plain text only — no markdown, no code blocks, no links. If the user has sent a barge-in message since your last tool call, it will be appended to this call's return value after a `---BARGE-IN---` sentinel — treat that as a new instruction.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *VerbalProgressParams) (*mcp.CallToolResult, any, error) {
 		toolSeq := sendVerbalProgressCount.Add(1)
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 
@@ -677,6 +687,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		// Tick per call (empty or not) so the ordinal stays aligned with the
 		// .jsonl-side count of check_messages tool_use entries.
 		toolSeq := checkMessagesCount.Add(1)
+		// Prove the PREVIOUS hand-over before draining: the fresh batch below
+		// re-registers as unproven, and proving it here would mark bubbles read
+		// that this very call is only now handing over.
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		// Capture limbo BEFORE draining — a non-empty drain overwrites it.
 		// Un-acked limbo gets redelivered: if the call that first carried it
@@ -711,6 +725,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "set_chat_title",
 		Description: "Name the streaming chat-log export (enabled when AGENT_CHAT_EXPORT_DIR is set). Call it once the task at hand is clear — the auto-written ./agent-chats/YYYY-MM-DD-NN-untitled.md is renamed to …-{slugified-title}.md and its header rewritten; call again anytime to rename. Titles are per-session; keep them short and descriptive (e.g. 'Auth bug fix').",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *SetChatTitleParams) (*mcp.CallToolResult, any, error) {
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 		if chatStream == nil {
@@ -751,6 +766,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "chatlog_close",
 		Description: "Close out the streaming chat-log export so the archive can be git-committed cleanly: freezes this session's .md (no further appends — later messages are backfilled from history if set_chat_title re-opens it; the JSONL event log keeps recording regardless), regenerates index.html one last time, and returns the exact paths to `git add`. If the export is still untitled, `title` is REQUIRED and names it in the same call; an already-titled export is never renamed here. Idempotent. Typical close-out: deliver the final answer → chatlog_close → git add the returned paths → commit.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ChatlogCloseParams) (*mcp.CallToolResult, any, error) {
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 		if chatStream == nil {
@@ -784,6 +800,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "chatlog_optout",
 		Description: "Stop the streaming chat-log export for this session and delete its .md file (assets are left alone — their content-sha names may be shared by other sessions; index.html is regenerated). Use when the user asks not to archive this conversation. Re-enable later by calling set_chat_title.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *EmptyParams) (*mcp.CallToolResult, any, error) {
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 		if chatStream == nil {
@@ -809,6 +826,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		Name:        "export_chat_md",
 		Description: "Manually export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. NOTE: when AGENT_CHAT_EXPORT_DIR is set the chat log auto-exports continuously (see set_chat_title) — this tool is the manual escape hatch for a custom target_dir or a forced full export. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies attachments into ./agent-chats/assets/ (content-sha filenames, relative-path links from the .md), refreshes viewer.css/viewer.js, and regenerates ./agent-chats/index.html — the chat-archive landing page — from the .md files on disk (newest first). Path safety: target_dir cannot escape cwd.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
+		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		bus.AckLimbo()
 		cwd, err := os.Getwd()

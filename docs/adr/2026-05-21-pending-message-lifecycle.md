@@ -1,7 +1,11 @@
 # Pending user message lifecycle and unsend
 
 **Date:** 2026-05-21
-**Status:** Accepted
+**Status:** Accepted — amended by
+`docs/adr/2026-08-01-unread-until-proven-read.md`, which keeps the two states
+below but moves the boundary: a bubble stays pending until the agent proves it
+received the message (`userMessagesRead`), not merely until the queue hands it
+over (`userMessagesConsumed`).
 
 ## Context
 
