@@ -37,6 +37,42 @@ function resolveAgainstParent(url) {
   try { return new URL(url, parentBaseUrl).href; } catch (e) { return url; }
 }
 
+// --- Workspace-file links (the embedder's Files pane) ---
+// The embedder passes the origin of its per-session file browser as `files_url`.
+// Its presence is the feature flag. A markdown link written as a bare workspace
+// path -- [main.go](cmd/swe-swe/main.go) -- points there instead of at the
+// parent app, which never served those paths and 404'd. Root-anchored links
+// (/api/..., /.swe-swe/uploads/...) and images keep resolving against the
+// parent, because the parent is what serves them.
+var filesBaseUrl = new URLSearchParams(window.location.search).get('files_url') || '';
+
+// The absolute path of the directory this server runs in, inlined by the server
+// as WORKSPACE_ROOT. The embedder roots its Files pane at that same directory,
+// so an absolute path underneath it is showable there — which is what the `@/`
+// autocomplete produces. Anything outside it (another checkout, a sibling
+// worktree) is not servable by this session's pane and stays a parent link.
+var workspaceRoot = (typeof WORKSPACE_ROOT === 'string' ? WORKSPACE_ROOT : '').replace(/\/+$/, '');
+
+// Return the workspace-relative path a link should open in the Files pane, or
+// '' when the link isn't one (no embedder, absolute URL, out-of-workspace or
+// parent-owned root-anchored path, fragment, or query-only).
+function workspaceFilePath(url) {
+  if (!filesBaseUrl || !url) return '';
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url) || /^\/\//.test(url)) return '';
+  if (url.charAt(0) === '/') {
+    // The trailing slash makes the prefix stop at a path boundary: without it a
+    // session in /worktrees/try123 would claim files in /worktrees/try123-old.
+    // Everything else root-anchored (/api/fork/..., /.swe-swe/uploads/...) is
+    // served by the parent app, so it keeps resolving there.
+    if (workspaceRoot && url.indexOf(workspaceRoot + '/') === 0) {
+      return url.slice(workspaceRoot.length + 1);
+    }
+    return '';
+  }
+  if (url.charAt(0) === '#' || url.charAt(0) === '?') return '';
+  return url.replace(/^\.\//, '');
+}
+
 // --- Per-bubble fork ("fork from here") ---
 // When embedded in a swe-swe iframe, the embedder appends `fork_session=<live
 // session uuid>` to our src alongside `parent_url`. Its presence is the feature
@@ -90,6 +126,15 @@ if (messages) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     var a = e.target.closest ? e.target.closest('a[href]') : null;
     if (!a) return;
+    // Workspace-file links first: their href points at the Files origin, whose
+    // hostname is localhost in the port-based layout and would otherwise be
+    // misrouted into App Preview by the isLocalPreviewHost check below.
+    var filesPath = a.getAttribute('data-files-path');
+    if (filesPath) {
+      e.preventDefault();
+      window.parent.postMessage({ type: 'agent-chat-open-files', path: filesPath }, '*');
+      return;
+    }
     var url;
     try { url = new URL(a.href, window.location.href); } catch (_) { return; }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
@@ -357,6 +402,17 @@ function renderMarkdown(text) {
   // chat content often links by path. Block `javascript:` for safety.
   html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function(_, text, url) {
     if (/^\s*javascript:/i.test(url)) return text;
+    // Workspace paths get an absolute Files-pane href (so cmd-click opens a
+    // real browser tab) plus data-files-path, which the click handler below
+    // uses to route a plain click into the embedder's Files pane instead.
+    var filesPath = workspaceFilePath(url);
+    if (filesPath) {
+      var absolute = url;
+      try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
+      return '<a href="' + absolute.replace(/"/g, '&quot;')
+        + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
+        + '" target="_blank" rel="noopener">' + text + '</a>';
+    }
     return '<a href="' + resolveAgainstParent(url) + '" target="_blank" rel="noopener">' + text + '</a>';
   });
   // Bare URLs
