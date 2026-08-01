@@ -72,6 +72,25 @@ var filepathRoot = "."
 // confined to. Populated by parseFilepathRoots at startup.
 var filepathRoots []string
 
+// workspaceRootPath is the absolute, symlink-resolved directory this server
+// runs in — inlined into the page as WORKSPACE_ROOT. The embedder roots its
+// Files pane at the same directory (swe-swe starts both from the session's
+// workDir, so a worktree session gets the worktree), which lets the client turn
+// an absolute link underneath it — what `@/` autocomplete produces — into a
+// Files-pane path. Symlinks are resolved so the prefix comparison sees the same
+// spelling the OS does. Empty on error: the client then leaves absolute links
+// alone, which is the pre-existing behaviour.
+func workspaceRootPath() string {
+	abs, err := filepath.Abs(filepathRoot)
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
 // parseFilepathRoots resolves the --filepath-roots flag value into an allowlist
 // of absolute roots. When the flag is empty, the default is the fixed swe-swe
 // roots (/repos, /workspace, /worktrees) plus the current working directory —
@@ -359,8 +378,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
 	triggerMap = buildTriggerMap(autocompleteTriggers, autocompleteURL)
 	triggerCharsJSON, _ := json.Marshal(triggerChars(triggerMap))
-	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s;</script>",
-		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON))
+	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q;</script>",
+		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath())
 	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
