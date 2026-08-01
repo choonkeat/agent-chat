@@ -10,12 +10,62 @@ import (
 
 // withWorkspacePathRoot points the annotator at a throwaway workspace for the
 // duration of one test. Empty root is the feature-off default, so every test
-// that does not call this sees no annotation at all.
+// that does not call this sees no annotation at all. The enabled latch is
+// restored too, since it is process-wide.
 func withWorkspacePathRoot(t *testing.T, root string) {
 	t.Helper()
-	prev := workspacePathRoot
+	prevRoot, prevOn := workspacePathRoot, workspacePathsEnabled.Load()
 	workspacePathRoot = root
-	t.Cleanup(func() { workspacePathRoot = prev })
+	workspacePathsEnabled.Store(false)
+	t.Cleanup(func() {
+		workspacePathRoot = prevRoot
+		workspacePathsEnabled.Store(prevOn)
+	})
+}
+
+// A browser that arrived with files_url is what turns the feature on. Nothing
+// is annotated before that: standalone agent-chat has no Files pane, so an
+// autolink would point nowhere and the extractor never runs.
+func TestFilePathsOffUntilABrowserWithFilesUrlConnects(t *testing.T) {
+	root := newPathsWorkspace(t)
+	withWorkspacePathRoot(t, root)
+
+	eb := NewEventBus()
+	eb.Publish(Event{Type: "agentMessage", Text: "before: client-dist/app.js"})
+	if got := eb.EventsSince(0)[0].FilePaths; len(got) != 0 {
+		t.Errorf("FilePaths = %v, want none before EnableFilePaths", paths(got))
+	}
+
+	eb.EnableFilePaths()
+	eb.Publish(Event{Type: "agentMessage", Text: "after: client-dist/app.js"})
+
+	events := eb.EventsSince(0)
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
+	}
+	// Forward-looking only: the earlier bubble is left exactly as it was.
+	if got := events[0].FilePaths; len(got) != 0 {
+		t.Errorf("earlier bubble was back-filled with %v, want left alone", paths(got))
+	}
+	want := []string{"client-dist/app.js"}
+	if got := paths(events[1].FilePaths); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("later bubble FilePaths = %v, want %v", got, want)
+	}
+}
+
+func TestEnableFilePathsNoOpWithoutRoot(t *testing.T) {
+	withWorkspacePathRoot(t, "")
+
+	eb := NewEventBus()
+	eb.EnableFilePaths()
+	eb.Publish(Event{Type: "agentMessage", Text: "see client-dist/app.js"})
+
+	if got := eb.EventsSince(0)[0].FilePaths; len(got) != 0 {
+		t.Errorf("FilePaths = %v, want none when the root is unset", paths(got))
+	}
+	if workspacePathsEnabled.Load() {
+		t.Error("EnableFilePaths latched on with no workspace root")
+	}
 }
 
 func TestPublishAnnotatesFilePaths(t *testing.T) {
@@ -23,6 +73,7 @@ func TestPublishAnnotatesFilePaths(t *testing.T) {
 	withWorkspacePathRoot(t, root)
 
 	eb := NewEventBus()
+	eb.EnableFilePaths()
 	eb.Publish(Event{Type: "agentMessage", Text: "the rule is in client-dist/app.js next to docs/adr"})
 
 	events := eb.EventsSince(0)
@@ -63,6 +114,7 @@ func TestFilePathsNeverReachTheEventLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEventBusWithLog: %v", err)
 	}
+	eb.EnableFilePaths()
 	eb.Publish(Event{Type: "agentMessage", Text: "see client-dist/app.js"})
 	eb.LogUserMessage("also @Makefile", nil)
 	eb.Close()
@@ -90,6 +142,7 @@ func TestLogUserMessageAnnotatesFilePaths(t *testing.T) {
 	withWorkspacePathRoot(t, root)
 
 	eb := NewEventBus()
+	eb.EnableFilePaths()
 	eb.LogUserMessage("look at @Makefile please", nil)
 
 	// LogUserMessage appends without a Seq, so EventsSince(0) skips it —
@@ -104,35 +157,43 @@ func TestLogUserMessageAnnotatesFilePaths(t *testing.T) {
 	}
 }
 
-// A restart rebuilds the in-memory log from the JSONL. Annotating there is what
-// lets bubbles written before this feature existed become clickable, with no
-// backfill of the archive.
-func TestRestoredHistoryIsAnnotated(t *testing.T) {
+// A restart rebuilds the in-memory log from the JSONL, and that history is
+// deliberately left alone: the archive stores no annotation and nothing
+// re-derives one. Bubbles from before the restart stay plain text; bubbles
+// published after it link normally.
+func TestRestoredHistoryIsNotAnnotated(t *testing.T) {
 	root := newPathsWorkspace(t)
 	logPath := filepath.Join(t.TempDir(), "events.jsonl")
 
-	withWorkspacePathRoot(t, "")
+	withWorkspacePathRoot(t, root)
 	first, err := NewEventBusWithLog(logPath)
 	if err != nil {
 		t.Fatalf("NewEventBusWithLog: %v", err)
 	}
-	first.Publish(Event{Type: "agentMessage", Text: "written before the feature: client-dist/style.css"})
+	first.EnableFilePaths()
+	first.Publish(Event{Type: "agentMessage", Text: "before the restart: client-dist/style.css"})
 	first.Close()
 
+	// Fresh process: the latch starts off again, and a browser reconnects.
 	withWorkspacePathRoot(t, root)
 	second, err := NewEventBusWithLog(logPath)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer second.Close()
+	second.EnableFilePaths()
+	second.Publish(Event{Type: "agentMessage", Text: "after the restart: client-dist/app.js"})
 
 	events := second.EventsSince(0)
-	if len(events) != 1 {
-		t.Fatalf("got %d restored events, want 1", len(events))
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2", len(events))
 	}
-	want := []string{"client-dist/style.css"}
-	if got := paths(events[0].FilePaths); strings.Join(got, "|") != strings.Join(want, "|") {
-		t.Errorf("restored FilePaths = %v, want %v", got, want)
+	if got := events[0].FilePaths; len(got) != 0 {
+		t.Errorf("restored bubble carries %v, want none", paths(got))
+	}
+	want := []string{"client-dist/app.js"}
+	if got := paths(events[1].FilePaths); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("new bubble FilePaths = %v, want %v", got, want)
 	}
 }
 
@@ -144,6 +205,7 @@ func TestFilePathsComputedAtWriteNotAtRead(t *testing.T) {
 	withWorkspacePathRoot(t, root)
 
 	eb := NewEventBus()
+	eb.EnableFilePaths()
 	eb.Publish(Event{Type: "agentMessage", Text: "see docs/later.md"})
 
 	if got := eb.EventsSince(0)[0].FilePaths; len(got) != 0 {

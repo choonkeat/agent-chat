@@ -541,6 +541,13 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// files=1 means this browser was given a Files pane by its embedder, so
+	// workspace-path annotation is worth doing. Switched on before the history
+	// replay below so this connection's own backlog arrives annotated.
+	if r.URL.Query().Get("files") == "1" {
+		bus.EnableFilePaths()
+	}
+
 	// Read cursor from query param — client sends last seen seq number.
 	cursor := int64(0)
 	if s := r.URL.Query().Get("cursor"); s != "" {

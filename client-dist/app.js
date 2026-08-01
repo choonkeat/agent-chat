@@ -2979,6 +2979,10 @@ function connect() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var basePath = location.pathname.replace(/\/+$/, '');
   var wsUrl = proto + '//' + location.host + basePath + '/ws?cursor=' + lastSeq;
+  // files=1 tells the server there is a Files pane to open, so it is worth
+  // annotating bubbles with the workspace paths their text names. Without a
+  // files_url an autolink would point nowhere, so the server never bothers.
+  if (filesBaseUrl) wsUrl += '&files=1';
   var ws = new WebSocket(wsUrl);
   activeWs = ws;
 

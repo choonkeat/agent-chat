@@ -188,7 +188,7 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 		transientSubs:    make(map[chan any]struct{}),
 		msgQueue:         make(chan UserMessage, 256),
 		logFile:          f,
-		eventLog:         annotateRestoredEvents(events),
+		eventLog:         events,
 		nextSeq:          maxSeq,
 		lastQuickReplies: lastQR,
 	}
@@ -748,6 +748,28 @@ func (eb *EventBus) LogUserMessage(text string, files []FileRef) {
 	eb.eventLog = append(eb.eventLog, stored)
 	eb.mu.Unlock()
 	eb.writeToLog(evt)
+}
+
+// EnableFilePaths switches on workspace-path annotation, called when a browser
+// connects carrying files=1 — its way of saying the embedder gave it a Files
+// pane, which is the only place an autolink can lead. Until then the extractor
+// never runs, so standalone agent-chat pays nothing.
+//
+// Bubbles already in the log are deliberately NOT back-filled: annotation is
+// forward-looking, applied as each bubble is written. A history restored from
+// the JSONL therefore carries no annotation and its paths stay plain text
+// until the bubble is re-published, which is the accepted cost of never
+// touching the archive and never re-deriving an answer at read time.
+//
+// Latches on and never off. A single browser having had a Files pane is
+// enough — the annotation is harmless to a client that ignores it, and
+// flapping would make the same bubble linkable or not depending on which tab
+// was open when it arrived.
+func (eb *EventBus) EnableFilePaths() {
+	if workspacePathRoot == "" {
+		return
+	}
+	workspacePathsEnabled.Store(true)
 }
 
 // EventsSince returns all events with Seq > cursor.

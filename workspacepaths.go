@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 )
 
 // FilePath is one run of text that names a file or directory really existing
@@ -26,33 +27,27 @@ type FilePath struct {
 // when the working directory cannot be resolved.
 var workspacePathRoot string
 
-// annotateFilePaths returns event with FilePaths filled in from its Text. It is
-// deliberately called on the copy kept in the in-memory event log and broadcast
-// to browsers, never on the copy handed to writeToLog: the JSONL archive
-// records what was said, and a stored answer would be wrong the moment a file
-// moved. A restart re-annotates from scratch (see NewEventBus), which is what
-// lets bubbles written before this feature existed become clickable with no
-// backfill.
+// workspacePathsEnabled is off until a browser proves there is somewhere for a
+// link to go, by connecting with files=1 (which it sends only when the embedder
+// gave it files_url). Standalone agent-chat therefore never runs the extractor
+// at all: with no Files pane, an autolink would point nowhere.
+//
+// Set by EventBus.EnableFilePaths, which documents the latching rule and why
+// bubbles written before the switch are left alone.
+var workspacePathsEnabled atomic.Bool
+
+// annotateFilePaths returns event with FilePaths filled in from its Text.
+//
+// It is deliberately called on the copy kept in the in-memory event log and
+// broadcast to browsers, never on the copy handed to writeToLog: the JSONL
+// archive records what was said, and a stored answer would be wrong the moment
+// a file moved.
 func annotateFilePaths(event Event) Event {
-	if workspacePathRoot == "" || event.Text == "" {
+	if !workspacePathsEnabled.Load() || workspacePathRoot == "" || event.Text == "" {
 		return event
 	}
 	event.FilePaths = extractWorkspacePaths(event.Text, workspacePathRoot)
 	return event
-}
-
-// annotateRestoredEvents re-annotates a history rebuilt from the JSONL. The
-// archive stores no answer, so this is the only thing that makes older bubbles
-// clickable — and it reflects the disk as it is now, not as it was when the
-// bubble was written.
-func annotateRestoredEvents(events []Event) []Event {
-	if workspacePathRoot == "" {
-		return events
-	}
-	for i := range events {
-		events[i] = annotateFilePaths(events[i])
-	}
-	return events
 }
 
 // workspacePathCandidateCap bounds how many candidate tokens one message may
