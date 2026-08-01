@@ -20,6 +20,41 @@ type FilePath struct {
 	Dir  bool   `json:"dir,omitempty"`
 }
 
+// workspacePathRoot is the absolute, symlink-resolved directory paths are
+// resolved against — set once at startup from workspaceRootPath(). Empty
+// disables the whole feature, which is the default in tests and the fallback
+// when the working directory cannot be resolved.
+var workspacePathRoot string
+
+// annotateFilePaths returns event with FilePaths filled in from its Text. It is
+// deliberately called on the copy kept in the in-memory event log and broadcast
+// to browsers, never on the copy handed to writeToLog: the JSONL archive
+// records what was said, and a stored answer would be wrong the moment a file
+// moved. A restart re-annotates from scratch (see NewEventBus), which is what
+// lets bubbles written before this feature existed become clickable with no
+// backfill.
+func annotateFilePaths(event Event) Event {
+	if workspacePathRoot == "" || event.Text == "" {
+		return event
+	}
+	event.FilePaths = extractWorkspacePaths(event.Text, workspacePathRoot)
+	return event
+}
+
+// annotateRestoredEvents re-annotates a history rebuilt from the JSONL. The
+// archive stores no answer, so this is the only thing that makes older bubbles
+// clickable — and it reflects the disk as it is now, not as it was when the
+// bubble was written.
+func annotateRestoredEvents(events []Event) []Event {
+	if workspacePathRoot == "" {
+		return events
+	}
+	for i := range events {
+		events[i] = annotateFilePaths(events[i])
+	}
+	return events
+}
+
 // workspacePathCandidateCap bounds how many candidate tokens one message may
 // have checked. Measured against this repo's agent-chats/ archive, a bubble
 // averages 0.5 candidates; the cap only exists so a pathological message can't

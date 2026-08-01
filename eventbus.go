@@ -72,6 +72,13 @@ type Event struct {
 	// paths that didn't originate from an MCP tool call.
 	AgentToolSeq  int64  `json:"agent_tool_seq,omitempty"`
 	AgentToolName string `json:"agent_tool_name,omitempty"`
+
+	// FilePaths lists the workspace files and directories Text names, so the
+	// browser can turn a bare `client-dist/app.js` into a Files-pane link
+	// without being able to stat anything itself. Filled in on the copy the
+	// bus keeps and broadcasts (see annotateFilePaths) and deliberately never
+	// written to the JSONL — it is a rendering aid, not part of the record.
+	FilePaths []FilePath `json:"file_paths,omitempty"`
 }
 
 // AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.
@@ -181,7 +188,7 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 		transientSubs:    make(map[chan any]struct{}),
 		msgQueue:         make(chan UserMessage, 256),
 		logFile:          f,
-		eventLog:         events,
+		eventLog:         annotateRestoredEvents(events),
 		nextSeq:          maxSeq,
 		lastQuickReplies: lastQR,
 	}
@@ -705,22 +712,27 @@ func (eb *EventBus) Publish(event Event) {
 	if event.Timestamp == 0 {
 		event.Timestamp = time.Now().UnixMilli()
 	}
+	// Annotated once, here, outside the lock — the stat syscalls must not be
+	// held across it. `event` stays clean for writeToLog below.
+	stored := annotateFilePaths(event)
+
 	eb.mu.Lock()
 	eb.nextSeq++
-	event.Seq = eb.nextSeq
-	eb.eventLog = append(eb.eventLog, event)
+	stored.Seq = eb.nextSeq
+	event.Seq = stored.Seq
+	eb.eventLog = append(eb.eventLog, stored)
 
 	// Track lastQuickReplies for new browser state.
-	if len(event.QuickReplies) > 0 {
-		eb.lastQuickReplies = event.QuickReplies
+	if len(stored.QuickReplies) > 0 {
+		eb.lastQuickReplies = stored.QuickReplies
 	}
-	if event.Type == "userMessage" {
+	if stored.Type == "userMessage" {
 		eb.lastQuickReplies = nil
 	}
 
 	for ch := range eb.subscribers {
 		select {
-		case ch <- event:
+		case ch <- stored:
 		default:
 		}
 	}
@@ -731,8 +743,9 @@ func (eb *EventBus) Publish(event Event) {
 // LogUserMessage appends a user message event to the log for reconnect replay.
 func (eb *EventBus) LogUserMessage(text string, files []FileRef) {
 	evt := Event{Type: "userMessage", Text: text, Files: files, Timestamp: time.Now().UnixMilli()}
+	stored := annotateFilePaths(evt)
 	eb.mu.Lock()
-	eb.eventLog = append(eb.eventLog, evt)
+	eb.eventLog = append(eb.eventLog, stored)
 	eb.mu.Unlock()
 	eb.writeToLog(evt)
 }
