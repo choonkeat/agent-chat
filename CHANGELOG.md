@@ -4,7 +4,31 @@ All notable changes to agent-chat are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.22] — 2026-08-01
+
 ### Features
+- Bare workspace paths in chat text are now clickable. A bubble that merely
+  mentions `client-dist/app.js` renders it as `@client-dist/app.js`, linked
+  into the embedder's Files pane — the same link the explicit
+  `[app.js](client-dist/app.js)` form already got, without anyone writing
+  markdown. A directory shows its trailing slash (`@docs/adr/`), and a path
+  already written with `@` is not double-prefixed.
+  **Existence on disk is the whole filter.** Of 188 unique path-shaped tokens
+  in this repo's own chat archive only 31 exist, and the rejects — `Ctrl/Cmd`,
+  `origin/main`, `7/7`, `and/or`, `bump/publish`, `x64/arm64`,
+  `@choonkeat/agent-chat` — are indistinguishable from real paths by shape
+  alone. The server is the only side that can stat, so it attaches the
+  confirmed paths to each bubble as `file_paths` and the browser links exactly
+  those. A single-backtick span whose entire content is such a path links too;
+  fenced ``` blocks stay literal and remain the way to show a path without
+  linking it.
+  Off unless the embedder passes `files_url` — with no Files pane a link would
+  lead nowhere, so the extractor never runs. Annotation happens once as each
+  bubble is written, never at read time, and is never stored in the JSONL
+  archive. Consequences of that, stated plainly: a history restored after a
+  restart shows as plain text until those bubbles are re-published, and a file
+  deleted after its bubble was annotated keeps its link until restart. See
+  `tasks/2026-08-01-autolink-workspace-paths.md`.
 - Markdown links to workspace files now open in the embedder's Files pane. A
   bare workspace path — `[main.go](cmd/main.go)` — used to resolve against the
   parent app, which never served those paths and 404'd. When the embedder
@@ -58,24 +82,6 @@ All notable changes to agent-chat are documented in this file.
   them. `gotoRetry()` retries connection-level failures (including the
   `chrome-error://` interrupted-navigation shape) for up to 20s and costs
   nothing on a warm port. Full suite now 94/94, twice in a row.
-
-### What to test before releasing
-- **Read receipt.** Send a message, let the agent take a long turn: the bubble
-  should clear as soon as the agent's first tool call lands, not at the end.
-  Then break out of a blocking `send_message` in the host terminal (Esc) and
-  send another message — that bubble must stay dim and keep its `⋯` menu with
-  **Send as interrupting** (and no **Delete** once it has been drained).
-- **iPhone keyboard.** Open the chat on a phone, tap the composer: the newest
-  message must stay visible above the input bar. Check both standalone Safari
-  and inside the swe-swe iframe. Scroll back through history first and confirm
-  you are *not* yanked to the bottom.
-- **iPhone text size.** Open the keyboard, rotate, resize the iframe — the
-  type must not grow.
-- **Workspace-file links.** With an embedder that passes `files_url`, click a
-  `[file](path)` link: plain click lands in the Files pane, cmd-click opens a
-  tab. Confirm `/api/fork/…` links and images still work, and that a client
-  with no `files_url` behaves as before.
-- **E2E suite.** `make test` — expect 94/94 (warm the CDP endpoint first).
 
 ## [0.8.21] — 2026-07-31
 
