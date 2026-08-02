@@ -196,6 +196,69 @@ test.describe('/clear prefix', () => {
     }
   });
 
+  // The session decides what a browser that has never touched the box starts
+  // with. That is how swe-swe can hand out a context-only session without
+  // anyone ticking anything, and unticking still has to win — a default is a
+  // starting point, not a lock.
+  test('-conversation-context-only starts ticked, and unticking beats it', async ({ page }) => {
+    const server = await startServer(['-conversation-context-only']);
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await expect(frame.locator('#ctx-only-input')).toBeChecked();
+
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('first message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+
+      // Untick: this browser has now answered, and its answer outranks the
+      // session's opening position.
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').uncheck();
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('second message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect(frame.locator('.bubble.user', { hasText: 'second message' })).toBeVisible({ timeout: 10000 });
+      // Still the two from the first message — no third wipe.
+      expect(await interrupts(page)).toHaveLength(2);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // Cookies ignore port numbers, so without the session key in the cookie's
+  // name one tick would arm every agent-chat on the host — including sessions
+  // started later, whose agents would start losing their memory unasked. The
+  // message-style cookie is deliberately shared this way; this one must not be.
+  test('the tick belongs to its own session, not to every chat in the browser', async ({ page }) => {
+    const armed = await startServer();
+    const other = await startServer();
+    try {
+      await gotoRetry(page, armed.url);
+      await page.locator('#btn-settings').click();
+      await page.locator('#ctx-only-input').check();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+
+      // Same browser, different session: untouched.
+      await gotoRetry(page, other.url);
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
+
+      // And the session that was ticked still is.
+      await gotoRetry(page, armed.url);
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+    } finally {
+      armed.proc.kill('SIGTERM');
+      other.proc.kill('SIGTERM');
+      fs.rmSync(armed.dir, { recursive: true, force: true });
+      fs.rmSync(other.dir, { recursive: true, force: true });
+    }
+  });
+
   // A tapped chip is a message too. It reaches the send path by its own route,
   // so the tick has to be honoured there separately or half the chat quietly
   // behaves differently from the other half.
