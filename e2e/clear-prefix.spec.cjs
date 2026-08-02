@@ -197,11 +197,11 @@ test.describe('/clear prefix', () => {
   });
 
   // The reset does not reach the server for a couple of seconds — the terminal
-  // has to be typed into and left to settle — and the bubble is drawn only when
-  // the server sends the message back. Emptying the box on Enter therefore left
-  // the message nowhere at all for that whole gap, which reads as having lost
-  // it. The words stay put, locked, until the bubble exists.
-  test('the typed words stay in the box until the bubble appears', async ({ page }) => {
+  // has to be typed into and left to settle. Waiting for the server's copy to
+  // draw the bubble left the message nowhere at all for that whole gap, which
+  // reads as having lost it. It is drawn on the way out instead, unread, and
+  // the server's copy takes that bubble over rather than adding a second.
+  test('the message is drawn as an unread bubble before the server has it', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
@@ -213,16 +213,51 @@ test.describe('/clear prefix', () => {
       await input.fill('what did we just talk about?');
       await input.press('Enter');
 
-      // The wipe is already on its way, and the words are still on screen —
-      // uneditable, so they cannot be sent twice.
-      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
-      await expect(input).toHaveValue('what did we just talk about?');
+      // Drawn while the reset is still settling — the resume line, which only
+      // goes out once the server has the message, has not been typed yet.
+      const bubble = frame.locator('.bubble.user', { hasText: 'what did we just talk about?' });
+      await expect(bubble).toBeVisible({ timeout: 1500 });
+      await expect(bubble).toHaveClass(/pending-agent/);
+      expect(await interrupts(page)).toEqual(['/clear']);
+      // The box is empty and locked: the words are on screen, and they must not
+      // be sendable twice.
+      await expect(input).toHaveValue('');
       await expect(input).toHaveJSProperty('readOnly', true);
 
-      // The bubble arriving is what releases the box.
-      await expect(frame.locator('.bubble.user', { hasText: 'what did we just talk about?' }))
-        .toBeVisible({ timeout: 10000 });
-      await expect(input).toHaveValue('');
+      // The server's copy brings the id and takes the same bubble over. One
+      // bubble, not two, and it can be unsent now that it has an id.
+      await expect(bubble).toHaveAttribute('data-msg-id', /.+/, { timeout: 10000 });
+      await expect(frame.locator('.bubble.user')).toHaveCount(1);
+      await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(1);
+      await expect(input).toHaveJSProperty('readOnly', false);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // Drawing the bubble before the server has the message is only safe if a
+  // failure takes it back down. The connection dying inside the settle window
+  // is the one failure this route can actually detect.
+  test('a send that fails puts the bubble away and the words back in the box', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      const input = frame.locator('#chat-input');
+      await input.fill('this one never lands');
+      await input.press('Enter');
+      await expect(frame.locator('.bubble.user', { hasText: 'this one never lands' })).toBeVisible({ timeout: 1500 });
+
+      // Kill the server inside the settle window, before the instruction is sent.
+      server.proc.kill('SIGKILL');
+
+      await expect(frame.locator('.bubble', { hasText: /back in the box/i })).toBeVisible({ timeout: 10000 });
+      await expect(frame.locator('.bubble.user', { hasText: 'this one never lands' })).toHaveCount(0);
+      await expect(input).toHaveValue('this one never lands');
       await expect(input).toHaveJSProperty('readOnly', false);
     } finally {
       server.proc.kill('SIGTERM');
@@ -363,10 +398,13 @@ test.describe('/clear prefix', () => {
       await frame.locator('#chat-input').press('Enter');
 
       await expect(frame.locator('.bubble.user', { hasText: 'stop' })).toBeVisible({ timeout: 10000 });
-      // The ordinary path nudges the agent to check_messages; a wipe would have
-      // put a bare `/clear` on the wire first.
-      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(1);
-      expect((await interrupts(page))[0]).not.toBe('/clear');
+      // Exactly the interrupt the chat has always sent — the break-in that
+      // reaches a busy agent — and no `/clear` in front of it.
+      await expect.poll(() => interrupts(page), { timeout: 10000 })
+        .toEqual(['check_messages; ask me how to proceed']);
+      // And the box is free again straight away, so a second "stop" needs no
+      // waiting: the reset route is what holds it, and this did not take it.
+      await expect(frame.locator('#chat-input')).toHaveJSProperty('readOnly', false);
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });
