@@ -196,6 +196,40 @@ test.describe('/clear prefix', () => {
     }
   });
 
+  // The reset does not reach the server for a couple of seconds — the terminal
+  // has to be typed into and left to settle — and the bubble is drawn only when
+  // the server sends the message back. Emptying the box on Enter therefore left
+  // the message nowhere at all for that whole gap, which reads as having lost
+  // it. The words stay put, locked, until the bubble exists.
+  test('the typed words stay in the box until the bubble appears', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      const input = frame.locator('#chat-input');
+      await input.fill('what did we just talk about?');
+      await input.press('Enter');
+
+      // The wipe is already on its way, and the words are still on screen —
+      // uneditable, so they cannot be sent twice.
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect(input).toHaveValue('what did we just talk about?');
+      await expect(input).toHaveJSProperty('readOnly', true);
+
+      // The bubble arriving is what releases the box.
+      await expect(frame.locator('.bubble.user', { hasText: 'what did we just talk about?' }))
+        .toBeVisible({ timeout: 10000 });
+      await expect(input).toHaveValue('');
+      await expect(input).toHaveJSProperty('readOnly', false);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
   // The session decides what a browser that has never touched the box starts
   // with. That is how swe-swe can hand out a context-only session without
   // anyone ticking anything, and unticking still has to win — a default is a

@@ -1523,8 +1523,20 @@ function detectInterrupt(m) {
 /** `/clear …`, typed or implied by "conversation context only". Claims the
     message: that route wipes, records and resumes on its own. */
 function routeClearPrefix(m) {
-  if (m.files.length === 0 && maybeHandleClearPrefix(clearRouteText(m.text, m.isInterrupt))) {
-    m.handled = true;
+  if (m.files.length > 0) return m;
+  var routed = clearRouteText(m.text, m.isInterrupt);
+  if (!maybeHandleClearPrefix(routed)) return m;
+  m.handled = true;
+  // This route does not reach the server for a couple of seconds — the terminal
+  // has to be typed into and left to settle first — and the bubble is only
+  // drawn when the server sends the message back. So the words stay in the box,
+  // locked, until that happens: emptying the box now would leave the message
+  // nowhere at all for two seconds, which reads as having lost it. The
+  // userMessage broadcast empties and unlocks the box, exactly as it does for
+  // an ordinary send.
+  if (window.parent !== window && clearInstruction(routed)) {
+    m.awaitEcho = true;
+    lockInput(m);
   }
   return m;
 }
@@ -1537,18 +1549,23 @@ function routeClearContext(m) {
   return m;
 }
 
+/** The box holds the words, uneditable, until the server sends them back as a
+    bubble. Only the path that was typed into has a box to lock. */
+function lockInput(m) {
+  if (!SEND_SOURCES[m.source].locksInput) return;
+  // readOnly, not disabled: keeps focus and the mobile keyboard up.
+  chatInput.focus();
+  chatInput.readOnly = true;
+  chatInput.classList.add('sending');
+  sendBtn.disabled = true;
+  sendBtn.classList.add('sending');
+  sendBtn.classList.remove('loading');
+}
+
 /** The chat now shows a message on its way: chips that were not chosen are
     frozen into the transcript, the loader appears, and the text box locks. */
 function freezeUi(m) {
-  if (SEND_SOURCES[m.source].locksInput) {
-    // readOnly, not disabled: keeps focus and the mobile keyboard up.
-    chatInput.focus();
-    chatInput.readOnly = true;
-    chatInput.classList.add('sending');
-    sendBtn.disabled = true;
-    sendBtn.classList.add('sending');
-    sendBtn.classList.remove('loading');
-  }
+  lockInput(m);
   freezeCurrentReplies(m.rawText);
   showLoading(); // hides quick replies via mutual exclusivity
   pendingNotifyParent = true;
@@ -1590,7 +1607,10 @@ function submitUserMessage(rawText, source, files) {
     files: files || [],
     isInterrupt: false,
     notifyInterrupt: false,
-    handled: false
+    handled: false,
+    // Set by a stage that claims the message but will still have the server
+    // broadcast it back — the caller must not empty the box before then.
+    awaitEcho: false
   };
   for (var i = 0; i < SEND_PIPELINE.length && !m.handled; i++) m = SEND_PIPELINE[i](m);
   return m;
@@ -1671,6 +1691,12 @@ function isClearCommand(text) {
   return text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
 }
 
+/** What a `/clear …` hands the agent afterwards — '' for a bare `/clear`, which
+    records nothing and so produces no bubble to wait for. */
+function clearInstruction(text) {
+  return text === clearPrefix ? '' : text.slice(clearPrefix.length + 1).trim();
+}
+
 // The text maybeHandleClearPrefix acts on. Normally that is what the user sent.
 // With "conversation context only" ticked, an ordinary message is turned into
 // `/clear <message>`, so every message wipes the agent and hands it the chat log
@@ -1706,13 +1732,16 @@ function clearRouteText(text, isInterrupt) {
 // instruction.
 function maybeHandleClearPrefix(rawText) {
   if (!isClearCommand(rawText)) return false;
-  var instruction = rawText === clearPrefix ? '' : rawText.slice(clearPrefix.length + 1).trim();
+  var instruction = clearInstruction(rawText);
   if (window.parent === window) {
-    addBubble(rawText, 'user', null, voiceMode ? 'voice' : null);
+    addBubble(instruction || rawText, 'user', null, voiceMode ? 'voice' : null);
     addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
     return true;
   }
-  freezeCurrentReplies(rawText);
+  // The instruction, not the routed text: what the user chose is the chip whose
+  // words these are, and a `/clear ` in front of them would match no chip and
+  // freeze the chosen one along with the rest.
+  freezeCurrentReplies(instruction || rawText);
   window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
   firstMessageSent = false;
   writeFirstMessageSent(false);
@@ -1778,12 +1807,17 @@ function handleSend() {
   }
   if (!text && fileRefs.length === 0) return;
 
-  if (submitUserMessage(text, 'typed', fileRefs).handled) {
+  var sent = submitUserMessage(text, 'typed', fileRefs);
+  if (sent.handled) {
     // A route that keeps the message to itself sends nothing, so no broadcast
-    // will come back to empty the box — it has to be emptied here.
-    chatInput.value = '';
-    autoGrow();
-    updateSendButton();
+    // will come back to empty the box — it has to be emptied here. The reset
+    // route is the exception: it does reach the server, just seconds later, and
+    // says so with awaitEcho.
+    if (!sent.awaitEcho) {
+      chatInput.value = '';
+      autoGrow();
+      updateSendButton();
+    }
     return;
   }
 
