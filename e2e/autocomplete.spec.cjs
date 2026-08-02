@@ -649,3 +649,91 @@ test.describe('Autocomplete /slash-command ranking', () => {
     expect(byName['stable-no-match']).toEqual(['aaa', 'bbb']);
   });
 });
+
+test.describe('Autocomplete paste with OS-added space', () => {
+  /** @type {{ url: string, proc: import('child_process').ChildProcess, dir: string } | null} */
+  let server = null;
+
+  test.beforeAll(async () => {
+    server = await startServer();
+  });
+
+  test.afterAll(async () => {
+    if (server?.proc) {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // iOS "smart paste" adds the separating space itself, at insertion time —
+  // it is not in the clipboard payload, so a handler that only trims the
+  // pasted string cannot see it. Reproduce that exact DOM event sequence.
+  test('space inserted by the editor after paste is removed', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, 'read @doc');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    await page.evaluate(() => {
+      const el = document.getElementById('chat-input');
+      const at = el.selectionStart;
+      const inserted = ' s/autocomplete-api.md'; // leading space added by the OS
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'insertFromPaste', bubbles: true, cancelable: true,
+      }));
+      el.value = el.value.slice(0, at) + inserted + el.value.slice(at);
+      el.selectionStart = el.selectionEnd = at + inserted.length;
+      el.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste', bubbles: true }));
+    });
+
+    await expect
+      .poll(() => textarea.inputValue(), { timeout: 3000 })
+      .toBe('read @docs/autocomplete-api.md');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+  });
+
+  // The other shape: the space rides along inside the clipboard text.
+  test('leading space in the clipboard text is stripped', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await typeAndWait(page, textarea, '@mai');
+
+    const dropdown = page.locator('#autocomplete-dropdown');
+    await expect(dropdown).toHaveClass(/visible/, { timeout: 3000 });
+
+    await page.evaluate(() => {
+      const el = document.getElementById('chat-input');
+      el.focus();
+      const dt = new DataTransfer();
+      dt.setData('text/plain', ' n.go');
+      el.dispatchEvent(new ClipboardEvent('paste', {
+        clipboardData: dt, bubbles: true, cancelable: true,
+      }));
+    });
+
+    await expect.poll(() => textarea.inputValue(), { timeout: 3000 }).toBe('@main.go');
+  });
+
+  // A paste with no live trigger token must keep whatever the user copied.
+  test('paste outside a trigger token keeps its leading space', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    await textarea.fill('read');
+    await page.waitForTimeout(300);
+
+    await page.evaluate(() => {
+      const el = document.getElementById('chat-input');
+      el.selectionStart = el.selectionEnd = el.value.length;
+      const at = el.selectionStart;
+      const inserted = ' main.go';
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        inputType: 'insertFromPaste', bubbles: true, cancelable: true,
+      }));
+      el.value = el.value.slice(0, at) + inserted + el.value.slice(at);
+      el.selectionStart = el.selectionEnd = at + inserted.length;
+      el.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste', bubbles: true }));
+    });
+
+    await page.waitForTimeout(500);
+    expect(await textarea.inputValue()).toBe('read main.go');
+  });
+});
