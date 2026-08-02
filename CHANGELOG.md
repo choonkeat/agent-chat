@@ -75,11 +75,22 @@ All notable changes to agent-chat are documented in this file.
 ### Fixes
 - A message sent with "conversation context only" on vanished for about two
   seconds. The reset does not reach the server until the terminal has been typed
-  into and left to settle, and the bubble is drawn only when the server sends
-  the message back — but the box emptied on Enter, so in between the message
-  existed nowhere on screen and read as lost. The words now stay in the box,
-  uneditable, until the bubble exists, which is what an ordinary send has always
-  done. A bare `/clear` records nothing and so still clears the box at once.
+  into and left to settle, and the bubble was drawn only when the server sent
+  the message back — so in between, the message existed nowhere on screen and
+  read as lost.
+  **The bubble is now drawn on the way out**, unread, and the server's copy
+  takes that same bubble over when it arrives rather than adding a second: it
+  brings the id, which is what the "⋯" menu needs to offer an unsend. Matching
+  is by text, oldest first, which is exact here because the box locks while a
+  message is in flight — this browser only ever has one outstanding. A message
+  the server flags as containing real workspace paths is redrawn instead of
+  taken over, since those links are baked into the markup at render time and
+  only the server can tell which paths exist.
+  **A send known to have failed puts the bubble away and the words back in the
+  box**, ahead of anything typed since. Both detectable failures are covered:
+  the connection being down at send, and the connection dying inside the reset's
+  settle window. What it cannot do is notice a send that fails silently — the
+  same blind spot the chat had before.
   Tapping a chip with the tick on also froze the chip that was chosen along with
   the unchosen ones: the freeze matched against the routed `/clear …` text,
   which matches no chip. It matches the instruction now.

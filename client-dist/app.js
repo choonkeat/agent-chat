@@ -875,6 +875,7 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
     appendMessage(div);
   }
   scrollToBottom(false);
+  return div;
 }
 
 // Tell the server to drop a pending message from the agent's queue.
@@ -1504,10 +1505,17 @@ var SEND_SOURCES = {
   voice: { mark: VOICE_MARK, runOn: true, interrupts: true, locksInput: false }
 };
 
-/** What the agent will read. Only voice adds anything. */
+/** What the agent will read, and what the bubble shows. Only voice differs
+    between them: the mic marker is for the agent, not for the reader. */
 function markSource(m) {
   m.text = SEND_SOURCES[m.source].mark + m.rawText;
+  m.displayText = m.rawText;
   return m;
+}
+
+/** The mic marker off the front of a spoken message, if it is there. */
+function stripVoiceMark(text) {
+  return text.indexOf(VOICE_MARK) === 0 ? text.slice(VOICE_MARK.length) : text;
 }
 
 /** Is this asking the agent to stop? Two stages downstream care: the clear
@@ -1535,8 +1543,11 @@ function routeClearPrefix(m) {
   // userMessage broadcast empties and unlocks the box, exactly as it does for
   // an ordinary send.
   if (window.parent !== window && clearInstruction(routed)) {
-    m.awaitEcho = true;
+    // What the server will send back is the instruction with the `/clear `
+    // gone, so that — not the routed text — is what the bubble must show.
+    m.displayText = stripVoiceMark(clearInstruction(routed));
     lockInput(m);
+    drawUnsentBubble(m);
   }
   return m;
 }
@@ -1549,8 +1560,8 @@ function routeClearContext(m) {
   return m;
 }
 
-/** The box holds the words, uneditable, until the server sends them back as a
-    bubble. Only the path that was typed into has a box to lock. */
+/** The box holds nothing and takes nothing while a message is in flight. Only
+    the path that was typed into has a box to lock. */
 function lockInput(m) {
   if (!SEND_SOURCES[m.source].locksInput) return;
   // readOnly, not disabled: keeps focus and the mobile keyboard up.
@@ -1562,12 +1573,99 @@ function lockInput(m) {
   sendBtn.classList.remove('loading');
 }
 
+// --- Messages drawn before the server has them ---
+//
+// A message can take seconds to reach the server — the reset route types into
+// the terminal and waits for it to settle first — and the bubble used to appear
+// only when the server sent the message back. So the words were drawn straight
+// away instead, as an unread bubble, and the server's copy takes that bubble
+// over when it arrives rather than drawing a second one.
+//
+// Matched in order and by text: this browser sends one message at a time (the
+// box locks until the echo), so the oldest undrawn one is always the one coming
+// back. A coincidence — another tab sending the same words first — swaps two
+// identical bubbles, which shows nothing to anyone.
+//
+// Nothing is guessed about delivery. The bubble is drawn on the way out and the
+// text is put back in the box if the send is known to have failed, so a message
+// is never quietly lost; what it cannot do is detect a send that fails silently,
+// which is the same blind spot the chat had before.
+
+var awaitingEcho = [];
+
+/** Draw the message now, unread, before the server has it. */
+function drawUnsentBubble(m) {
+  if (!m.displayText && m.files.length === 0) return;
+  var voice = m.source === 'voice' ? 'voice' : null;
+  var div = addBubble(m.displayText, 'user', m.files, voice, Date.now());
+  if (!div) return;
+  // Unread, and without the "⋯" menu: unsending needs the server's id for the
+  // message, and there is no id until the server has it.
+  div.classList.add('pending-agent');
+  div.title = "Agent hasn't seen this yet";
+  appendAfterLoader(div);
+  m.bubble = div;
+  awaitingEcho.push(m);
+}
+
+/** The server's copy of a message this browser already drew. Returns true when
+    an existing bubble was taken over, so the caller draws nothing. */
+function adoptUnsentBubble(displayText, data) {
+  var m = awaitingEcho[0];
+  if (!m || !m.bubble || !m.bubble.isConnected) {
+    awaitingEcho.shift();
+    return false;
+  }
+  if (m.displayText !== displayText) return false;
+  awaitingEcho.shift();
+  // Only the server can tell which bare paths in the text are real files, so a
+  // message that turned out to contain some is redrawn rather than taken over —
+  // the links are baked into the markup at render time.
+  if (data.file_paths && data.file_paths.length > 0) {
+    m.bubble.remove();
+    return false;
+  }
+  var div = m.bubble;
+  // Now it has an id, so it can be unsent, and it re-anchors below the loader
+  // the same way a server-drawn bubble does.
+  div.dataset.msgId = data.id;
+  div.appendChild(createPendingMenuButton(div, data.id, displayText));
+  appendAfterLoader(div);
+  scrollToBottom(false);
+  return true;
+}
+
+/** Undo the most recent undrawn-yet-unsent message. The box locks while one is
+    in flight, so there is only ever the one to undo. */
+function restoreLastUnsent() {
+  if (awaitingEcho.length) restoreUnsentBubble(awaitingEcho[awaitingEcho.length - 1]);
+}
+
+/** The send is known to have failed: take the bubble back down and return the
+    words to the box, ahead of anything typed since, so nothing is lost. */
+function restoreUnsentBubble(m) {
+  var at = awaitingEcho.indexOf(m);
+  if (at >= 0) awaitingEcho.splice(at, 1);
+  if (m.bubble) m.bubble.remove();
+  if (!SEND_SOURCES[m.source].locksInput) return;
+  var typedSince = chatInput.value;
+  chatInput.value = m.rawText + (typedSince ? '\n' + typedSince : '');
+  chatInput.readOnly = false;
+  chatInput.classList.remove('sending');
+  sendBtn.disabled = false;
+  sendBtn.classList.remove('sending');
+  autoGrow();
+  updateSendButton();
+  chatInput.focus();
+}
+
 /** The chat now shows a message on its way: chips that were not chosen are
     frozen into the transcript, the loader appears, and the text box locks. */
 function freezeUi(m) {
   lockInput(m);
   freezeCurrentReplies(m.rawText);
   showLoading(); // hides quick replies via mutual exclusivity
+  drawUnsentBubble(m);
   pendingNotifyParent = true;
   if (m.notifyInterrupt) pendingInterrupt = true;
   return m;
@@ -1578,7 +1676,10 @@ function freezeUi(m) {
     all agree. Written out in full rather than kept as a helper anyone could
     call: a shortcut past the pipeline is how the three paths drifted apart. */
 function transmit(m) {
-  if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return m;
+  if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
+    restoreUnsentBubble(m);
+    return m;
+  }
   if (pendingAckId) {
     activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: m.text }));
     pendingAckId = null;
@@ -1607,10 +1708,7 @@ function submitUserMessage(rawText, source, files) {
     files: files || [],
     isInterrupt: false,
     notifyInterrupt: false,
-    handled: false,
-    // Set by a stage that claims the message but will still have the server
-    // broadcast it back — the caller must not empty the box before then.
-    awaitEcho: false
+    handled: false
   };
   for (var i = 0; i < SEND_PIPELINE.length && !m.handled; i++) m = SEND_PIPELINE[i](m);
   return m;
@@ -1754,7 +1852,10 @@ function maybeHandleClearPrefix(rawText) {
   setTimeout(function () {
     if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
       pendingClearResume = false;
-      addAgentMessage('Context cleared, but the chat connection dropped before the instruction was recorded. Type `check_messages` in the agent terminal to reconnect.', null, null, Date.now());
+      // The instruction never left the browser, so its bubble comes back down
+      // and the words go back in the box for the user to send again.
+      restoreLastUnsent();
+      addAgentMessage('Context cleared, but the chat connection dropped before the instruction was recorded — your message is back in the box. Type `check_messages` in the agent terminal to reconnect.', null, null, Date.now());
       enableInput();
       return;
     }
@@ -1807,23 +1908,17 @@ function handleSend() {
   }
   if (!text && fileRefs.length === 0) return;
 
-  var sent = submitUserMessage(text, 'typed', fileRefs);
-  if (sent.handled) {
-    // A route that keeps the message to itself sends nothing, so no broadcast
-    // will come back to empty the box — it has to be emptied here. The reset
-    // route is the exception: it does reach the server, just seconds later, and
-    // says so with awaitEcho.
-    if (!sent.awaitEcho) {
-      chatInput.value = '';
-      autoGrow();
-      updateSendButton();
-    }
-    return;
-  }
+  // Emptied before the message is submitted, not after: the pipeline draws the
+  // words as a bubble immediately, so the box has nothing left to hold — and a
+  // send that fails on the spot puts them back, which a later clear would wipe.
+  // The box stays locked until the server confirms.
+  chatInput.value = '';
+  autoGrow();
+  updateSendButton();
 
-  // The text itself stays in the box until the server echoes it back (see the
-  // userMessage case), which is what proves it was not lost. The attachments
-  // have gone with it, so their previews can go.
+  if (submitUserMessage(text, 'typed', fileRefs).handled) return;
+
+  // The attachments went with the message, so their previews can go.
   for (var j = 0; j < stagedFiles.length; j++) {
     if (stagedFiles[j].previewUrl) URL.revokeObjectURL(stagedFiles[j].previewUrl);
   }
@@ -3519,9 +3614,13 @@ function connect() {
         if (data.text || (data.files && data.files.length > 0)) {
           var isVoiceMsg = data.text && data.text.indexOf('\ud83c\udfa4') === 0;
           var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
-          // Pass the server-assigned ID so addBubble can mark this bubble
-          // "pending" until userMessagesConsumed clears it.
-          addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id, undefined, undefined, data.file_paths);
+          // This browser may have drawn the message already, on its way out \u2014
+          // then the server's copy only brings the id, and there is nothing to
+          // draw. Pass the id otherwise, so addBubble marks the bubble pending
+          // until userMessagesConsumed clears it.
+          if (!adoptUnsentBubble(displayText, data)) {
+            addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id, undefined, undefined, data.file_paths);
+          }
         }
         // Re-enable input and clear the text now that the message is confirmed
         chatInput.value = '';
