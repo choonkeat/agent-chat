@@ -1808,8 +1808,16 @@ function clearInstruction(text) {
 // them would answer a question that is no longer on screen. And a message
 // already starting with `/clear` is passed through untouched, since prefixing
 // it twice would leave the first `/clear` inside the instruction.
+//
+// And nothing is routed at all without an embedder. The reset is carried out by
+// asking the surrounding page to type into the agent's terminal, so a chat
+// opened on its own has no way to perform one — with the tick on by default,
+// routing there would turn every message into an error and the chat would not
+// work at all. A `/clear` typed by hand still says why it cannot: that is an
+// answer to something the user deliberately did.
 function clearRouteText(text, isInterrupt) {
   if (!getCtxOnly() || isClearCommand(text) || pendingClear || isInterrupt) return text;
+  if (window.parent === window) return text;
   if (normalizePhrase(text) === clearContextPhrase) return text;
   return clearPrefix + ' ' + text;
 }
@@ -2493,24 +2501,23 @@ function setMsgStyle(v) {
 // Ticked, every message takes the `/clear …` route: the agent is wiped, the
 // message is recorded, and the resumed agent reads the chat log back.
 //
-// The session decides what a browser that has never touched the box starts
-// with (`-conversation-context-only`, inlined as CTX_ONLY_DEFAULT), and the box
-// overrides it for this browser. That split exists because cookies ignore port
-// numbers: were this cookie-only, one tick would turn the reset on for every
-// agent-chat on the same host, including sessions started tomorrow. Throwing
-// away everything the agent worked out and did not write down is not something
-// to inherit by accident.
+// On unless switched off, and remembered for every chat in the browser — the
+// same reach as the message style, and for the same reason: it is how you want
+// to be talked to, not a property of one conversation. Measured over ten turns
+// of one session it held the context flat at ~40k while the same work unbroken
+// climbed past 335k.
 //
-// So the cookie stores '1' or '0', never an empty string — "off" and "never
-// answered" have to be told apart, and only the second defers to the session.
-// Its name carries SESSION_KEY for the same reason: the name is the only part
-// of a cookie that can tell two chats on one host apart.
+// The session names the starting position (`-conversation-context-only`,
+// inlined as CTX_ONLY_DEFAULT) and the box overrides it. So the cookie stores
+// '1' or '0', never an empty string: "off" and "never answered" have to be told
+// apart, and only the second defers to the session.
 
-var CTX_ONLY_COOKIE = 'agent-chat-ctx-only' +
-  (typeof SESSION_KEY !== 'undefined' && SESSION_KEY ? '-' + SESSION_KEY : '');
+var CTX_ONLY_COOKIE = 'agent-chat-ctx-only';
 
+/** No inlined answer means an older server, which predates the setting; the
+    current default is the right guess for it. */
 function ctxOnlyDefault() {
-  return typeof CTX_ONLY_DEFAULT !== 'undefined' && CTX_ONLY_DEFAULT === true;
+  return typeof CTX_ONLY_DEFAULT === 'undefined' || CTX_ONLY_DEFAULT === true;
 }
 
 function getCtxOnly() {

@@ -265,12 +265,11 @@ test.describe('/clear prefix', () => {
     }
   });
 
-  // The session decides what a browser that has never touched the box starts
-  // with. That is how swe-swe can hand out a context-only session without
-  // anyone ticking anything, and unticking still has to win — a default is a
-  // starting point, not a lock.
-  test('-conversation-context-only starts ticked, and unticking beats it', async ({ page }) => {
-    const server = await startServer(['-conversation-context-only']);
+  // On unless switched off. A browser that has never touched the box resets on
+  // every message, and unticking still has to win — a default is a starting
+  // position, not a lock.
+  test('starts ticked with no flag, and unticking beats it', async ({ page }) => {
+    const server = await startServer();
     try {
       const frame = await embed(page, server.url);
       await frame.locator('#btn-settings').click();
@@ -298,33 +297,75 @@ test.describe('/clear prefix', () => {
     }
   });
 
-  // Cookies ignore port numbers, so without the session key in the cookie's
-  // name one tick would arm every agent-chat on the host — including sessions
-  // started later, whose agents would start losing their memory unasked. The
-  // message-style cookie is deliberately shared this way; this one must not be.
-  test('the tick belongs to its own session, not to every chat in the browser', async ({ page }) => {
-    const armed = await startServer();
-    const other = await startServer();
+  test('-conversation-context-only=false starts unticked', async ({ page }) => {
+    const server = await startServer(['-conversation-context-only=false']);
     try {
-      await gotoRetry(page, armed.url);
-      await page.locator('#btn-settings').click();
-      await page.locator('#ctx-only-input').check();
-      await expect(page.locator('#ctx-only-input')).toBeChecked();
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await expect(frame.locator('#ctx-only-input')).not.toBeChecked();
 
-      // Same browser, different session: untouched.
-      await gotoRetry(page, other.url);
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('an ordinary message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect(frame.locator('.bubble.user', { hasText: 'an ordinary message' })).toBeVisible({ timeout: 10000 });
+      expect(await interrupts(page)).toHaveLength(0);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // The tick travels between sessions the way the message style does — it is
+  // how you want to be talked to, not a property of one conversation. Switching
+  // it off in one chat switches it off in the next.
+  test('the tick reaches every chat in the browser', async ({ page }) => {
+    const first = await startServer();
+    const second = await startServer();
+    try {
+      await gotoRetry(page, first.url);
+      await page.locator('#btn-settings').click();
+      await page.locator('#ctx-only-input').uncheck();
+      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
+
+      // Same browser, a different session started separately: also off.
+      await gotoRetry(page, second.url);
       await page.locator('#btn-settings').click();
       await expect(page.locator('#ctx-only-input')).not.toBeChecked();
 
-      // And the session that was ticked still is.
-      await gotoRetry(page, armed.url);
+      // Back on: the answer travels the other way too.
+      await page.locator('#ctx-only-input').check();
+      await gotoRetry(page, first.url);
       await page.locator('#btn-settings').click();
       await expect(page.locator('#ctx-only-input')).toBeChecked();
     } finally {
-      armed.proc.kill('SIGTERM');
-      other.proc.kill('SIGTERM');
-      fs.rmSync(armed.dir, { recursive: true, force: true });
-      fs.rmSync(other.dir, { recursive: true, force: true });
+      first.proc.kill('SIGTERM');
+      second.proc.kill('SIGTERM');
+      fs.rmSync(first.dir, { recursive: true, force: true });
+      fs.rmSync(second.dir, { recursive: true, force: true });
+    }
+  });
+
+  // The reset works by asking the surrounding page to type into the agent's
+  // terminal, so a chat opened on its own cannot perform one. With the tick on
+  // by default, routing there would turn every message into an error and the
+  // chat would not work at all — so outside an embedder the tick does nothing.
+  test('with no embedder the tick is inert and messages send normally', async ({ page }) => {
+    const server = await startServer();
+    try {
+      await gotoRetry(page, server.url);
+      await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 10000 });
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+      await page.locator('#btn-settings-done').click();
+
+      await page.locator('#chat-input').fill('hello with no parent frame');
+      await page.locator('#chat-input').press('Enter');
+
+      await expect(page.locator('.bubble.user', { hasText: 'hello with no parent frame' })).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('.bubble', { hasText: /parent frame not connected/i })).toHaveCount(0);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
     }
   });
 
@@ -366,7 +407,10 @@ test.describe('/clear prefix', () => {
       await frame.locator('#ctx-only-input').check();
       await frame.locator('#btn-settings-done').click();
 
-      const inner = page.frames().find((f) => f.url().startsWith(server.url));
+      // The embedded copy, not the page around it: setContent leaves the outer
+      // frame's URL pointing at the server too, and the routing deliberately
+      // does nothing in a frame with no embedder above it.
+      const inner = page.frames().find((f) => f !== page.mainFrame() && f.url().startsWith(server.url));
       const routed = await inner.evaluate(() => ({
         spoken: clearRouteText(VOICE_MARK + 'fix the logout bug', isInterruptPhrase('fix the logout bug', true)),
         runOn: clearRouteText(VOICE_MARK + 'stop, wrong file', isInterruptPhrase('stop, wrong file', true)),

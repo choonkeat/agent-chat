@@ -18,8 +18,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -59,13 +59,14 @@ var autocompleteTriggers string
 // -welcome-replies flag; set to "" to disable.
 var welcomeReplies []string
 
-// conversationContextOnly is this session's starting answer for the
-// "conversation context only" tick: every message resets the agent and points
-// it at the chat log. It belongs to the session rather than the browser because
-// cookies ignore port numbers — one tick would otherwise turn it on for every
-// agent-chat on the same host, including sessions started later. A browser that
-// has actually ticked or unticked the box keeps its own answer; this is only
-// what a browser that has never touched it starts with.
+// conversationContextOnly is what a browser that has never touched the
+// "conversation context only" box starts with: every message resets the agent
+// and points it at the chat log. On by default — it holds the context flat
+// across a session instead of letting it climb, and the conversation itself is
+// what the agent reads back. `-conversation-context-only=false` turns it off
+// for a session; a browser that has ticked or unticked the box keeps its own
+// answer either way, which is how the setting travels between sessions the way
+// the message style does.
 var conversationContextOnly bool
 
 // triggerMap is the resolved flat map of trigger character → URL.
@@ -223,7 +224,7 @@ func main() {
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
-	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "start with \"conversation context only\" on: every message resets the agent and points it at the chat log (a browser that has ticked or unticked the box keeps its own answer)")
+	ctxOnlyFlag := flag.Bool("conversation-context-only", true, "\"conversation context only\": every message resets the agent and points it at the chat log. On unless set to =false; a browser that has ticked or unticked the box keeps its own answer either way")
 	flag.Parse()
 
 	conversationContextOnly = *ctxOnlyFlag
@@ -394,10 +395,9 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
 	triggerMap = buildTriggerMap(autocompleteTriggers, autocompleteURL)
 	triggerCharsJSON, _ := json.Marshal(triggerChars(triggerMap))
-	// Filled in below, once the port is known — it is part of the config (see
-	// SESSION_KEY). Assigned before http.Serve starts, so the handler below
-	// never sees the empty string.
-	var indexPage string
+	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t;</script>",
+		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly)
+	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -423,19 +423,6 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 		return "", nil, fmt.Errorf("listen error: %w", err)
 	}
 	actualPort := ln.Addr().(*net.TCPAddr).Port
-
-	// SESSION_KEY names this chat apart from the others on the same machine, so
-	// a setting the browser stores for one session is not read back by another.
-	// Cookies ignore port numbers, which is why the port has to be written into
-	// the cookie's NAME rather than relied on to separate them. swe-swe gives
-	// each session a fixed AGENT_CHAT_PORT, so the key survives a reload and a
-	// restart; a session on a random port (port 0) gets a new key each start and
-	// falls back to whatever the session default says, which is the safe way
-	// round for a setting that throws context away.
-	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,SESSION_KEY=%q;</script>",
-		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, strconv.Itoa(actualPort))
-	indexPage = strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
-
 	go func() {
 		http.Serve(ln, mux)
 		// Server stopped — mark as not running so next call restarts it
