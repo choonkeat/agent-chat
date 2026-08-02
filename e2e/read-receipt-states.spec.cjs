@@ -8,10 +8,16 @@
 // "Send as interrupting") at the exact moment that escape hatch was needed.
 //
 // The fix keeps ONE unread state and moves the boundary: a bubble is
-// .pending-agent until the agent PROVES receipt (userMessagesRead, emitted on
-// its next agent-chat call). Draining the queue (userMessagesConsumed) proves
-// nothing, so it changes exactly one thing — data-handed-over, which hides
-// Delete, because an unsend can no longer pull the message back.
+// .pending-agent until receipt is established. That happens two ways, and both
+// are covered here:
+//
+//   1. The agent asks for the queue itself (check_messages). The call is
+//      executing, so the agent is alive at that instant — the drain IS the
+//      receipt and the bubble flips immediately.
+//   2. A wait parked inside a blocking send_message drains the queue. That
+//      waiter may be a zombie, so the bubble stays unread until the agent's
+//      NEXT agent-chat call proves it arrived. Meanwhile data-handed-over
+//      hides Delete, because an unsend can no longer pull the message back.
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
@@ -130,7 +136,7 @@ test.describe('Unread until proven read', () => {
     }
   });
 
-  test('a drain does not mark the bubble read; the agent\'s next call does', async ({ page }) => {
+  test('check_messages marks the bubble read on the spot', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -144,19 +150,51 @@ test.describe('Unread until proven read', () => {
     await expect(bubble).toHaveClass(/pending-agent/);
     await expect(bubble).toHaveAttribute('title', /agent/i);
     expect(await menuActionsFor(page, bubble)).toEqual(['delete', 'interrupt']);
+    const belowLoader = await page.evaluate(() => {
+      const loader = document.getElementById('loading-bubble');
+      const bubbles = Array.from(document.querySelectorAll('.bubble.user'));
+      const b = bubbles[bubbles.length - 1];
+      if (!loader || !b) return 'missing';
+      return (loader.compareDocumentPosition(b) & 4) ? 'after' : 'before';
+    });
+    expect(belowLoader).toBe('after');
     await page.screenshot({ path: 'test-results/screenshots/20-receipt-queued.png', fullPage: true });
 
-    // Handed over to a waiting request. This is where a dead request would
-    // land, so the bubble must still read as unread — same dim styling, same
-    // "⋯" menu, still below the loader.
+    // The agent asked for the queue itself, so it is provably alive right now:
+    // ONE call is enough — no second call, no lag.
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 
+    await expect(bubble).not.toHaveClass(/pending-agent/);
+    await expect(bubble).not.toHaveAttribute('title', /.*/);
+    await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(0);
+    await page.screenshot({ path: 'test-results/screenshots/22-receipt-read.png', fullPage: true });
+  });
+
+  test('a parked send_message drain leaves the bubble unread until the next call', async ({ page }) => {
+    const textarea = await setupPage(page, server.url);
+    const sendBtn = page.locator('#btn-send');
+
+    // Park a blocking send_message: deliberately NOT awaited, because it only
+    // returns once the user replies below. This is the waiter that a terminal
+    // break-out would turn into a zombie.
+    const parked = mcpCall(server.url, '/mcp', 'send_message', {
+      text: 'anything to add?',
+      first_quick_reply: 'No',
+    }).catch(() => {});
+    await page.waitForTimeout(SETTLE_MS);
+
+    await textarea.fill('handed to a parked waiter');
+    await sendBtn.click();
+    await page.waitForTimeout(SETTLE_MS);
+
+    const bubble = page.locator('.bubble.user', { hasText: 'handed to a parked waiter' });
+
+    // Handed over, but nothing has proven it arrived: still dim, still
+    // tooltipped, "⋯" intact — only Delete drops off.
     await expect(bubble).toHaveClass(/pending-agent/);
     await expect(bubble).toHaveAttribute('data-handed-over', '1');
     await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(1);
-    // Delete drops off — the message has left the queue an unsend would pull
-    // it from — but the interrupt recovery is exactly what is needed here.
     expect(await menuActionsFor(page, bubble)).toEqual(['interrupt']);
     const stillBelow = await page.evaluate(() => {
       const loader = document.getElementById('loading-bubble');
@@ -168,28 +206,31 @@ test.describe('Unread until proven read', () => {
     expect(stillBelow).toBe('after');
     await page.screenshot({ path: 'test-results/screenshots/21-receipt-handed-over.png', fullPage: true });
 
-    // The agent's next agent-chat call proves the delivery landed — only now
-    // does the bubble stop being pending.
+    // The agent's next agent-chat call is the proof.
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 
     await expect(bubble).not.toHaveClass(/pending-agent/);
-    await expect(bubble).not.toHaveAttribute('title', /.*/);
     await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(0);
-    await page.screenshot({ path: 'test-results/screenshots/22-receipt-read.png', fullPage: true });
+    await parked;
   });
 
   test('a reload mid-hand-over replays the bubble as unread, not read', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
+    // Hand over via a parked send_message — the one drain that does not prove
+    // itself — and never prove it.
+    const parked = mcpCall(server.url, '/mcp', 'send_message', {
+      text: 'anything to add?',
+      first_quick_reply: 'No',
+    }).catch(() => {});
+    await page.waitForTimeout(SETTLE_MS);
+
     await textarea.fill('survives a reload');
     await sendBtn.click();
     await page.waitForTimeout(SETTLE_MS);
-
-    // Hand over, but never prove it.
-    await mcpCall(server.url, '/mcp', 'check_messages');
-    await page.waitForTimeout(SETTLE_MS);
+    await parked;
 
     await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });

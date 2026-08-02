@@ -184,12 +184,39 @@ func keepaliveForRequest(ctx context.Context, req *mcp.CallToolRequest, message 
 // having to poll via check_messages. Returns text unchanged when the queue is
 // empty.
 func appendBargeIn(bus *EventBus, text string) string {
-	msgs := bus.DrainMessages()
+	// Proven: these messages leave on this call's return value, so the bubble
+	// goes read now rather than waiting for the agent's next call.
+	msgs := bus.DrainMessagesProven("", 0)
 	if len(msgs) == 0 {
 		return text
 	}
 	bus.SetLastVoice(isVoiceMessage(msgs))
 	return text + "\n\n---BARGE-IN---\nUser said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+}
+
+// userRespondedText is what every blocking tool hands back when the user
+// replies: the formatted messages, the do-not-echo guidance, and the reply
+// instructions in text or voice form.
+func userRespondedText(msgs []UserMessage) string {
+	return "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+}
+
+// waitForUserReply parks on the message queue until the user says something,
+// then formats it. THE reply path — send_message, send_verbal_reply and draw
+// all take it, so a reply to a drawing is an ordinary user message: it queues,
+// it carries attachments and the message-style template, it can be unsent, it
+// is redelivered if the call that was waiting for it died, and its bubble goes
+// through the same unread-until-proven states as any other.
+//
+// The caller must already be inside BeginBlockingWait, and must pass its own
+// tool name/ordinal so the consumed event points at the call that drained it.
+func waitForUserReply(ctx context.Context, bus *EventBus, toolName string, toolSeq int64) (string, error) {
+	msgs, err := bus.WaitForMessagesStamped(ctx, toolName, toolSeq)
+	if err != nil {
+		return "", fmt.Errorf("waiting for user message: %w", err)
+	}
+	bus.SetLastVoice(isVoiceMessage(msgs))
+	return userRespondedText(msgs), nil
 }
 
 // MessageParams are the parameters for the send_message tool.
@@ -395,12 +422,10 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		if bus.HasQueuedMessages() {
 			bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
-			msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_message", toolSeq)
+			text, err := waitForUserReply(waitCtx, bus, "send_message", toolSeq)
 			if err != nil {
-				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+				return nil, nil, err
 			}
-			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -413,13 +438,10 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_message"})
 
-		msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_message", toolSeq)
+		text, err := waitForUserReply(waitCtx, bus, "send_message", toolSeq)
 		if err != nil {
-			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+			return nil, nil, err
 		}
-
-		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -467,12 +489,10 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		// queued messages immediately — the replies would be stale.
 		if bus.HasQueuedMessages() {
 			bus.Publish(Event{Type: "verbalReply", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
-			msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_verbal_reply", toolSeq)
+			text, err := waitForUserReply(waitCtx, bus, "send_verbal_reply", toolSeq)
 			if err != nil {
-				return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+				return nil, nil, err
 			}
-			bus.SetLastVoice(isVoiceMessage(msgs))
-			text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 			if uiURL != "" {
 				text += "\nChat UI: " + uiURL
 			}
@@ -485,13 +505,10 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 		bus.Publish(Event{Type: "verbalReply", Text: params.Text, QuickReplies: replies, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_verbal_reply"})
 
-		msgs, err := bus.WaitForMessagesStamped(waitCtx, "send_verbal_reply", toolSeq)
+		text, err := waitForUserReply(waitCtx, bus, "send_verbal_reply", toolSeq)
 		if err != nil {
-			return nil, nil, fmt.Errorf("waiting for user message: %w", err)
+			return nil, nil, err
 		}
-
-		bus.SetLastVoice(isVoiceMessage(msgs))
-		text := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
@@ -579,12 +596,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		}
 
 		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
-		ack := bus.CreateAck()
 		bus.Publish(Event{
 			Type:         "draw",
 			Instructions: params.Instructions,
 			QuickReplies: replies,
-			AckID:        ack.ID,
 		})
 
 		waitCtx, endWait := bus.BeginBlockingWait(ctx)
@@ -592,17 +607,11 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		stopKeepalive := keepaliveForRequest(waitCtx, req, "waiting for viewer response")
 		defer stopKeepalive()
 
-		var result string
-		select {
-		case result = <-ack.Ch:
-		case <-waitCtx.Done():
-			return nil, nil, fmt.Errorf("draw cancelled: %w", waitCtx.Err())
-		}
-
-		text := "Viewer acknowledged."
-		if result != "ack" && len(result) > 4 {
-			msg := result[4:] // strip "ack:" prefix
-			text = "Viewer responded: " + msg + "\n\n(Reply to user in chat when done)"
+		// The same wait send_message uses. A tap on one of these replies is an
+		// ordinary user message, not a private acknowledgement.
+		text, err := waitForUserReply(waitCtx, bus, "draw", 0)
+		if err != nil {
+			return nil, nil, err
 		}
 
 		if uiURL != "" {
@@ -687,9 +696,10 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		// Tick per call (empty or not) so the ordinal stays aligned with the
 		// .jsonl-side count of check_messages tool_use entries.
 		toolSeq := checkMessagesCount.Add(1)
-		// Prove the PREVIOUS hand-over before draining: the fresh batch below
-		// re-registers as unproven, and proving it here would mark bubbles read
-		// that this very call is only now handing over.
+		// Promote the PREVIOUS hand-over (a batch a parked send_message drained,
+		// which only a later call like this one can vouch for). The fresh batch
+		// below proves itself: DrainMessagesProven marks it read on the spot,
+		// because it leaves on this call's return value.
 		bus.ProveDelivery()
 		bus.CancelActiveWait()
 		// Capture limbo BEFORE draining — a non-empty drain overwrites it.
@@ -697,7 +707,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		// died in transit, this is the recovery path; if not, the sentinel
 		// framing tells the agent to ignore the duplicate.
 		limbo := bus.Limbo()
-		fresh := bus.DrainMessagesStamped("check_messages", toolSeq)
+		fresh := bus.DrainMessagesProven("check_messages", toolSeq)
 		if len(fresh) == 0 {
 			// Empty drain publishes no userMessagesConsumed event, so record a
 			// marker to keep the on-disk count aligned with the agent's .jsonl.
@@ -734,7 +744,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 				IsError: true,
 			}, nil, nil
 		}
-		events, _ := bus.History()
+		events := bus.History()
 		// Whether the index needs rewriting is decided against the name the
 		// file had BEFORE the rename: only an export already in the manifest
 		// (i.e. previously closed out, and probably committed) would be left
@@ -775,7 +785,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 				IsError: true,
 			}, nil, nil
 		}
-		events, _ := bus.History()
+		events := bus.History()
 		paths, err := chatStream.CloseOut(params.Title, events)
 		if err != nil {
 			return &mcp.CallToolResult{
@@ -861,7 +871,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 			rootDir = filepath.Join(cwd, "agent-chats")
 		}
 
-		events, _ := bus.History()
+		events := bus.History()
 		mdPath, warnings, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", time.Now())
 		if err != nil {
 			return nil, nil, err

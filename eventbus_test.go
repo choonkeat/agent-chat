@@ -450,6 +450,79 @@ func TestPublishConsumedUserMessageEmitsConsumedThenRead(t *testing.T) {
 	}
 }
 
+// --- drains that are their own proof ---
+//
+// The deferred promotion above exists for ONE shape: a wait parked inside a
+// blocking send_message, which a client-side break-out turns into a zombie that
+// still drains the queue. A drain that happens inline — check_messages, or the
+// barge-in appended to a returning send_progress — cannot be in that state: the
+// call is executing, so the agent is provably alive at that instant. Deferring
+// those to the next tool call only adds visible lag to every bubble.
+
+// check_messages hands the batch straight back to a live agent, so consumed and
+// read fire together and nothing is left for a later call to promote.
+func TestDrainMessagesProvenMarksReadImmediately(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.ReceiveUserMessage("hello", nil, "")
+
+	msgs := bus.DrainMessagesProven("check_messages", 1)
+	if len(msgs) != 1 || msgs[0].ID != id {
+		t.Fatalf("drained: %+v, want the one message %s", msgs, id)
+	}
+
+	types := eventTypesOf(bus)
+	want := []string{"userMessage", "userMessagesConsumed", "userMessagesRead"}
+	if len(types) != len(want) {
+		t.Fatalf("event types: got %v, want %v", types, want)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("event types: got %v, want %v", types, want)
+		}
+	}
+	reads := readEventIDs(bus)
+	if len(reads) != 1 || len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("read IDs: got %v, want [[%s]]", reads, id)
+	}
+
+	// Nothing left unproven: the agent's next tool call must add no receipt.
+	bus.ProveDelivery()
+	if reads := readEventIDs(bus); len(reads) != 1 {
+		t.Fatalf("ProveDelivery re-published a receipt: %v", reads)
+	}
+}
+
+// The stamp still rides the consumed event — /api/fork resolves a bubble back
+// to the check_messages call that drained it.
+func TestDrainMessagesProvenKeepsToolStamp(t *testing.T) {
+	bus := NewEventBus()
+	bus.ReceiveUserMessage("hi", nil, "")
+	bus.DrainMessagesProven("check_messages", 7)
+
+	for _, e := range bus.EventsSince(0) {
+		if e.Type != "userMessagesConsumed" {
+			continue
+		}
+		if e.AgentToolName != "check_messages" || e.AgentToolSeq != 7 {
+			t.Fatalf("consumed stamp: got %s/%d, want check_messages/7", e.AgentToolName, e.AgentToolSeq)
+		}
+		return
+	}
+	t.Fatal("no userMessagesConsumed event logged")
+}
+
+// An empty queue publishes nothing at all — no consumed event, and no receipt
+// for bubbles an earlier call already promoted.
+func TestDrainMessagesProvenOnEmptyQueueIsSilent(t *testing.T) {
+	bus := NewEventBus()
+	if msgs := bus.DrainMessagesProven("check_messages", 1); msgs != nil {
+		t.Fatalf("empty drain returned %+v", msgs)
+	}
+	if types := eventTypesOf(bus); len(types) != 0 {
+		t.Fatalf("empty proven drain published %v", types)
+	}
+}
+
 // A restart is not evidence of a live disconnect. Old hand-overs restored from
 // the log must not sit unproven, or a later tool call would emit receipts for
 // historic bubbles the browser has long since rendered as read.

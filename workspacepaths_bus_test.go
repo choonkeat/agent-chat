@@ -147,7 +147,7 @@ func TestLogUserMessageAnnotatesFilePaths(t *testing.T) {
 
 	// LogUserMessage appends without a Seq, so EventsSince(0) skips it —
 	// History is the accessor that sees the whole log.
-	events, _ := eb.History()
+	events := eb.History()
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
