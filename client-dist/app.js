@@ -1529,11 +1529,15 @@ function detectInterrupt(m) {
 }
 
 /** `/clear …`, typed or implied by "conversation context only". Claims the
-    message: that route wipes, records and resumes on its own. */
+    message: that route wipes, records and resumes on its own.
+
+    Attachments come along. An attachment is already uploaded by the time a
+    message is sent, so what travels is its path — the same thing that rides an
+    ordinary send, and the same thing the server appends to the agent's copy of
+    the message. There is nothing about it the reset cannot carry. */
 function routeClearPrefix(m) {
-  if (m.files.length > 0) return m;
   var routed = clearRouteText(m.text, m.isInterrupt);
-  if (!maybeHandleClearPrefix(routed)) return m;
+  if (!maybeHandleClearPrefix(routed, m.files)) return m;
   m.handled = true;
   // This route does not reach the server for a couple of seconds — the terminal
   // has to be typed into and left to settle first — and the bubble is only
@@ -1542,7 +1546,9 @@ function routeClearPrefix(m) {
   // nowhere at all for two seconds, which reads as having lost it. The
   // userMessage broadcast empties and unlocks the box, exactly as it does for
   // an ordinary send.
-  if (window.parent !== window && clearInstruction(routed)) {
+  // Files with no words count: an attachment sent on its own is still a message
+  // the server will echo, so it needs its bubble drawn now like any other.
+  if (window.parent !== window && (clearInstruction(routed) || m.files.length > 0)) {
     // What the server will send back is the instruction with the `/clear `
     // gone, so that — not the routed text — is what the bubble must show.
     m.displayText = stripVoiceMark(clearInstruction(routed));
@@ -1836,9 +1842,10 @@ function clearRouteText(text, isInterrupt) {
 // sends the agent to `check_messages` for the instruction itself; see
 // typeClearResumeLine for why exactly one of the two carriers may be the
 // instruction.
-function maybeHandleClearPrefix(rawText) {
+function maybeHandleClearPrefix(rawText, files) {
   if (!isClearCommand(rawText)) return false;
   var instruction = clearInstruction(rawText);
+  files = files || [];
   if (window.parent === window) {
     addBubble(instruction || rawText, 'user', null, voiceMode ? 'voice' : null);
     addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
@@ -1868,6 +1875,7 @@ function maybeHandleClearPrefix(rawText) {
       return;
     }
     var msg = { type: 'clear', text: instruction };
+    if (files.length > 0) msg.files = files;
     var tpl = getMsgStyle();
     if (tpl) msg.template = tpl;
     activeWs.send(JSON.stringify(msg));
@@ -1924,9 +1932,11 @@ function handleSend() {
   autoGrow();
   updateSendButton();
 
-  if (submitUserMessage(text, 'typed', fileRefs).handled) return;
+  submitUserMessage(text, 'typed', fileRefs);
 
-  // The attachments went with the message, so their previews can go.
+  // The attachments went with the message, so their previews can go. Cleared
+  // whichever route took the message: the reset route carries attachments too,
+  // and leaving them staged would send them a second time with the next one.
   for (var j = 0; j < stagedFiles.length; j++) {
     if (stagedFiles[j].previewUrl) URL.revokeObjectURL(stagedFiles[j].previewUrl);
   }
@@ -2501,11 +2511,12 @@ function setMsgStyle(v) {
 // Ticked, every message takes the `/clear …` route: the agent is wiped, the
 // message is recorded, and the resumed agent reads the chat log back.
 //
-// On unless switched off, and remembered for every chat in the browser — the
-// same reach as the message style, and for the same reason: it is how you want
-// to be talked to, not a property of one conversation. Measured over ten turns
-// of one session it held the context flat at ~40k while the same work unbroken
-// climbed past 335k.
+// Off until switched on, and once switched, remembered for every chat in the
+// browser — the same reach as the message style, and for the same reason: it is
+// how you want to be talked to, not a property of one conversation. Measured
+// over ten turns of one session it held the context flat at ~40k while the same
+// work unbroken climbed past 335k, but wiping the agent on every message is a
+// big enough change to ask for rather than inherit.
 //
 // The session names the starting position (`-conversation-context-only`,
 // inlined as CTX_ONLY_DEFAULT) and the box overrides it. So the cookie stores
@@ -2517,7 +2528,7 @@ var CTX_ONLY_COOKIE = 'agent-chat-ctx-only';
 /** No inlined answer means an older server, which predates the setting; the
     current default is the right guess for it. */
 function ctxOnlyDefault() {
-  return typeof CTX_ONLY_DEFAULT === 'undefined' || CTX_ONLY_DEFAULT === true;
+  return typeof CTX_ONLY_DEFAULT !== 'undefined' && CTX_ONLY_DEFAULT === true;
 }
 
 function getCtxOnly() {

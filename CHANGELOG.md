@@ -36,30 +36,37 @@ All notable changes to agent-chat are documented in this file.
   sequence above without the prefix. The agent is reset before each message and
   comes back pointed at the chat log, so it knows only what the conversation
   actually says and nothing it worked out and never wrote down.
-  Four messages keep their ordinary meaning even when it is on: an interrupt
+  Three messages keep their ordinary meaning even when it is on: an interrupt
   (`stop` and friends), because wiping an agent is not what asking it to stop
   means; `clear context` and the yes/no answering it, which are a reset of their
-  own and would otherwise answer a question no longer on screen; anything
+  own and would otherwise answer a question no longer on screen; and anything
   already starting with `/clear`, since prefixing twice buries the first one in
-  the instruction; and any message carrying an attachment, because the
-  wipe-and-resume sequence has no way to hand files over.
-  Typed, tapped and spoken messages are all covered. A spoken one keeps its 🎤
+  the instruction.
+  Typed, tapped and spoken messages are all covered, attachments included: a
+  file is uploaded before the message is sent, so what travels is its path —
+  the same thing an ordinary send carries and the same thing the server appends
+  to the agent's copy — and the `clear` frame has carried a `files` field since
+  the day it was written. It was the browser that never filled it in, which
+  left a file-carrying message quietly keeping the context every other message
+  had just dropped. A spoken one keeps its 🎤
   in the recorded instruction — with the context gone that marker is all the
   returning agent has to tell it is being spoken to.
-  **On by default, and remembered for every chat in the browser** — the same
-  reach as the message style, and for the same reason: it is how you want to be
-  talked to, not a property of one conversation. Measured across ten turns of a
-  real session it held the context flat at ~40k while the same work unbroken
-  climbed past 335k — 56.6% fewer tokens read, ~45% less billed.
-  `-conversation-context-only=false` gives a session a different starting
-  position; the box overrides it either way, because a default is a starting
-  point and not a lock. The panel says how far each of its two settings reaches.
+  **Off by default, and once ticked, remembered for every chat in the browser** —
+  the same reach as the message style, and for the same reason: it is how you
+  want to be talked to, not a property of one conversation. Measured across ten
+  turns of a real session it held the context flat at ~40k while the same work
+  unbroken climbed past 335k — 56.6% fewer tokens read, ~45% less billed — but
+  resetting the agent on every message is a large enough change to ask for
+  rather than inherit. `-conversation-context-only` gives a session a different
+  starting position; the box overrides it either way, because a default is a
+  starting point and not a lock. The panel says how far each of its two settings
+  reaches.
   **Nothing is routed without an embedder.** The reset is carried out by asking
   the surrounding page to type into the agent's terminal, so a chat opened on
-  its own cannot perform one — and with the tick on by default, routing there
-  would have turned every message into "parent frame not connected" and broken
-  the chat outright. A `/clear` typed by hand still explains itself: that is an
-  answer to something the user deliberately did.
+  its own cannot perform one — routing there would have turned every message
+  into "parent frame not connected" and broken the chat outright. A `/clear`
+  typed by hand still explains itself: that is an answer to something the user
+  deliberately did.
 - Every user message now travels one pipeline — `markSource | detectInterrupt |
   routeClearPrefix | routeClearContext | freezeUi | transmit` — entered only
   through `submitUserMessage(text, source)`. The three ways of sending used to

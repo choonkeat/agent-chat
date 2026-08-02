@@ -61,12 +61,12 @@ var welcomeReplies []string
 
 // conversationContextOnly is what a browser that has never touched the
 // "conversation context only" box starts with: every message resets the agent
-// and points it at the chat log. On by default — it holds the context flat
-// across a session instead of letting it climb, and the conversation itself is
-// what the agent reads back. `-conversation-context-only=false` turns it off
-// for a session; a browser that has ticked or unticked the box keeps its own
-// answer either way, which is how the setting travels between sessions the way
-// the message style does.
+// and points it at the chat log. Off by default — resetting the agent on every
+// message is a large change to how a session behaves, so it is something you
+// switch on, not something that happens to you. `-conversation-context-only`
+// turns it on for a session; a browser that has ticked or unticked the box
+// keeps its own answer either way, which is how the setting travels between
+// sessions the way the message style does.
 var conversationContextOnly bool
 
 // triggerMap is the resolved flat map of trigger character → URL.
@@ -224,7 +224,7 @@ func main() {
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
-	ctxOnlyFlag := flag.Bool("conversation-context-only", true, "\"conversation context only\": every message resets the agent and points it at the chat log. On unless set to =false; a browser that has ticked or unticked the box keeps its own answer either way")
+	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; a browser that has ticked or unticked the box keeps its own answer either way")
 	flag.Parse()
 
 	conversationContextOnly = *ctxOnlyFlag
