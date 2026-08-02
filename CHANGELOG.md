@@ -73,6 +73,16 @@ All notable changes to agent-chat are documented in this file.
   interrupts at all, and whether there is a text box to lock.
 
 ### Fixes
+- A message sent with "conversation context only" on vanished for about two
+  seconds. The reset does not reach the server until the terminal has been typed
+  into and left to settle, and the bubble is drawn only when the server sends
+  the message back — but the box emptied on Enter, so in between the message
+  existed nowhere on screen and read as lost. The words now stay in the box,
+  uneditable, until the bubble exists, which is what an ordinary send has always
+  done. A bare `/clear` records nothing and so still clears the box at once.
+  Tapping a chip with the tick on also froze the chip that was chosen along with
+  the unchosen ones: the freeze matched against the routed `/clear …` text,
+  which matches no chip. It matches the instruction now.
 - A reset left the browser holding the reply slip (`pendingAckId`) of the agent
   it had just wiped. The server cancels that parked wait, so the next message
   went down the ack branch and was never queued for the agent that came back —
