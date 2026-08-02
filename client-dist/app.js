@@ -2361,19 +2361,37 @@ function setMsgStyle(v) {
 }
 
 // --- Conversation context only ---
-// Ticked, every typed message takes the `/clear …` route: the agent is wiped,
-// the message is recorded, and the resumed agent reads the chat log back. Off
-// unless the cookie says otherwise — this throws away everything the agent has
-// worked out that is not written down in the chat, so it is never the default.
+// Ticked, every message takes the `/clear …` route: the agent is wiped, the
+// message is recorded, and the resumed agent reads the chat log back.
+//
+// The session decides what a browser that has never touched the box starts
+// with (`-conversation-context-only`, inlined as CTX_ONLY_DEFAULT), and the box
+// overrides it for this browser. That split exists because cookies ignore port
+// numbers: were this cookie-only, one tick would turn the reset on for every
+// agent-chat on the same host, including sessions started tomorrow. Throwing
+// away everything the agent worked out and did not write down is not something
+// to inherit by accident.
+//
+// So the cookie stores '1' or '0', never an empty string — "off" and "never
+// answered" have to be told apart, and only the second defers to the session.
+// Its name carries SESSION_KEY for the same reason: the name is the only part
+// of a cookie that can tell two chats on one host apart.
 
-var CTX_ONLY_COOKIE = 'agent-chat-ctx-only';
+var CTX_ONLY_COOKIE = 'agent-chat-ctx-only' +
+  (typeof SESSION_KEY !== 'undefined' && SESSION_KEY ? '-' + SESSION_KEY : '');
+
+function ctxOnlyDefault() {
+  return typeof CTX_ONLY_DEFAULT !== 'undefined' && CTX_ONLY_DEFAULT === true;
+}
 
 function getCtxOnly() {
-  return getCookie(CTX_ONLY_COOKIE) === '1';
+  var raw = getCookie(CTX_ONLY_COOKIE);
+  if (raw !== '1' && raw !== '0') return ctxOnlyDefault();
+  return raw === '1';
 }
 
 function setCtxOnly(on) {
-  writeStyleCookie(CTX_ONLY_COOKIE, on ? '1' : '');
+  writeStyleCookie(CTX_ONLY_COOKIE, on ? '1' : '0');
 }
 
 function writeStyleCookie(name, value) {

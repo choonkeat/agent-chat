@@ -18,7 +18,7 @@
       </div>
       <div id="settings-panel" hidden>
         <div id="settings-panel-inner">
-          <div class="settings-title">Message style</div>
+          <div class="settings-title">Message style <span class="settings-scope">every chat in this browser</span></div>
           <p class="settings-hint">Prepended to every message before the agent sees it — your chat bubbles stay unchanged. Tick as many styles as you like; your message always goes at the bottom.</p>
           <div id="settings-presets">
             <button type="button" class="preset-btn" data-preset="concise" aria-pressed="false">Concise</button>
@@ -36,7 +36,7 @@
           <label class="settings-check">
             <input type="checkbox" id="ctx-only-input">
             <span>
-              <strong>Conversation context only (experimental)</strong>
+              <strong>Conversation context only (experimental) <span class="settings-scope">this chat only</span></strong>
               <em>Every message — typed, tapped or spoken — resets the agent first and points it at this chat's log, exactly as if you had started it with <code>/clear </code>. The agent then knows only what this conversation says. Messages with an attachment still send the ordinary way.</em>
             </span>
           </label>

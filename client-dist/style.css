@@ -191,6 +191,20 @@ body {
   border-color: #2563eb;
 }
 
+/* How far a setting reaches. Two settings in one panel remember themselves at
+   different scopes, and without saying so the panel looks like it has one. */
+.settings-scope {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 10px;
+  font-size: 0.62rem;
+  font-weight: 400;
+  white-space: nowrap;
+  color: var(--text-muted);
+  vertical-align: 1px;
+}
+
 /* Not a style — it changes what happens on send — so it sits below the template
    box with its own explanation instead of joining the pills. */
 .settings-check {
