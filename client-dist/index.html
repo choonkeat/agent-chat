@@ -33,6 +33,13 @@
             <button type="button" id="btn-style-save-confirm">Save</button>
             <button type="button" id="btn-style-save-cancel">Cancel</button>
           </div>
+          <label class="settings-check">
+            <input type="checkbox" id="ctx-only-input">
+            <span>
+              <strong>Conversation context only (experimental)</strong>
+              <em>Every message — typed, tapped or spoken — resets the agent first and points it at this chat's log, exactly as if you had started it with <code>/clear </code>. The agent then knows only what this conversation says. Messages with an attachment still send the ordinary way.</em>
+            </span>
+          </label>
           <div class="settings-row">
             <span id="settings-status"></span>
             <span class="settings-actions">
