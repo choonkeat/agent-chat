@@ -3,6 +3,9 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -724,5 +727,117 @@ func TestChatLogStreamCloseOutAfterOptout(t *testing.T) {
 	}
 	if _, err := s.CloseOut("Some Title", nil); err == nil {
 		t.Fatal("CloseOut after Optout succeeded, want error")
+	}
+}
+
+// TestChatLogStreamSurvivesClear: a `/clear …` wipes the agent's memory but not
+// the chat log — the marker and the post-clear instruction append to the SAME
+// file, after the pre-clear turns. This is the whole premise of the feature:
+// the file, not the message queue, is what carries an instruction across the
+// wipe, so the resumed agent can read its own past out of it.
+func TestChatLogStreamSurvivesClear(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-clear", "", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	pathBefore := s.MDPath()
+
+	s.HandleEvent(Event{Type: "userMessage", Text: "fix the login bug", Timestamp: 1000})
+	s.HandleEvent(Event{Type: "agentMessage", Text: "on it", Timestamp: 4000})
+	before, err := os.ReadFile(pathBefore)
+	if err != nil {
+		t.Fatalf("read pre-clear md: %v", err)
+	}
+
+	// The wipe happens here. Agent-chat then records the boundary and the
+	// stripped instruction, in that order.
+	s.HandleEvent(Event{Type: "agentMessage", Text: clearMarkerText, Timestamp: 8000})
+	s.HandleEvent(Event{Type: "userMessage", Text: "now do the logout bug", Timestamp: 9000})
+
+	if got := s.MDPath(); got != pathBefore {
+		t.Errorf("MDPath changed across clear: %s -> %s", pathBefore, got)
+	}
+	after, err := os.ReadFile(pathBefore)
+	if err != nil {
+		t.Fatalf("read post-clear md: %v", err)
+	}
+	if len(after) <= len(before) {
+		t.Errorf("file did not grow across clear: %d -> %d bytes", len(before), len(after))
+	}
+	if !strings.HasPrefix(string(after), string(before)) {
+		t.Error("post-clear file is not an append to the pre-clear file")
+	}
+	for _, want := range []string{"fix the login bug", "on it", clearMarkerText, "now do the logout bug"} {
+		if !strings.Contains(string(after), want) {
+			t.Errorf("post-clear md missing %q", want)
+		}
+	}
+	// Order matters: a future "read only since the last clear" mode seeks the
+	// marker, so the instruction must sit after it, not before.
+	if strings.Index(string(after), clearMarkerText) > strings.Index(string(after), "now do the logout bug") {
+		t.Error("clear marker written after the instruction it precedes")
+	}
+}
+
+// chatlogPathJSON drives handleChatlogPath and returns the reported path.
+func chatlogPathJSON(t *testing.T) string {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	handleChatlogPath(rr, httptest.NewRequest(http.MethodGet, "/api/chatlog-path", nil))
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /api/chatlog-path: %v", err)
+	}
+	return body.Path
+}
+
+// TestHandleChatlogPath: the browser asks for the chat-log filename at /clear
+// time, not at connect time, because set_chat_title renames the file
+// mid-session. The answer must be relative to the working directory (that is
+// how the resumed agent will open it) and must track renames immediately — a
+// stale name points the agent at a file that no longer exists.
+func TestHandleChatlogPath(t *testing.T) {
+	prev := chatStream
+	defer func() { chatStream = prev }()
+
+	// Export disabled: there is no file to resume from, and saying so is the
+	// only honest answer — the caller falls back to a plain check_messages.
+	chatStream = nil
+	if got := chatlogPathJSON(t); got != "" {
+		t.Errorf(`path with no stream = %q, want ""`, got)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(cwd)
+
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(filepath.Join(tmp, "agent-chats"), "sess-path", "", "claude", "v1 (abc)", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	chatStream = s
+
+	want := filepath.Join("agent-chats", "2026-07-18-01-untitled.md")
+	if got := chatlogPathJSON(t); got != want {
+		t.Errorf("path = %q, want %q (relative to cwd)", got, want)
+	}
+
+	if err := s.SetTitle("Context Reset", nil); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	want = filepath.Join("agent-chats", "2026-07-18-01-context-reset.md")
+	if got := chatlogPathJSON(t); got != want {
+		t.Errorf("path after rename = %q, want %q", got, want)
 	}
 }

@@ -4,6 +4,36 @@ All notable changes to agent-chat are documented in this file.
 
 ## [Unreleased]
 
+### Features
+- `/clear <instruction>` in the chat input resets the agent's context and hands
+  it the rest of the message as its next instruction. The `/clear ` prefix is
+  stripped; what remains is recorded in the chat and the streaming chat log, and
+  the agent comes back pointed at that log file — so the conversation survives
+  the reset even though the agent's own memory does not. A bare `/clear` resets
+  with no follow-up.
+  **The order is the design: wipe, then record, then point at the file.**
+  Recording first lets a still-running agent consume the instruction and then be
+  erased holding it. Pointing the resumed agent at the message queue instead of
+  the file goes silent in two ways — a `/clear` does not release agent-chat's
+  blocking wait (Claude Code sends no `notifications/cancelled` on a terminal
+  break-out), so the parked waiter swallows the instruction into a dead request,
+  and the spare copy that exists for exactly that case is discarded by the first
+  `send_progress` the fresh agent makes. `check_messages` then returns empty and
+  tells the agent to stay quiet, leaving a chat that looks alive and answers
+  nothing. The chat log has neither failure mode.
+  The filename is read from the new `GET /api/chatlog-path` at clear time, not
+  cached at connect, because `set_chat_title` renames the file mid-session. A
+  `⟪ context cleared ⟫` marker is written at each reset for a future
+  read-only-since-the-last-clear mode. Requires `AGENT_CHAT_EXPORT_DIR`; without
+  it the reset still happens, says so in the chat, and starts blank. See
+  `docs/adr/2026-08-02-clear-prefix-context-reset.md`.
+
+### Fixes
+- A message consisting of exactly a slash-triggered word (e.g. a bare `/clear`)
+  could not be sent: the autocomplete trigger only dies at the first space, so
+  the dropdown was still open and swallowed the Enter — with nothing selectable
+  in a "No results" dropdown, the message simply never sent.
+
 ## [0.8.22] — 2026-08-01
 
 ### Features
