@@ -46,19 +46,20 @@ All notable changes to agent-chat are documented in this file.
   Typed, tapped and spoken messages are all covered. A spoken one keeps its 🎤
   in the recorded instruction — with the context gone that marker is all the
   returning agent has to tell it is being spoken to.
-  **The tick belongs to the session, not to the browser.** New
-  `-conversation-context-only` decides what a browser that has never touched the
-  box starts with, so an embedder can hand out a context-only session with
-  nothing to tick; the box then overrides it for that browser, because a default
-  is a starting point and not a lock. The cookie's name carries the session's
-  port (`SESSION_KEY`) for the same reason: cookies ignore port numbers, so a
-  plain name would have armed every agent-chat on the host — including sessions
-  started later, whose agents would begin losing their memory unasked. The
-  message-style cookie is deliberately shared across sessions that way; this one
-  must not be. A session on a random port gets a new key each start and falls
-  back to the session default, which is the safe way round for a setting that
-  throws context away. The panel now says which of its two settings reaches
-  every chat in the browser and which reaches only this one.
+  **On by default, and remembered for every chat in the browser** — the same
+  reach as the message style, and for the same reason: it is how you want to be
+  talked to, not a property of one conversation. Measured across ten turns of a
+  real session it held the context flat at ~40k while the same work unbroken
+  climbed past 335k — 56.6% fewer tokens read, ~45% less billed.
+  `-conversation-context-only=false` gives a session a different starting
+  position; the box overrides it either way, because a default is a starting
+  point and not a lock. The panel says how far each of its two settings reaches.
+  **Nothing is routed without an embedder.** The reset is carried out by asking
+  the surrounding page to type into the agent's terminal, so a chat opened on
+  its own cannot perform one — and with the tick on by default, routing there
+  would have turned every message into "parent frame not connected" and broken
+  the chat outright. A `/clear` typed by hand still explains itself: that is an
+  answer to something the user deliberately did.
 - Every user message now travels one pipeline — `markSource | detectInterrupt |
   routeClearPrefix | routeClearContext | freezeUi | transmit` — entered only
   through `submitUserMessage(text, source)`. The three ways of sending used to
