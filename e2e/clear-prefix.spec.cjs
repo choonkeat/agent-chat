@@ -162,6 +162,183 @@ test.describe('/clear prefix', () => {
     }
   });
 
+  // "Conversation context only" is the same sequence without the prefix: tick
+  // it once in the settings panel and every ordinary message wipes, records and
+  // resumes. Worth pinning separately from the typed prefix, because the two
+  // reach maybeHandleClearPrefix by different routes and the checkbox is the
+  // one with no visible `/clear` to tell the user what it did.
+  test('conversation-context-only routes an ordinary message through the clear sequence', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      await frame.locator('#chat-input').fill('now fix the logout bug');
+      await frame.locator('#chat-input').press('Enter');
+
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+
+      // The bubble is the user's own words — the prefix the checkbox stands in
+      // for must not leak into what was said.
+      const userBubble = frame.locator('.bubble.user', { hasText: 'now fix the logout bug' });
+      await expect(userBubble).toBeVisible({ timeout: 10000 });
+      await expect(userBubble).not.toContainText('/clear');
+
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+      const [, resume] = await interrupts(page);
+      expect(resume).toMatch(/^resume agent-chats\//);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // The session decides what a browser that has never touched the box starts
+  // with. That is how swe-swe can hand out a context-only session without
+  // anyone ticking anything, and unticking still has to win — a default is a
+  // starting point, not a lock.
+  test('-conversation-context-only starts ticked, and unticking beats it', async ({ page }) => {
+    const server = await startServer(['-conversation-context-only']);
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await expect(frame.locator('#ctx-only-input')).toBeChecked();
+
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('first message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+
+      // Untick: this browser has now answered, and its answer outranks the
+      // session's opening position.
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').uncheck();
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('second message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect(frame.locator('.bubble.user', { hasText: 'second message' })).toBeVisible({ timeout: 10000 });
+      // Still the two from the first message — no third wipe.
+      expect(await interrupts(page)).toHaveLength(2);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // Cookies ignore port numbers, so without the session key in the cookie's
+  // name one tick would arm every agent-chat on the host — including sessions
+  // started later, whose agents would start losing their memory unasked. The
+  // message-style cookie is deliberately shared this way; this one must not be.
+  test('the tick belongs to its own session, not to every chat in the browser', async ({ page }) => {
+    const armed = await startServer();
+    const other = await startServer();
+    try {
+      await gotoRetry(page, armed.url);
+      await page.locator('#btn-settings').click();
+      await page.locator('#ctx-only-input').check();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+
+      // Same browser, different session: untouched.
+      await gotoRetry(page, other.url);
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
+
+      // And the session that was ticked still is.
+      await gotoRetry(page, armed.url);
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+    } finally {
+      armed.proc.kill('SIGTERM');
+      other.proc.kill('SIGTERM');
+      fs.rmSync(armed.dir, { recursive: true, force: true });
+      fs.rmSync(other.dir, { recursive: true, force: true });
+    }
+  });
+
+  // A tapped chip is a message too. It reaches the send path by its own route,
+  // so the tick has to be honoured there separately or half the chat quietly
+  // behaves differently from the other half.
+  test('conversation-context-only routes a quick-reply chip through the clear sequence', async ({ page }) => {
+    const server = await startServer(['-welcome-replies', 'Give me an overview']);
+    try {
+      const frame = await embed(page, server.url);
+      await expect(frame.locator('#quick-replies .chip')).toHaveCount(1, { timeout: 5000 });
+
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      await frame.locator('#quick-replies .chip').click();
+
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect(frame.locator('.bubble.user', { hasText: 'Give me an overview' })).toBeVisible({ timeout: 10000 });
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+      expect((await interrupts(page))[1]).toMatch(/^resume agent-chats\//);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // Speech recognition cannot be driven from a test, so the spoken path is
+  // pinned at the decision the voice handler makes: what it hands the clear
+  // sequence. The mic marker must survive into the recorded instruction — it is
+  // what tells the wiped agent it is being spoken to — and a spoken interrupt
+  // runs on ("stop, wrong file") where a typed one may not.
+  test('conversation-context-only keeps the mic marker and spares run-on spoken interrupts', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      const inner = page.frames().find((f) => f.url().startsWith(server.url));
+      const routed = await inner.evaluate(() => ({
+        spoken: clearRouteText(VOICE_MARK + 'fix the logout bug', isInterruptPhrase('fix the logout bug', true)),
+        runOn: clearRouteText(VOICE_MARK + 'stop, wrong file', isInterruptPhrase('stop, wrong file', true)),
+        typedRunOn: clearRouteText('stop the retry loop', isInterruptPhrase('stop the retry loop', false)),
+      }));
+
+      expect(routed.spoken).toBe('/clear 🎤 fix the logout bug');
+      expect(routed.runOn).toBe('🎤 stop, wrong file'); // untouched: an interrupt
+      expect(routed.typedRunOn).toBe('/clear stop the retry loop'); // typed: work, not a stop
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  // "stop" asks for an interrupt, not an erasure. Routing it through the clear
+  // sequence would kill the agent the user was trying to get the attention of,
+  // and there would be nothing left to answer the question that follows.
+  test('conversation-context-only leaves interrupt words alone', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      await frame.locator('#chat-input').fill('stop');
+      await frame.locator('#chat-input').press('Enter');
+
+      await expect(frame.locator('.bubble.user', { hasText: 'stop' })).toBeVisible({ timeout: 10000 });
+      // The ordinary path nudges the agent to check_messages; a wipe would have
+      // put a bare `/clear` on the wire first.
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(1);
+      expect((await interrupts(page))[0]).not.toBe('/clear');
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
   // With `/` registered as an autocomplete trigger — which is how agent-chat
   // runs inside swe-swe — a bare `/clear` still has its dropdown open when
   // Enter is pressed, because the trigger only dies on the first space. The
