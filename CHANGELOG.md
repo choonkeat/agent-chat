@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.9.0] — 2026-08-02
 
 ### Features
 - `/clear <instruction>` in the chat input resets the agent's context and hands
@@ -110,6 +110,15 @@ All notable changes to agent-chat are documented in this file.
   could not be sent: the autocomplete trigger only dies at the first space, so
   the dropdown was still open and swallowed the Enter — with nothing selectable
   in a "No results" dropdown, the message simply never sent.
+- Pasting into a live autocomplete trigger still killed the dropdown on iOS. The
+  earlier fix trimmed a leading space off the clipboard text, but iOS "smart
+  paste" does not put the space there — it inserts one itself at insertion time,
+  so typing `@` and pasting a path still produced `@ tasks/foo.md` and closed
+  the dropdown. With a trigger live the insertion is now taken over outright
+  rather than only when the clipboard happened to carry a space, and a repair
+  pass keyed on `insertFromPaste` deletes the whitespace run left at the
+  recorded cursor — which covers the case where the paste event never reaches
+  the page at all.
 
 ## [0.8.22] — 2026-08-01
 
