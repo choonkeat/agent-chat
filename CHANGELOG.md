@@ -2,6 +2,32 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Changes
+- **A bubble goes read the moment `check_messages` drains it.** The receipt used
+  to be deferred to the agent's *next* agent-chat call, so every message spent a
+  beat looking unread after the agent already had it — most visibly after a
+  `/clear`, where the fresh agent's first act is a `check_messages`. The
+  deferral exists for one shape only: a wait parked inside a blocking
+  `send_message`, which a terminal break-out turns into a zombie that still
+  drains the queue. An inline drain cannot be in that state — the handler is
+  executing, so the agent is alive at that instant — and the same now applies to
+  a barge-in riding back on a returning `send_progress`. The parked-wait case
+  keeps the two-step (handed over → proven read) unchanged. Residual risk is the
+  response dying in transit, which limbo redelivery already recovers.
+- **A reply to a `draw` is an ordinary user message.** `draw` used to park on a
+  private acknowledgement channel, and the browser held that reply slip: the
+  NEXT message of any kind — typed, spoken, or a tap on one of the drawing's
+  quick replies — went down that branch instead of the queue. It therefore
+  dropped attachments and the message-style template, could not be unsent, had
+  no redelivery if the waiting call died, and was marked read the instant it was
+  sent. `draw` now parks on the message queue exactly like `send_message`, via a
+  single `waitForUserReply` shared by all three blocking tools, so a reply to a
+  drawing gets the same unread-then-read treatment as any other message. The ack
+  machinery (`CreateAck`/`ResolveAck`, `pendingAckId`, the `ack_id` event field
+  and the `ack` websocket message) is removed.
+
 ## [0.9.0] — 2026-08-02
 
 ### Features

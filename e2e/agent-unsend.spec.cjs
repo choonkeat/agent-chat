@@ -211,10 +211,8 @@ test.describe('Unsend pending user message', () => {
     await sendBtn.click();
     await page.waitForTimeout(SETTLE_MS);
 
-    // First drain only hands the message over — still unread.
-    await mcpCall(server.url, '/mcp', 'check_messages');
-    await page.waitForTimeout(SETTLE_MS);
-    // A second agent-chat call proves the hand-over arrived → read.
+    // check_messages is its own receipt — the agent asked for the queue while
+    // the call was executing, so one call is enough to mark it read.
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 

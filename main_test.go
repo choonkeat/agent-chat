@@ -211,25 +211,6 @@ func TestEventBusPublishAndReceive(t *testing.T) {
 	}
 }
 
-func TestEventBusAckResolve(t *testing.T) {
-	eb := NewEventBus()
-	ack := eb.CreateAck()
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-		eb.ResolveAck(ack.ID, "ack:clicked continue")
-	}()
-
-	select {
-	case result := <-ack.Ch:
-		if result != "ack:clicked continue" {
-			t.Fatalf("expected 'ack:clicked continue', got '%s'", result)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("ack did not resolve in time")
-	}
-}
-
 func TestEventBusMultipleSubscribers(t *testing.T) {
 	eb := NewEventBus()
 	sub1 := eb.Subscribe()
@@ -237,15 +218,15 @@ func TestEventBusMultipleSubscribers(t *testing.T) {
 	defer eb.Unsubscribe(sub1)
 	defer eb.Unsubscribe(sub2)
 
-	eb.Publish(Event{Type: "agentMessage", AckID: "test-123"})
+	eb.Publish(Event{Type: "agentMessage", Text: "test-123"})
 
 	ev1 := <-sub1
 	ev2 := <-sub2
 
-	if ev1.Type != "agentMessage" || ev1.AckID != "test-123" {
+	if ev1.Type != "agentMessage" || ev1.Text != "test-123" {
 		t.Fatalf("subscriber 1 got unexpected event: %+v", ev1)
 	}
-	if ev2.Type != "agentMessage" || ev2.AckID != "test-123" {
+	if ev2.Type != "agentMessage" || ev2.Text != "test-123" {
 		t.Fatalf("subscriber 2 got unexpected event: %+v", ev2)
 	}
 }

@@ -214,11 +214,9 @@ test.describe('Pending user bubble until consumed', () => {
     await page.screenshot({ path: 'test-results/screenshots/03-user-bubble-pending-below-loader.png', fullPage: true });
 
     // Drain the queue by calling the MCP `check_messages` tool — this is what
-    // a real agent would do. The first call is only a hand-over; the second is
-    // the agent proving it received the batch (userMessagesRead), which is what
-    // actually clears the pending state. See read-receipt-states.spec.cjs.
-    await mcpCall(server.url, '/mcp', 'check_messages');
-    await page.waitForTimeout(SETTLE_MS);
+    // a real agent would do. The call is executing, so the agent is provably
+    // alive: the drain is its own receipt (userMessagesRead) and one call
+    // clears the pending state. See read-receipt-states.spec.cjs.
     await mcpCall(server.url, '/mcp', 'check_messages');
     await page.waitForTimeout(SETTLE_MS);
 

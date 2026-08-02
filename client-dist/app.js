@@ -150,7 +150,6 @@ var voiceSelect = document.getElementById('voice-select');
 
 var activeWs = null;
 var isUserScrolledUp = false;
-var pendingAckId = null;
 var pendingNotifyParent = false;
 var pendingInterrupt = false;
 var pendingClear = false; // awaiting "yes" to confirm /clear context
@@ -1686,11 +1685,6 @@ function transmit(m) {
     restoreUnsentBubble(m);
     return m;
   }
-  if (pendingAckId) {
-    activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: m.text }));
-    pendingAckId = null;
-    return m;
-  }
   var msg = { type: 'message', text: m.text };
   if (m.files.length > 0) msg.files = m.files;
   // Attach the message-style template (cookie). The server wraps the
@@ -1858,10 +1852,6 @@ function maybeHandleClearPrefix(rawText, files) {
   window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
   firstMessageSent = false;
   writeFirstMessageSent(false);
-  // The agent that asked for this ack is being wiped, and the server cancels
-  // its parked wait. Holding the id would send the next message down the ack
-  // branch, where nothing queues it for the agent that comes back.
-  pendingAckId = null;
   pendingClearResume = true;
   showLoading();
   setTimeout(function () {
@@ -3564,9 +3554,6 @@ function connect() {
         addSystemBubble(label);
         hasConnectedBefore = true;
         // History is now streamed as individual events after connect — no replay needed.
-        if (data.pendingAckId) {
-          pendingAckId = data.pendingAckId;
-        }
         // Defer quick replies until historyEnd — showing them now would
         // cause freezeCurrentReplies to freeze the wrong replies when
         // history events stream in.
@@ -3600,11 +3587,6 @@ function connect() {
 
       case 'draw':
         console.log('[' + ts() + '] Draw event received (' + (data.instructions || []).length + ' instructions)');
-
-        // Store ack_id so quick-reply/send resolves the draw ack
-        if (data.ack_id) {
-          pendingAckId = data.ack_id;
-        }
 
         addCanvasBubble(data.instructions || [], false, function () {
           enableInput(data.quick_replies); // removes loading via mutual exclusivity

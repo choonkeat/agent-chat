@@ -275,7 +275,7 @@ func main() {
 	// enabled by AGENT_CHAT_EXPORT_DIR. A misconfigured dir disables the
 	// feature with a warning; it never takes the chat down.
 	{
-		history, _ := bus.History()
+		history := bus.History()
 		stream, err := initChatLogStream(
 			os.Getenv("AGENT_CHAT_EXPORT_DIR"), cwd,
 			chatLogSessionID(os.Getenv("AGENT_CHAT_EVENT_LOG")),
@@ -593,9 +593,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send connected handshake (no history array — we stream events after).
 	connectMsg := map[string]any{"type": "connected", "version": version + " (" + commit + ")"}
-	if pendingAckID := bus.PendingAckID(); pendingAckID != "" {
-		connectMsg["pendingAckId"] = pendingAckID
-	}
 	if qr := bus.LastQuickReplies(); len(qr) > 0 {
 		connectMsg["quickReplies"] = qr
 	} else if len(welcomeReplies) > 0 && !bus.HasHistory() {
@@ -706,7 +703,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Text     string    `json:"text"`
 			Files    []FileRef `json:"files"`
 			ID       string    `json:"id"`
-			Message  string    `json:"message"`
 			Template string    `json:"template"`
 		}
 		if json.Unmarshal(msg, &m) != nil {
@@ -755,18 +751,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			select {
 			case writeCh <- map[string]string{"type": "messageQueued"}:
 			default:
-			}
-		case "ack":
-			if m.ID != "" {
-				result := "ack"
-				if m.Message != "" {
-					result = "ack:" + m.Message
-				}
-				bus.ResolveAck(m.ID, result)
-				// Broadcast ack reply as a userMessage to all browsers; the ack
-				// itself is the "agent received it" signal, so emit consumed
-				// immediately too.
-				bus.PublishConsumedUserMessage(m.Message, nil)
 			}
 		case "unsend":
 			// User clicked × on a pending bubble — withdraw it from the queue

@@ -247,7 +247,7 @@ func TestIsVoiceMessage(t *testing.T) {
 
 func TestComposedResultSendMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "looks good"}}
-	got := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	got := userRespondedText(msgs)
 	want := "User responded: looks good\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
 	if got != want {
 		t.Errorf("composed result (text):\ngot:  %q\nwant: %q", got, want)
@@ -256,11 +256,96 @@ func TestComposedResultSendMessage(t *testing.T) {
 
 func TestComposedResultVoiceMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 make it blue"}}
-	got := "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	got := userRespondedText(msgs)
 	want := "User responded: Decoded user's speech to text (may be inaccurate): make it blue\n\n" +
 		executeNotEchoGuidance + "\n\n" + replyInstructionsVoiceBody
 	if got != want {
 		t.Errorf("composed result (voice):\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// --- one reply path for every blocking tool ---
+//
+// send_message, send_verbal_reply and draw used to differ: the first two parked
+// on the message queue, while draw parked on a private acknowledgement channel
+// that bypassed the queue entirely — no attachments, no message-style template,
+// no unsend, no redelivery, and the bubble was marked read the instant it was
+// sent. waitForUserReply is now the single path all three take.
+
+func TestWaitForUserReplyReturnsTheQueuedMessage(t *testing.T) {
+	bus := NewEventBus()
+	bus.ReceiveUserMessage("the blue one", nil, "")
+
+	got, err := waitForUserReply(context.Background(), bus, "draw", 1)
+	if err != nil {
+		t.Fatalf("waitForUserReply: %v", err)
+	}
+	want := userRespondedText([]UserMessage{{Text: "the blue one"}})
+	if got != want {
+		t.Errorf("draw reply:\ngot:  %q\nwant: %q", got, want)
+	}
+	if bus.LastVoice() {
+		t.Error("a typed reply must not leave the bus in voice mode")
+	}
+}
+
+// A reply to a drawing carries everything an ordinary message carries — here,
+// the per-message template the browser attaches from the message-style setting.
+func TestWaitForUserReplyAppliesMessageTemplate(t *testing.T) {
+	bus := NewEventBus()
+	bus.ReceiveUserMessage("the blue one", nil, "In one line: {{message}}")
+
+	got, err := waitForUserReply(context.Background(), bus, "draw", 1)
+	if err != nil {
+		t.Fatalf("waitForUserReply: %v", err)
+	}
+	if !strings.Contains(got, "In one line: the blue one") {
+		t.Errorf("template not applied to a drawing reply:\n%s", got)
+	}
+}
+
+// The reply also switches the bus into voice mode, so the agent is told to
+// answer by voice — the old acknowledgement path never did this.
+func TestWaitForUserReplyTracksVoice(t *testing.T) {
+	bus := NewEventBus()
+	bus.ReceiveUserMessage("\U0001f3a4 the blue one", nil, "")
+
+	if _, err := waitForUserReply(context.Background(), bus, "draw", 1); err != nil {
+		t.Fatalf("waitForUserReply: %v", err)
+	}
+	if !bus.LastVoice() {
+		t.Error("a spoken reply must put the bus in voice mode")
+	}
+}
+
+// It is a parked wait like send_message's, so the bubble stays unread until the
+// agent's next call proves the reply arrived.
+func TestWaitForUserReplyLeavesBatchUnproven(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.ReceiveUserMessage("the blue one", nil, "")
+
+	if _, err := waitForUserReply(context.Background(), bus, "draw", 1); err != nil {
+		t.Fatalf("waitForUserReply: %v", err)
+	}
+	if reads := readEventIDs(bus); len(reads) != 0 {
+		t.Fatalf("a parked wait must not publish a receipt: %v", reads)
+	}
+	bus.ProveDelivery()
+	reads := readEventIDs(bus)
+	if len(reads) != 1 || len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("read IDs: got %v, want [[%s]]", reads, id)
+	}
+}
+
+// A cancelled wait (the agent was interrupted) surfaces as an error rather than
+// a silently empty reply.
+func TestWaitForUserReplyPropagatesCancellation(t *testing.T) {
+	bus := NewEventBus()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := waitForUserReply(ctx, bus, "draw", 1); err == nil {
+		t.Fatal("cancelled wait returned no error")
 	}
 }
 
@@ -309,6 +394,24 @@ func TestAppendBargeInPicksUpQueuedMessage(t *testing.T) {
 	}
 	if !strings.Contains(got, executeNotEchoGuidance) {
 		t.Errorf("appendBargeIn missing execute-not-echo guidance:\n%s", got)
+	}
+}
+
+// A barge-in rides back on the return value of a call that is executing right
+// now, so the agent is provably alive: the bubble goes read immediately rather
+// than waiting for the next tool call to promote it.
+func TestAppendBargeInMarksMessagesRead(t *testing.T) {
+	bus := NewEventBus()
+	id := bus.ReceiveUserMessage("barge in", nil, "")
+	_ = appendBargeIn(bus, "Progress sent.")
+
+	reads := readEventIDs(bus)
+	if len(reads) != 1 || len(reads[0]) != 1 || reads[0][0] != id {
+		t.Fatalf("read IDs after barge-in: got %v, want [[%s]]", reads, id)
+	}
+	bus.ProveDelivery()
+	if reads := readEventIDs(bus); len(reads) != 1 {
+		t.Fatalf("barge-in left the batch unproven: %v", reads)
 	}
 }
 

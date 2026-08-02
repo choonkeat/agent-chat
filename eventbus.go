@@ -53,7 +53,6 @@ type Event struct {
 	ID           string    `json:"id,omitempty"`           // userMessage: the message's unique ID
 	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed / userMessagesRead: which IDs
 	Text         string    `json:"text,omitempty"`
-	AckID        string    `json:"ack_id,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
 	Instructions []any     `json:"instructions,omitempty"` // draw instructions
 	Files        []FileRef `json:"files,omitempty"`
@@ -81,12 +80,6 @@ type Event struct {
 	FilePaths []FilePath `json:"file_paths,omitempty"`
 }
 
-// AckHandle is returned by CreateAck. Read from Ch to wait for the user's ack.
-type AckHandle struct {
-	ID string
-	Ch chan string // receives "ack" or "ack:<message>"
-}
-
 // ExportResult carries the bytes a browser POSTed back for an export request,
 // or an error string if the browser reported failure.
 type ExportResult struct {
@@ -101,17 +94,14 @@ type ExportHandle struct {
 	Ch    chan ExportResult
 }
 
-// EventBus fans out events to WebSocket subscribers, tracks pending acks,
-// and maintains an in-memory event log for browser reconnect.
+// EventBus fans out events to WebSocket subscribers, carries the user-message
+// queue, and maintains an in-memory event log for browser reconnect.
 type EventBus struct {
 	mu              sync.RWMutex
 	subscribers     map[chan Event]struct{}
 	eventLog        []Event  // session event log for reconnect replay
 	nextSeq         int64    // next sequence number (guarded by mu)
 	lastQuickReplies []string // last quick_replies sent to browser (nil = agent working)
-
-	ackMu   sync.Mutex
-	pending map[string]chan string // ack_id -> channel
 
 	exportMu        sync.Mutex
 	pendingExports  map[string]chan ExportResult // export token -> channel
@@ -157,7 +147,6 @@ type EventBus struct {
 func NewEventBus() *EventBus {
 	return &EventBus{
 		subscribers:    make(map[chan Event]struct{}),
-		pending:        make(map[string]chan string),
 		pendingExports: make(map[string]chan ExportResult),
 		transientSubs:  make(map[chan any]struct{}),
 		msgQueue:       make(chan UserMessage, 256),
@@ -183,7 +172,6 @@ func NewEventBusWithLog(path string) (*EventBus, error) {
 	}
 	eb := &EventBus{
 		subscribers:      make(map[chan Event]struct{}),
-		pending:          make(map[string]chan string),
 		pendingExports:   make(map[string]chan ExportResult),
 		transientSubs:    make(map[chan any]struct{}),
 		msgQueue:         make(chan UserMessage, 256),
@@ -458,6 +446,24 @@ func (eb *EventBus) DrainMessagesStamped(toolName string, toolSeq int64) []UserM
 			return msgs
 		}
 	}
+}
+
+// DrainMessagesProven is DrainMessagesStamped for callers that hand the batch
+// straight back as the return value of a call that is executing right now
+// (check_messages, and the barge-in appended to a returning send_progress).
+//
+// The deferred promotion the unproven set exists for guards ONE shape: a wait
+// parked inside a blocking send_message, which a client-side break-out turns
+// into a zombie that still drains the queue. An inline drain cannot be in that
+// state — the handler is running, so the agent is alive at that instant — so
+// deferring these to the next tool call only adds visible lag to every bubble.
+// The residual risk is the response dying in flight, which limbo redelivery
+// already recovers.
+func (eb *EventBus) DrainMessagesProven(toolName string, toolSeq int64) []UserMessage {
+	msgs := eb.DrainMessagesStamped(toolName, toolSeq)
+	// No-op when the drain was empty: nothing was registered unproven.
+	eb.ProveDelivery()
+	return msgs
 }
 
 // WaitForMessages waits for at least one queued message, drains any additional,
@@ -796,57 +802,13 @@ func (eb *EventBus) EventsSince(cursor int64) []Event {
 	return result
 }
 
-// PendingAckID returns the first pending ack ID, if any.
-func (eb *EventBus) PendingAckID() string {
-	eb.ackMu.Lock()
-	defer eb.ackMu.Unlock()
-	for id := range eb.pending {
-		return id
-	}
-	return ""
-}
-
-// History returns a copy of the event log and the pending ack ID (if any).
-func (eb *EventBus) History() ([]Event, string) {
+// History returns a copy of the event log.
+func (eb *EventBus) History() []Event {
 	eb.mu.RLock()
+	defer eb.mu.RUnlock()
 	log := make([]Event, len(eb.eventLog))
 	copy(log, eb.eventLog)
-	eb.mu.RUnlock()
-
-	return log, eb.PendingAckID()
-}
-
-// CreateAck creates a pending acknowledgment. The caller waits on Ch until
-// the user responds or the context is cancelled.
-func (eb *EventBus) CreateAck() AckHandle {
-	id := uuid.New().String()
-	ch := make(chan string, 1)
-
-	eb.ackMu.Lock()
-	eb.pending[id] = ch
-	eb.ackMu.Unlock()
-
-	return AckHandle{ID: id, Ch: ch}
-}
-
-// ResolveAck resolves a pending ack. The result string is sent through the
-// channel (e.g. "ack" or "ack:message"). Returns true if the ack existed.
-func (eb *EventBus) ResolveAck(id, result string) bool {
-	eb.ackMu.Lock()
-	ch, ok := eb.pending[id]
-	if ok {
-		delete(eb.pending, id)
-	}
-	eb.ackMu.Unlock()
-
-	if !ok {
-		return false
-	}
-	select {
-	case ch <- result:
-	default:
-	}
-	return true
+	return log
 }
 
 // SubscribeTransient registers a per-connection sink for transient (non-logged,
