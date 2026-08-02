@@ -196,6 +196,57 @@ test.describe('/clear prefix', () => {
     }
   });
 
+  // A message carrying an attachment goes the same way. It used to be the one
+  // exception: the browser skipped the reset for it, so a file-carrying message
+  // quietly kept the context every other message had just dropped. Nothing
+  // about a file makes it hard to carry — it is uploaded before the message is
+  // sent, so what travels is a path, and the `clear` frame has always had a
+  // field for it.
+  test('conversation-context-only routes an attachment through the clear sequence', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+
+      const upload = path.join(server.dir, 'notes.txt');
+      fs.writeFileSync(upload, 'the failing stack trace');
+      await frame.locator('#file-picker').setInputFiles(upload);
+      // The send button unlocks only once the upload has a path to send.
+      await expect(frame.locator('#file-staging')).toHaveClass(/visible/, { timeout: 10000 });
+      await expect(frame.locator('#btn-send')).toBeEnabled({ timeout: 10000 });
+
+      await frame.locator('#chat-input').fill('what does this say');
+      await frame.locator('#chat-input').press('Enter');
+
+      // Same two-step reset as a message with no file.
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      const userBubble = frame.locator('.bubble.user', { hasText: 'what does this say' });
+      await expect(userBubble).toBeVisible({ timeout: 10000 });
+      await expect(userBubble).not.toContainText('/clear');
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+      const [, resume] = await interrupts(page);
+      expect(resume).toMatch(/^resume agent-chats\//);
+
+      // The file went with it: the server's copy of the message carries the
+      // attachment, which is what puts it in the log the resume line names.
+      const named = resume.slice('resume '.length).split(' ')[0];
+      await expect.poll(
+        () => fs.readFileSync(path.join(server.dir, named), 'utf8'),
+        { timeout: 10000 }
+      ).toContain('notes.txt');
+
+      // The staging strip is empty again — a file left staged would ride along
+      // with the next message too.
+      await expect(frame.locator('#file-staging')).not.toHaveClass(/visible/, { timeout: 10000 });
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
   // The reset does not reach the server for a couple of seconds — the terminal
   // has to be typed into and left to settle. Waiting for the server's copy to
   // draw the bubble left the message nowhere at all for that whole gap, which
@@ -265,50 +316,49 @@ test.describe('/clear prefix', () => {
     }
   });
 
-  // On unless switched off. A browser that has never touched the box resets on
-  // every message, and unticking still has to win — a default is a starting
+  // Off unless switched on. A browser that has never touched the box sends the
+  // ordinary way, and ticking still has to win — a default is a starting
   // position, not a lock.
-  test('starts ticked with no flag, and unticking beats it', async ({ page }) => {
+  test('starts unticked with no flag, and ticking beats it', async ({ page }) => {
     const server = await startServer();
-    try {
-      const frame = await embed(page, server.url);
-      await frame.locator('#btn-settings').click();
-      await expect(frame.locator('#ctx-only-input')).toBeChecked();
-
-      await frame.locator('#btn-settings-done').click();
-      await frame.locator('#chat-input').fill('first message');
-      await frame.locator('#chat-input').press('Enter');
-      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
-      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
-
-      // Untick: this browser has now answered, and its answer outranks the
-      // session's opening position.
-      await frame.locator('#btn-settings').click();
-      await frame.locator('#ctx-only-input').uncheck();
-      await frame.locator('#btn-settings-done').click();
-      await frame.locator('#chat-input').fill('second message');
-      await frame.locator('#chat-input').press('Enter');
-      await expect(frame.locator('.bubble.user', { hasText: 'second message' })).toBeVisible({ timeout: 10000 });
-      // Still the two from the first message — no third wipe.
-      expect(await interrupts(page)).toHaveLength(2);
-    } finally {
-      server.proc.kill('SIGTERM');
-      fs.rmSync(server.dir, { recursive: true, force: true });
-    }
-  });
-
-  test('-conversation-context-only=false starts unticked', async ({ page }) => {
-    const server = await startServer(['-conversation-context-only=false']);
     try {
       const frame = await embed(page, server.url);
       await frame.locator('#btn-settings').click();
       await expect(frame.locator('#ctx-only-input')).not.toBeChecked();
 
       await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('first message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect(frame.locator('.bubble.user', { hasText: 'first message' })).toBeVisible({ timeout: 10000 });
+      expect(await interrupts(page)).toHaveLength(0);
+
+      // Tick: this browser has now answered, and its answer outranks the
+      // session's opening position.
+      await frame.locator('#btn-settings').click();
+      await frame.locator('#ctx-only-input').check();
+      await frame.locator('#btn-settings-done').click();
+      await frame.locator('#chat-input').fill('second message');
+      await frame.locator('#chat-input').press('Enter');
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('-conversation-context-only starts ticked', async ({ page }) => {
+    const server = await startServer(['-conversation-context-only']);
+    try {
+      const frame = await embed(page, server.url);
+      await frame.locator('#btn-settings').click();
+      await expect(frame.locator('#ctx-only-input')).toBeChecked();
+
+      await frame.locator('#btn-settings-done').click();
       await frame.locator('#chat-input').fill('an ordinary message');
       await frame.locator('#chat-input').press('Enter');
-      await expect(frame.locator('.bubble.user', { hasText: 'an ordinary message' })).toBeVisible({ timeout: 10000 });
-      expect(await interrupts(page)).toHaveLength(0);
+      await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
+      await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });
@@ -317,26 +367,26 @@ test.describe('/clear prefix', () => {
 
   // The tick travels between sessions the way the message style does — it is
   // how you want to be talked to, not a property of one conversation. Switching
-  // it off in one chat switches it off in the next.
+  // it on in one chat switches it on in the next.
   test('the tick reaches every chat in the browser', async ({ page }) => {
     const first = await startServer();
     const second = await startServer();
     try {
       await gotoRetry(page, first.url);
       await page.locator('#btn-settings').click();
-      await page.locator('#ctx-only-input').uncheck();
-      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
+      await page.locator('#ctx-only-input').check();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
 
-      // Same browser, a different session started separately: also off.
+      // Same browser, a different session started separately: also on.
       await gotoRetry(page, second.url);
       await page.locator('#btn-settings').click();
-      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
 
-      // Back on: the answer travels the other way too.
-      await page.locator('#ctx-only-input').check();
+      // Back off: the answer travels the other way too.
+      await page.locator('#ctx-only-input').uncheck();
       await gotoRetry(page, first.url);
       await page.locator('#btn-settings').click();
-      await expect(page.locator('#ctx-only-input')).toBeChecked();
+      await expect(page.locator('#ctx-only-input')).not.toBeChecked();
     } finally {
       first.proc.kill('SIGTERM');
       second.proc.kill('SIGTERM');
@@ -346,15 +396,16 @@ test.describe('/clear prefix', () => {
   });
 
   // The reset works by asking the surrounding page to type into the agent's
-  // terminal, so a chat opened on its own cannot perform one. With the tick on
-  // by default, routing there would turn every message into an error and the
-  // chat would not work at all — so outside an embedder the tick does nothing.
+  // terminal, so a chat opened on its own cannot perform one. Routing there
+  // would turn every message into an error and the chat would not work at all —
+  // so outside an embedder the tick does nothing, even when it is on.
   test('with no embedder the tick is inert and messages send normally', async ({ page }) => {
     const server = await startServer();
     try {
       await gotoRetry(page, server.url);
       await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 10000 });
       await page.locator('#btn-settings').click();
+      await page.locator('#ctx-only-input').check();
       await expect(page.locator('#ctx-only-input')).toBeChecked();
       await page.locator('#btn-settings-done').click();
 
