@@ -1303,14 +1303,16 @@ chatInput.addEventListener('paste', function(e) {
       addStagedFiles([new File([text], 'pasted-' + lineCount + '-lines.txt', { type: 'text/plain' })]);
       return;
     }
-    // Plain text paste. iOS "smart paste" prepends a space when it thinks it's
-    // pasting a word after other text — that space breaks an active
+    // Plain text paste. iOS "smart paste" puts a space in front of a word it
+    // thinks is landing after other text — that space breaks an active
     // autocomplete token ("@ docs/adr" instead of "@docs/adr"). When the
     // dropdown is open and the cursor still sits inside the trigger token,
-    // strip the leading spaces/tabs the OS added.
+    // take over the insertion entirely: strip any leading spaces/tabs that
+    // came along in the clipboard, and insert it ourselves so the editor
+    // never gets the chance to add one of its own.
     if (acVisible || acTriggerPos >= 0) {
       var trimmed = text.replace(/^[ \t]+/, '');
-      if (trimmed !== text && trimmed.length > 0 &&
+      if (trimmed.length > 0 &&
           findTrigger(chatInput.value, chatInput.selectionStart)) {
         e.preventDefault();
         insertAtCursor(trimmed);
@@ -1706,6 +1708,39 @@ function findTrigger(text, cursorPos) {
   return null;
 }
 
+// Cursor position captured just before a paste lands, but only when an
+// autocomplete trigger token was live there. -1 when the last input was not a
+// paste into a trigger token.
+var acPasteAnchor = -1;
+
+chatInput.addEventListener('beforeinput', function (e) {
+  if (!e || e.inputType !== 'insertFromPaste') { acPasteAnchor = -1; return; }
+  acPasteAnchor = (chatInput.selectionStart === chatInput.selectionEnd &&
+                   findTrigger(chatInput.value, chatInput.selectionStart) !== null)
+    ? chatInput.selectionStart
+    : -1;
+});
+
+// Second line of defence against iOS "smart paste". The paste handler takes
+// over insertion when it can, but when the OS pastes without giving us a
+// usable paste event it adds the separating space itself, at insertion time —
+// it is never in the clipboard payload, so it can only be removed afterwards.
+// Delete the whitespace run sitting at the pre-paste cursor, which is exactly
+// where such a space lands.
+function acRepairPastedSpace(e) {
+  var anchor = acPasteAnchor;
+  acPasteAnchor = -1;
+  if (anchor < 0 || !e || e.inputType !== 'insertFromPaste') return;
+  var value = chatInput.value;
+  var i = anchor;
+  while (i < value.length && (value[i] === ' ' || value[i] === '\t')) i++;
+  if (i === anchor) return;      // no space was added — nothing to repair
+  if (i >= value.length) return; // whitespace only; leave the user's text alone
+  var cursor = chatInput.selectionStart;
+  chatInput.value = value.slice(0, anchor) + value.slice(i);
+  chatInput.selectionStart = chatInput.selectionEnd = Math.max(anchor, cursor - (i - anchor));
+}
+
 function acShowStatus(text) {
   acDropdown.innerHTML = '';
   var div = document.createElement('div');
@@ -1987,8 +2022,9 @@ function acFetch(trigger, query) {
     });
 }
 
-chatInput.addEventListener('input', function () {
+chatInput.addEventListener('input', function (e) {
   if (Object.keys(acTriggers).length === 0) return;
+  acRepairPastedSpace(e);
 
   var cursorPos = chatInput.selectionStart;
   var text = chatInput.value;
