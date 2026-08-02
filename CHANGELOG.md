@@ -11,21 +11,25 @@ All notable changes to agent-chat are documented in this file.
   the agent comes back pointed at that log file — so the conversation survives
   the reset even though the agent's own memory does not. A bare `/clear` resets
   with no follow-up.
-  **The order is the design: wipe, then record, then point at the file.**
-  Recording first lets a still-running agent consume the instruction and then be
-  erased holding it. Pointing the resumed agent at the message queue instead of
-  the file goes silent in two ways — a `/clear` does not release agent-chat's
-  blocking wait (Claude Code sends no `notifications/cancelled` on a terminal
-  break-out), so the parked waiter swallows the instruction into a dead request,
-  and the spare copy that exists for exactly that case is discarded by the first
-  `send_progress` the fresh agent makes. `check_messages` then returns empty and
-  tells the agent to stay quiet, leaving a chat that looks alive and answers
-  nothing. The chat log has neither failure mode.
+  **The order is the design: wipe, then record, then resume.** Recording first
+  lets a still-running agent consume the instruction and then be erased holding
+  it. The wipe does not release agent-chat's blocking wait either (Claude Code
+  sends no `notifications/cancelled` on a terminal break-out), so the parked
+  waiter is cancelled before the instruction is queued — otherwise it swallows
+  it into a dead request.
+  **Exactly one carrier may be called the instruction.** It now exists both in
+  the log and in the queue, and naming both got the same question answered
+  twice: the agent answered from the file, `send_message` deliberately does not
+  ack the spare copy of a delivered message, and the next `check_messages`
+  redelivered it. The queue is the carrier — it brings the message-style
+  template and the reply instructions that make the agent post the
+  receipt-confirming `send_progress`. The log is context, named as a fallback
+  only for a genuinely empty queue.
   The filename is read from the new `GET /api/chatlog-path` at clear time, not
   cached at connect, because `set_chat_title` renames the file mid-session. A
-  `⟪ context cleared ⟫` marker is written at each reset for a future
-  read-only-since-the-last-clear mode. Requires `AGENT_CHAT_EXPORT_DIR`; without
-  it the reset still happens, says so in the chat, and starts blank. See
+  reset writes no bubble and leaves no mark in the exported `.md`. Requires
+  `AGENT_CHAT_EXPORT_DIR`; without it the reset still happens, says so in the
+  chat, and starts blank. See
   `docs/adr/2026-08-02-clear-prefix-context-reset.md`.
 
 ### Fixes

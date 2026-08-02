@@ -47,19 +47,43 @@ order is the design:
    confirmed flow does. Sent first so an agent still mid-turn cannot consume the
    instruction and then be erased holding it.
 2. **Record.** After `clearWipeSettleMs` (2 s), the browser sends a `clear`
-   websocket frame. The server publishes the boundary marker
-   (`clearMarkerText`) as an `agentMessage` and, if the instruction is
-   non-empty, queues it via `ReceiveUserMessage`. Both are ordinary chat events,
-   so `chatLogStream.HandleEvent` appends and `Sync`s them to the same `.md`
-   file the session has been writing all along.
+   websocket frame. The server calls `CancelActiveWait()` — the agent that
+   registered that wait is gone, and a parked waiter would swallow the
+   instruction into a dead request — then, if the instruction is non-empty,
+   queues it via `ReceiveUserMessage`. That publishes an ordinary `userMessage`,
+   so `chatLogStream.HandleEvent` appends and `Sync`s it to the same `.md` file
+   the session has been writing all along.
 3. **Resume.** On `messageQueued` the browser fetches `GET /api/chatlog-path`
-   and types `resume <path> - read the whole file; the last USER entry in it is
-   your instruction; reply with send_message`.
+   and types `resume <path> - read the whole file for context, then
+   check_messages for your instruction (if it returns nothing, the last USER
+   entry in the file is your instruction)`.
 
-Step 3 points at the **file**, not at the message queue. That is what removes
-both failure modes above: the file cannot be drained by a dead waiter and cannot
-be acked away by an eager `send_progress`. Whether the queued copy also survives
-becomes a bonus rather than the mechanism.
+### Exactly one carrier may be called the instruction
+
+The instruction now exists in two places — the chat log and the queue — and only
+one of them may be named as the instruction. The first shipped version named the
+file, and the same question got answered twice:
+
+1. The resumed agent read the file, found the question, and answered with
+   `send_message`.
+2. `send_message` deliberately skips `AckLimbo` (2026-08-01: the call may be a
+   recap after a lost delivery), so the un-acked spare copy of the queued message
+   survived.
+3. The agent's next `check_messages` redelivered that copy behind the
+   `---REDELIVERY---` sentinel. Its "ignore if you have already handled these"
+   framing did not apply as intended: the agent had answered from the *file* and
+   had never received this message through a tool, so it answered again.
+
+The tell was that the two answers were written in different styles — the queued
+copy carries the user's message-style template and `renderChatBubble` writes only
+raw display text to the `.md`.
+
+The queue wins as the carrier. It brings the style template and the standard
+reply instructions, and those instructions are what make the agent post the
+receipt-confirming `send_progress` — which acks the spare copy and closes the
+loop. The file reverts to what it was always for: history. It is named in the
+resume line only as a fallback for a genuinely empty queue, a branch that cannot
+double-answer.
 
 ### The filename is fetched at clear time, not cached at connect
 
@@ -76,12 +100,15 @@ The line is typed into the agent CLI as keystrokes. A leading `@` on a path
 opens its file picker, and the trailing Enter would pick an entry instead of
 submitting. Plain paths only.
 
-### The marker is written even though nothing reads it yet
+### The reset writes no bubble
 
-`⟪ context cleared ⟫` is what a future "read only since the last clear" mode
-would seek to. Re-reading the whole file is the right default while chat logs
-are three orders of magnitude smaller than agent transcripts; writing the marker
-from day one means switching later needs no migration of existing logs.
+The first version wrote a `⟪ context cleared ⟫` agent bubble at each reset, on
+the theory that a future "read only since the last clear" mode would seek to it.
+It was removed on first real use: it reads as the agent speaking when the agent
+has just ceased to exist, and it costs a bubble in every log for a mode that does
+not exist. Re-reading the whole file is the right default while chat logs are
+roughly 50x smaller than agent transcripts, and if that mode is ever built the
+boundary can be recorded then — as something the chat does not render.
 
 ### A bare `/clear` is a reset with no instruction
 
@@ -97,8 +124,13 @@ with nothing to select.
 
 - **A button in the message bar.** Rejected in favour of the typed prefix: it
   composes with the instruction the user is already typing, and needs no chrome.
-- **Resume with `check_messages` instead of a file path.** Rejected — that is
-  precisely the path that goes silent when limbo has been acked.
+- **Resume from the file alone, never touching the queue.** Removes the
+  double-answer at the cost of the user's message-style template, which only the
+  queued copy carries. Rejected: the first answer after a reset would silently
+  ignore the user's stated preferences.
+- **Resume with `check_messages` and no file at all.** Rejected — that is the
+  path that goes silent when limbo has been acked, and the resumed agent would
+  have no history either.
 - **Record the instruction before the wipe.** Rejected — a live agent consumes
   it and is then erased mid-thought.
 - **Hold the instruction server-side until the resumed agent asks.** A third
@@ -113,6 +145,8 @@ with nothing to select.
 
 - One new websocket frame type (`clear`) and one new endpoint
   (`/api/chatlog-path`).
+- A reset leaves no mark in the chat or in the exported `.md`. Reading the log
+  back, a `/clear` is invisible: the conversation simply continues.
 - The `/clear ` prefix is now reserved in the chat input. The older
   `clear context` → `yes` flow is untouched and still works.
 - The wipe→resume handoff rides on fixed keystroke delays (300 ms inside the
