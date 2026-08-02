@@ -1555,12 +1555,11 @@ function isClearCommand(text) {
 //
 // Wiping first stops an agent that is still running from consuming the
 // instruction and then being erased mid-thought. Recording second puts the
-// instruction in the chat log, which is what actually carries it across the
-// wipe. Pointing at the file third means nothing depends on the message queue:
-// a `/clear` leaves agent-chat's blocking wait parked (the terminal wipe is
-// invisible to it), so a queued instruction can be swallowed by that dead
-// waiter, and the spare copy agent-chat keeps is discarded by the first
-// send_progress the fresh agent makes. The file has neither failure mode.
+// instruction in the chat log — history the resumed agent can read back — and
+// on the queue for it to collect. Resuming third names the file for context and
+// sends the agent to `check_messages` for the instruction itself; see
+// typeClearResumeLine for why exactly one of the two carriers may be the
+// instruction.
 function maybeHandleClearPrefix(rawText) {
   if (!isClearCommand(rawText)) return false;
   var instruction = rawText === clearPrefix ? '' : rawText.slice(clearPrefix.length + 1).trim();
@@ -1590,10 +1589,23 @@ function maybeHandleClearPrefix(rawText) {
   return true;
 }
 
-// Types the line that brings the wiped agent back. The filename is fetched now
-// rather than cached at connect because set_chat_title renames the file
-// mid-session. No `@` in the text: typing one into the agent CLI opens its file
-// picker and the trailing Enter would pick an entry instead of submitting.
+// Types the line that brings the wiped agent back.
+//
+// The instruction is taken from `check_messages`, not from the file, even
+// though the file also contains it. Two carriers means two answers: the queued
+// copy carries the user's message-style template and the standard reply
+// instructions (which is what makes the agent post the receipt-confirming
+// send_progress), while the file copy is raw display text. An agent that
+// answered from the file never confirmed receipt, so the un-acked spare copy
+// came back on its next `check_messages` and it answered a second time — in a
+// different style, which is how this was spotted. The file is context; the
+// queue is the instruction. It is named as a fallback only for the case where
+// the queue really is empty, which cannot double-answer.
+//
+// The filename is fetched now rather than cached at connect because
+// set_chat_title renames the file mid-session. No `@` in the text: typing one
+// into the agent CLI opens its file picker and the trailing Enter would pick an
+// entry instead of submitting.
 function typeClearResumeLine() {
   fetch('api/chatlog-path')
     .then(function (r) { return r.json(); })
@@ -1604,7 +1616,7 @@ function typeClearResumeLine() {
         addAgentMessage('Context cleared, but no chat log is being written (AGENT_CHAT_EXPORT_DIR is unset) — the agent resumes without the earlier conversation.', null, null, Date.now());
       }
       var text = path
-        ? 'resume ' + path + ' - read the whole file; the last USER entry in it is your instruction; reply with send_message'
+        ? 'resume ' + path + ' - read the whole file for context, then check_messages for your instruction (if it returns nothing, the last USER entry in the file is your instruction)'
         : 'check_messages; reply me with a send_message';
       window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
     });

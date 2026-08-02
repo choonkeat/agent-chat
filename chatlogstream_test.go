@@ -733,8 +733,9 @@ func TestChatLogStreamCloseOutAfterOptout(t *testing.T) {
 // TestChatLogStreamSurvivesClear: a `/clear …` wipes the agent's memory but not
 // the chat log — the marker and the post-clear instruction append to the SAME
 // file, after the pre-clear turns. This is the whole premise of the feature:
-// the file, not the message queue, is what carries an instruction across the
-// wipe, so the resumed agent can read its own past out of it.
+// the log outlives the agent's memory, so the resumed agent can read its own
+// past out of it. The wipe itself leaves no trace in the file — the marker
+// bubble that used to be written here was removed as chat noise.
 func TestChatLogStreamSurvivesClear(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
@@ -751,9 +752,8 @@ func TestChatLogStreamSurvivesClear(t *testing.T) {
 		t.Fatalf("read pre-clear md: %v", err)
 	}
 
-	// The wipe happens here. Agent-chat then records the boundary and the
-	// stripped instruction, in that order.
-	s.HandleEvent(Event{Type: "agentMessage", Text: clearMarkerText, Timestamp: 8000})
+	// The wipe happens here — invisibly, by design: nothing is written to mark
+	// it. Agent-chat then records the stripped instruction.
 	s.HandleEvent(Event{Type: "userMessage", Text: "now do the logout bug", Timestamp: 9000})
 
 	if got := s.MDPath(); got != pathBefore {
@@ -769,15 +769,10 @@ func TestChatLogStreamSurvivesClear(t *testing.T) {
 	if !strings.HasPrefix(string(after), string(before)) {
 		t.Error("post-clear file is not an append to the pre-clear file")
 	}
-	for _, want := range []string{"fix the login bug", "on it", clearMarkerText, "now do the logout bug"} {
+	for _, want := range []string{"fix the login bug", "on it", "now do the logout bug"} {
 		if !strings.Contains(string(after), want) {
 			t.Errorf("post-clear md missing %q", want)
 		}
-	}
-	// Order matters: a future "read only since the last clear" mode seeks the
-	// marker, so the instruction must sit after it, not before.
-	if strings.Index(string(after), clearMarkerText) > strings.Index(string(after), "now do the logout bug") {
-		t.Error("clear marker written after the instruction it precedes")
 	}
 }
 

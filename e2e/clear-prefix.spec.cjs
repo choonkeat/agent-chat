@@ -2,10 +2,11 @@
 // Pins the `/clear <instruction>` sequence.
 //
 // Motivation: wiping the agent's memory and handing it a new instruction are
-// two halves of one action, and the only thing that survives between them is
-// the chat log. The order is load-bearing — wipe, then record, then point the
-// agent at the file — and each half is a separate message to the parent frame,
-// so a regression here is silent: the chat simply stops answering.
+// two halves of one action, and each half is a separate message to the parent
+// frame, so a regression here is silent — the chat simply stops answering. The
+// order is load-bearing (wipe, then record, then resume), and so is which
+// carrier the resume line calls the instruction: naming both the chat log and
+// the queue got the same question answered twice, in two different styles.
 //
 // The agent-chat page is loaded inside a parent page that records every
 // postMessage it receives, which is exactly what swe-swe's terminal pane does
@@ -103,29 +104,35 @@ test.describe('/clear prefix', () => {
       //    still-running agent cannot eat the instruction and then be erased.
       await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
 
-      // 2. The boundary marker and the stripped instruction land in the chat.
-      //    The `/clear ` prefix itself is not part of the recorded message.
-      await expect(frame.locator('.bubble.agent', { hasText: 'context cleared' })).toBeVisible({ timeout: 10000 });
+      // 2. The stripped instruction lands in the chat as the user's own bubble.
+      //    The `/clear ` prefix is not part of the recorded message, and the
+      //    wipe leaves no bubble of its own — no marker, no status line.
       const userBubble = frame.locator('.bubble.user', { hasText: 'now fix the logout bug' });
-      await expect(userBubble).toBeVisible();
+      await expect(userBubble).toBeVisible({ timeout: 10000 });
       await expect(userBubble).not.toContainText('/clear');
+      await expect(frame.locator('.bubble', { hasText: /context cleared/i })).toHaveCount(0);
+      // Still unread: the instruction is sitting in the queue waiting for the
+      // agent that comes back, which is what the resume line sends it to
+      // collect. A dead waiter swallowing it would show as read.
+      await expect(userBubble).toHaveClass(/pending-agent/);
 
       // 3. Only then is the resume line typed, naming the file by its current
-      //    path — and pointing the agent at the file, not at check_messages.
+      //    path. The instruction itself comes from check_messages, not from the
+      //    file: naming both as the instruction made the agent answer twice.
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
       const [, resume] = await interrupts(page);
       expect(resume).toMatch(/^resume agent-chats\/[\d-]+-untitled.*\.md /);
-      expect(resume).toContain('last USER entry');
-      expect(resume).toContain('send_message');
+      expect(resume).toContain('for context');
+      expect(resume).toContain('check_messages');
       // An `@` would open the agent CLI's file picker and the trailing Enter
       // would pick an entry instead of submitting the line.
       expect(resume).not.toContain('@');
 
-      // The file the resume line names must exist and hold both halves.
+      // The file the resume line names must exist and hold the instruction.
       const named = resume.slice('resume '.length).split(' ')[0];
       const md = fs.readFileSync(path.join(server.dir, named), 'utf8');
-      expect(md).toContain('context cleared');
       expect(md).toContain('now fix the logout bug');
+      expect(md).not.toContain('context cleared');
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });
@@ -140,11 +147,12 @@ test.describe('/clear prefix', () => {
       await frame.locator('#chat-input').fill('/clear');
       await frame.locator('#chat-input').press('Enter');
 
-      // No instruction to record, but the resume line must still be typed —
-      // otherwise the wiped agent sits there and the chat looks dead.
-      await expect(frame.locator('.bubble.agent', { hasText: 'context cleared' })).toBeVisible({ timeout: 10000 });
-      await expect(frame.locator('.bubble.user')).toHaveCount(0);
+      // No instruction to record and no bubble of any kind, but the resume line
+      // must still be typed — otherwise the wiped agent sits there and the chat
+      // looks dead.
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
+      await expect(frame.locator('.bubble.user')).toHaveCount(0);
+      await expect(frame.locator('.bubble', { hasText: /context cleared/i })).toHaveCount(0);
       const [wipe, resume] = await interrupts(page);
       expect(wipe).toBe('/clear');
       expect(resume).toMatch(/^resume agent-chats\//);

@@ -39,12 +39,6 @@ var bus *EventBus
 var version = "dev"
 var commit = "unknown"
 
-// clearMarkerText is the bubble agent-chat writes where a `/clear …` wiped the
-// agent's memory. It exists to be found: the resume line currently re-reads the
-// whole log, but the marker is what a future "read only since the last clear"
-// mode would seek to, so it is written from day one.
-const clearMarkerText = "⟪ context cleared ⟫"
-
 // themeCookieName is the cookie the browser reads for light/dark theme.
 var themeCookieName string
 
@@ -733,16 +727,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		case "clear":
 			// Typed `/clear …` in the browser. The terminal wipe has already
-			// been sent, so nothing is listening on the agent side; record the
-			// boundary as a chat bubble (which is what puts it in the streamed
-			// .md) and queue the stripped instruction, if any, for the agent
-			// that comes back. messageQueued is sent either way — the browser
-			// waits for it before typing the resume line, and a bare `/clear`
-			// with no instruction must not leave it waiting forever.
-			bus.Publish(Event{Type: "agentMessage", Text: clearMarkerText})
+			// been sent, so the agent that was blocking on send_message is gone
+			// — but its wait is still parked on the queue and would swallow the
+			// instruction into a dead request. Cancel it first, so the agent
+			// that comes back drains the instruction as a fresh message rather
+			// than as a limbo redelivery wrapped in "you may have seen this".
+			bus.CancelActiveWait()
 			if m.Text != "" || len(m.Files) > 0 {
 				bus.ReceiveUserMessage(m.Text, m.Files, m.Template)
 			}
+			// messageQueued is sent either way: the browser waits for it before
+			// typing the resume line, and a bare `/clear` with no instruction
+			// must not leave it waiting forever.
 			select {
 			case writeCh <- map[string]string{"type": "messageQueued"}:
 			default:
