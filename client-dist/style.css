@@ -191,6 +191,43 @@ body {
   border-color: #2563eb;
 }
 
+/* Not a style — it changes what happens on send — so it sits below the template
+   box with its own explanation instead of joining the pills. */
+.settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.settings-check input {
+  margin: 0.15rem 0 0;
+  flex: none;
+}
+
+.settings-check strong {
+  display: block;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.settings-check em {
+  display: block;
+  font-style: normal;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.settings-check code {
+  background: var(--code-bg);
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+}
+
 .settings-row {
   display: flex;
   align-items: center;

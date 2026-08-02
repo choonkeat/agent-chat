@@ -175,6 +175,9 @@ var firstMessageSent = readFirstMessageSent();
 var stagedFiles = []; // [{file: File, name: string, previewUrl: string|null, ref: FileRef|null, uploading: bool, uploadFailed: bool, abortController: AbortController|null}]
 var lastSeq = 0; // highest event seq received — sent as cursor on reconnect
 var interruptPhrases = ['stop', 'wait', 'cancel', 'hold on', 'abort', 'halt', 'pause'];
+// Front of every spoken message, in the bubble and in what the agent reads —
+// which is how the agent knows to answer aloud.
+var VOICE_MARK = '🎤 ';
 var clearContextPhrase = 'clear context';
 var clearConfirmPhrase = 'yes';
 var clearCancelPhrase = 'no';
@@ -1462,28 +1465,150 @@ function markMessagesRead(ids) {
 }
 
 // --- Send ---
+//
+// Every user message — typed, tapped or spoken — is one value travelling one
+// pipeline:
+//
+//   message |> markSource |> detectInterrupt |> routeClearPrefix
+//           |> routeClearContext |> freezeUi |> transmit
+//
+// Each stage takes the message and returns it. A stage that has dealt with the
+// message itself sets `handled`, and the stages after it do not run.
+//
+// This exists because the three ways of sending used to make these decisions in
+// three separate blocks, which drifted: "stop" was matched one way when typed,
+// another when spoken, and not at all when tapped. Sharing was optional, so it
+// stopped happening. Here it is unavoidable — `transmit` is the only thing that
+// puts a message on the wire, and the pipeline is the only thing that calls it,
+// so a fourth way of sending cannot skip a stage without deleting one.
+//
+// What genuinely differs between the three lives in SEND_SOURCES below, where
+// the differences can be read side by side instead of hunted for.
 
-function sendMessage(text, files) {
-  if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return;
-  if (pendingAckId) {
-    activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: text }));
-    pendingAckId = null;
-  } else {
-    var msg = { type: 'message', text: text };
-    if (files && files.length > 0) {
-      msg.files = files;
-    }
-    // Attach the message-style template (cookie). The server wraps the
-    // agent-facing text with it; the displayed bubble stays as the raw text.
-    var tpl = getMsgStyle();
-    if (tpl) msg.template = tpl;
-    activeWs.send(JSON.stringify(msg));
-  }
+var SEND_SOURCES = {
+  // Marker prepended to what the agent reads. Voice keeps its mic so the agent
+  // knows it is being spoken to and answers aloud.
+  //
+  // runOn: whether an interrupt may be followed by the rest of a sentence. A
+  // typed "stop the retry loop" is work; a spoken "stop, wrong file" is a stop,
+  // because talking does not pause at the word.
+  //
+  // interrupts: whether the word actually interrupts the agent. A chip is a
+  // button the agent offered while waiting for an answer, so there is nothing
+  // running to break into — tapping one labelled "Stop" answers the question.
+  //
+  // locksInput: whether the text box goes read-only while the message is in
+  // flight. Only the box that was typed into has one to lock.
+  typed: { mark: '', runOn: false, interrupts: true, locksInput: true },
+  chip: { mark: '', runOn: false, interrupts: false, locksInput: false },
+  voice: { mark: VOICE_MARK, runOn: true, interrupts: true, locksInput: false }
+};
+
+/** What the agent will read. Only voice adds anything. */
+function markSource(m) {
+  m.text = SEND_SOURCES[m.source].mark + m.rawText;
+  return m;
 }
 
+/** Is this asking the agent to stop? Two stages downstream care: the clear
+    routes must not wipe an agent the user was trying to reach, and the parent
+    frame needs telling so it can break into the running tool. */
+function detectInterrupt(m) {
+  var cfg = SEND_SOURCES[m.source];
+  m.isInterrupt = isInterruptPhrase(m.rawText, cfg.runOn);
+  m.notifyInterrupt = m.isInterrupt && cfg.interrupts;
+  return m;
+}
+
+/** `/clear …`, typed or implied by "conversation context only". Claims the
+    message: that route wipes, records and resumes on its own. */
+function routeClearPrefix(m) {
+  if (m.files.length === 0 && maybeHandleClearPrefix(clearRouteText(m.text, m.isInterrupt))) {
+    m.handled = true;
+  }
+  return m;
+}
+
+/** The "clear context" question and the yes/no answering it — a conversation
+    with the page, never sent anywhere. Reads what the user actually said, so a
+    spoken one is echoed without its mic marker. */
+function routeClearContext(m) {
+  if (m.files.length === 0 && maybeHandleClearContext(m.rawText, true)) m.handled = true;
+  return m;
+}
+
+/** The chat now shows a message on its way: chips that were not chosen are
+    frozen into the transcript, the loader appears, and the text box locks. */
+function freezeUi(m) {
+  if (SEND_SOURCES[m.source].locksInput) {
+    // readOnly, not disabled: keeps focus and the mobile keyboard up.
+    chatInput.focus();
+    chatInput.readOnly = true;
+    chatInput.classList.add('sending');
+    sendBtn.disabled = true;
+    sendBtn.classList.add('sending');
+    sendBtn.classList.remove('loading');
+  }
+  freezeCurrentReplies(m.rawText);
+  showLoading(); // hides quick replies via mutual exclusivity
+  pendingNotifyParent = true;
+  if (m.notifyInterrupt) pendingInterrupt = true;
+  return m;
+}
+
+/** Onto the wire, and the last stage there is. The bubble is not drawn here —
+    the server broadcasts the message back and every tab draws it then, so they
+    all agree. Written out in full rather than kept as a helper anyone could
+    call: a shortcut past the pipeline is how the three paths drifted apart. */
+function transmit(m) {
+  if (!activeWs || activeWs.readyState !== WebSocket.OPEN) return m;
+  if (pendingAckId) {
+    activeWs.send(JSON.stringify({ type: 'ack', id: pendingAckId, message: m.text }));
+    pendingAckId = null;
+    return m;
+  }
+  var msg = { type: 'message', text: m.text };
+  if (m.files.length > 0) msg.files = m.files;
+  // Attach the message-style template (cookie). The server wraps the
+  // agent-facing text with it; the displayed bubble stays as the raw text.
+  var tpl = getMsgStyle();
+  if (tpl) msg.template = tpl;
+  activeWs.send(JSON.stringify(msg));
+  return m;
+}
+
+var SEND_PIPELINE = [markSource, detectInterrupt, routeClearPrefix, routeClearContext, freezeUi, transmit];
+
+/** The one way to send a user message. `source` names which of SEND_SOURCES
+    applies; `files` is for the typed path, which is the only one that can
+    attach anything. */
+function submitUserMessage(rawText, source, files) {
+  var m = {
+    rawText: rawText,
+    text: rawText,
+    source: source,
+    files: files || [],
+    isInterrupt: false,
+    notifyInterrupt: false,
+    handled: false
+  };
+  for (var i = 0; i < SEND_PIPELINE.length && !m.handled; i++) m = SEND_PIPELINE[i](m);
+  return m;
+}
 
 function normalizePhrase(text) {
   return text.toLowerCase().replace(/[^a-z ]/g, '').trim();
+}
+
+/** Whether the message is asking a running agent to stop.
+    A typed one must be the word on its own — "stop the retry loop" is work, not
+    an interrupt. A spoken one runs on ("stop, wrong file"), so `allowTrailing`
+    also matches the word followed by the rest of the sentence. */
+function isInterruptPhrase(text, allowTrailing) {
+  var norm = normalizePhrase(text);
+  return interruptPhrases.some(function (phrase) {
+    return norm === phrase || (allowTrailing && norm.indexOf(phrase + ' ') === 0);
+  });
 }
 
 // Render the initial "Clear agent context?" prompt as an agent message so it
@@ -1546,6 +1671,25 @@ function isClearCommand(text) {
   return text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
 }
 
+// The text maybeHandleClearPrefix acts on. Normally that is what the user sent.
+// With "conversation context only" ticked, an ordinary message is turned into
+// `/clear <message>`, so every message wipes the agent and hands it the chat log
+// to read back — no prefix to remember. Typed, spoken and tapped messages all
+// come through here, so the tick means the same thing on all three.
+//
+// Three messages keep their ordinary meaning even then. An interrupt asks the
+// agent to stop, and wiping it is not what that means — the caller decides,
+// because a spoken interrupt may run on where a typed one may not. "clear
+// context" and the yes/no answering it are a clear of their own, so re-routing
+// them would answer a question that is no longer on screen. And a message
+// already starting with `/clear` is passed through untouched, since prefixing
+// it twice would leave the first `/clear` inside the instruction.
+function clearRouteText(text, isInterrupt) {
+  if (!getCtxOnly() || isClearCommand(text) || pendingClear || isInterrupt) return text;
+  if (normalizePhrase(text) === clearContextPhrase) return text;
+  return clearPrefix + ' ' + text;
+}
+
 // Handles a typed `/clear [instruction]`. Returns true if the message was
 // intercepted (caller must not forward it as an ordinary chat message).
 //
@@ -1572,6 +1716,10 @@ function maybeHandleClearPrefix(rawText) {
   window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
   firstMessageSent = false;
   writeFirstMessageSent(false);
+  // The agent that asked for this ack is being wiped, and the server cancels
+  // its parked wait. Holding the id would send the next message down the ack
+  // branch, where nothing queues it for the agent that comes back.
+  pendingAckId = null;
   pendingClearResume = true;
   showLoading();
   setTimeout(function () {
@@ -1630,49 +1778,23 @@ function handleSend() {
   }
   if (!text && fileRefs.length === 0) return;
 
-  // `/clear …` drives its own send sequence (wipe, then record, then resume)
-  // and must not fall through to the ordinary path.
-  if (text && fileRefs.length === 0 && maybeHandleClearPrefix(text)) {
+  if (submitUserMessage(text, 'typed', fileRefs).handled) {
+    // A route that keeps the message to itself sends nothing, so no broadcast
+    // will come back to empty the box — it has to be emptied here.
     chatInput.value = '';
     autoGrow();
     updateSendButton();
     return;
   }
 
-  // Clear-context flow is handled purely client-side — intercept before any
-  // sending/loading state changes so the input stays interactive.
-  if (text && fileRefs.length === 0 && maybeHandleClearContext(text, true)) {
-    chatInput.value = '';
-    autoGrow();
-    updateSendButton();
-    return;
-  }
-
-  // Don't display the bubble yet — wait for the server to broadcast it back.
-  // Use readOnly instead of disabled to preserve focus and keep mobile keyboard up.
-  chatInput.focus();
-  chatInput.readOnly = true;
-  chatInput.classList.add('sending');
-  sendBtn.disabled = true;
-  sendBtn.classList.add('sending');
-  sendBtn.classList.remove('loading');
-  // Clean up staged file resources
+  // The text itself stays in the box until the server echoes it back (see the
+  // userMessage case), which is what proves it was not lost. The attachments
+  // have gone with it, so their previews can go.
   for (var j = 0; j < stagedFiles.length; j++) {
     if (stagedFiles[j].previewUrl) URL.revokeObjectURL(stagedFiles[j].previewUrl);
   }
   stagedFiles = [];
   renderStaging();
-  freezeCurrentReplies(text);
-  showLoading(); // hides quick replies via mutual exclusivity
-
-  pendingNotifyParent = true;
-  // Detect interrupt phrases for typed messages (exact match only)
-  var lowerText = normalizePhrase(text);
-  if (interruptPhrases.indexOf(lowerText) !== -1) {
-    pendingInterrupt = true;
-  }
-
-  sendMessage(text, fileRefs.length > 0 ? fileRefs : undefined);
 }
 
 // Auto-grow textarea
@@ -2135,13 +2257,7 @@ quickReplies.addEventListener('click', function (e) {
 
   var message = chip.dataset.message || '';
   if (!message) return;
-  // Intercept clear-context confirmation chips — handled purely client-side.
-  if (maybeHandleClearContext(message, true)) return;
-  // Don't display bubble — wait for server broadcast (same as handleSend).
-  pendingNotifyParent = true;
-  freezeCurrentReplies(message);
-  sendMessage(message);
-  showLoading(); // hides quick replies via mutual exclusivity
+  submitUserMessage(message, 'chip');
 });
 
 // --- Voice mode ---
@@ -2244,6 +2360,22 @@ function setMsgStyle(v) {
   writeStyleCookie(MSG_STYLE_COOKIE, (v || '').trim());
 }
 
+// --- Conversation context only ---
+// Ticked, every typed message takes the `/clear …` route: the agent is wiped,
+// the message is recorded, and the resumed agent reads the chat log back. Off
+// unless the cookie says otherwise — this throws away everything the agent has
+// worked out that is not written down in the chat, so it is never the default.
+
+var CTX_ONLY_COOKIE = 'agent-chat-ctx-only';
+
+function getCtxOnly() {
+  return getCookie(CTX_ONLY_COOKIE) === '1';
+}
+
+function setCtxOnly(on) {
+  writeStyleCookie(CTX_ONLY_COOKIE, on ? '1' : '');
+}
+
 function writeStyleCookie(name, value) {
   try {
     document.cookie = name + '=' + encodeURIComponent(value) +
@@ -2302,6 +2434,16 @@ var btnStyleSaveConfirm = document.getElementById('btn-style-save-confirm');
 var btnStyleSaveCancel = document.getElementById('btn-style-save-cancel');
 var settingsActions = document.querySelector('.settings-actions');
 var pillUnsaved = document.getElementById('preset-unsaved');
+var ctxOnlyInput = document.getElementById('ctx-only-input');
+
+if (ctxOnlyInput) {
+  ctxOnlyInput.addEventListener('change', function () {
+    setCtxOnly(ctxOnlyInput.checked);
+    // A cookie the browser refused (privacy mode) would leave the box ticked
+    // and the behaviour off, so the box follows what was actually stored.
+    ctxOnlyInput.checked = getCtxOnly();
+  });
+}
 
 /** Rebuild the saved-style pills, keeping them ahead of the "Custom" pill. */
 function renderSavedStyles() {
@@ -2440,6 +2582,7 @@ function updateSettingsStatus(note) {
 function openSettings() {
   if (!settingsPanel) return;
   msgStyleInput.value = getMsgStyle();
+  if (ctxOnlyInput) ctxOnlyInput.checked = getCtxOnly();
   renderSavedStyles();
   hideSaveRow();
   settingsPanel.hidden = false;
@@ -2832,21 +2975,7 @@ function setupSpeechRecognition() {
       return;
     }
 
-    // Clear-context flow — intercept purely client-side. Echo the spoken
-    // phrase as a user bubble so the user sees their voice was heard.
-    if (maybeHandleClearContext(text, true)) return;
-
-    // Detect interrupt phrases (stop, wait, cancel, hold on, etc.)
-    var lowerText = normalizePhrase(text);
-    var isInterrupt = interruptPhrases.some(function(phrase) {
-      return lowerText === phrase || lowerText.indexOf(phrase + ' ') === 0;
-    });
-
-    // Don't display bubble yet — wait for server broadcast.
-    pendingNotifyParent = true;
-    if (isInterrupt) pendingInterrupt = true;
-    sendMessage('\ud83c\udfa4 ' + text);
-    showLoading();
+    submitUserMessage(text, 'voice');
   };
 
   voiceRecognition.onerror = function(e) {

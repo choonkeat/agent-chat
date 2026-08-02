@@ -31,8 +31,39 @@ All notable changes to agent-chat are documented in this file.
   `AGENT_CHAT_EXPORT_DIR`; without it the reset still happens, says so in the
   chat, and starts blank. See
   `docs/adr/2026-08-02-clear-prefix-context-reset.md`.
+- **Conversation context only (experimental)** — a checkbox in the message-style
+  panel, off unless ticked, that puts every message through the `/clear …`
+  sequence above without the prefix. The agent is reset before each message and
+  comes back pointed at the chat log, so it knows only what the conversation
+  actually says and nothing it worked out and never wrote down.
+  Four messages keep their ordinary meaning even when it is on: an interrupt
+  (`stop` and friends), because wiping an agent is not what asking it to stop
+  means; `clear context` and the yes/no answering it, which are a reset of their
+  own and would otherwise answer a question no longer on screen; anything
+  already starting with `/clear`, since prefixing twice buries the first one in
+  the instruction; and any message carrying an attachment, because the
+  wipe-and-resume sequence has no way to hand files over.
+  Typed, tapped and spoken messages are all covered. A spoken one keeps its 🎤
+  in the recorded instruction — with the context gone that marker is all the
+  returning agent has to tell it is being spoken to.
+- Every user message now travels one pipeline — `markSource | detectInterrupt |
+  routeClearPrefix | routeClearContext | freezeUi | transmit` — entered only
+  through `submitUserMessage(text, source)`. The three ways of sending used to
+  make these decisions in three separate blocks, and they had drifted: `stop`
+  was matched exactly when typed, loosely when spoken, and not at all when
+  tapped, which is how the reset checkbox above nearly shipped covering one of
+  the three. **Sharing is now unavoidable rather than optional**: the code that
+  puts a message on the wire is the pipeline's last stage, not a helper standing
+  beside it, so there is nothing left to call around it. What genuinely differs
+  between typed, tapped and spoken is four fields in one `SEND_SOURCES` table —
+  the voice marker, whether an interrupt may run on into a sentence, whether it
+  interrupts at all, and whether there is a text box to lock.
 
 ### Fixes
+- A reset left the browser holding the reply slip (`pendingAckId`) of the agent
+  it had just wiped. The server cancels that parked wait, so the next message
+  went down the ack branch and was never queued for the agent that came back —
+  it reached nobody. Cleared with the wipe.
 - A message consisting of exactly a slash-triggered word (e.g. a bare `/clear`)
   could not be sent: the autocomplete trigger only dies at the first space, so
   the dropdown was still open and swallowed the Enter — with nothing selectable
