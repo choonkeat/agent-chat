@@ -55,6 +55,19 @@ Agent (Claude, etc.)
 | `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
 | `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies attachments to `./agent-chats/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
 
+## Chat commands
+
+Typed by the user in the chat input, handled by the browser — these never reach
+the agent as messages. They need agent-chat to be running inside a host that
+owns the agent's terminal (swe-swe); standalone, they report that and do
+nothing.
+
+| Command | Effect |
+|---------|--------|
+| `stop` (also `wait`, `cancel`, `hold on`, `abort`, `halt`, `pause`) | Interrupts the agent's current turn and nudges it to `check_messages`. |
+| `/clear <instruction>` | Resets the agent's context, then hands it `<instruction>` — the `/clear ` prefix is stripped, and the instruction is recorded in the chat and the streaming chat log. The agent comes back with a line pointing it at that log file, so the conversation survives the reset even though the agent's own memory does not. A bare `/clear` resets with no follow-up instruction. Requires the streaming export (below); without it the reset still happens but the earlier conversation is gone. See `docs/adr/2026-08-02-clear-prefix-context-reset.md`. |
+| `clear context` → `yes` | The older confirm-then-reset flow. Resets only; nothing is handed back. |
+
 ## Streaming chat-log export
 
 Set `AGENT_CHAT_EXPORT_DIR` (e.g. `agent-chats`, resolved relative to the

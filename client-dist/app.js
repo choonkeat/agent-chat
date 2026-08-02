@@ -179,6 +179,17 @@ var clearContextPhrase = 'clear context';
 var clearConfirmPhrase = 'yes';
 var clearCancelPhrase = 'no';
 var clearQuickReplies = ['Yes', 'No'];
+// `/clear <instruction>` wipes the agent's memory and hands it the instruction
+// afterwards, with the chat log as the only carrier between the two halves.
+// The order matters and is the whole point (see maybeHandleClearPrefix).
+var clearPrefix = '/clear';
+// How long to let the terminal settle after the wipe before posting the
+// instruction. The parent frame types Esc, then `/clear`, then Enter on its own
+// 300ms timers, so the wipe itself is not even keyed in until ~600ms; the rest
+// is headroom for the agent CLI to finish resetting. Too short and the resume
+// line lands in a screen that is still tearing down.
+var clearWipeSettleMs = 2000;
+var pendingClearResume = false; // awaiting messageQueued to type the resume line
 var warningShown = false; // show "type check_messages" warning only once
 var motdShown = false; // show MOTD tip only once per page load
 
@@ -1529,6 +1540,74 @@ function maybeHandleClearContext(rawText, echoUserBubble) {
   return false;
 }
 
+function isClearCommand(text) {
+  return text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
+}
+
+// Handles a typed `/clear [instruction]`. Returns true if the message was
+// intercepted (caller must not forward it as an ordinary chat message).
+//
+// The order below is load-bearing:
+//
+//   1. wipe the agent, 2. record the instruction, 3. point the agent at the file
+//
+// Wiping first stops an agent that is still running from consuming the
+// instruction and then being erased mid-thought. Recording second puts the
+// instruction in the chat log, which is what actually carries it across the
+// wipe. Pointing at the file third means nothing depends on the message queue:
+// a `/clear` leaves agent-chat's blocking wait parked (the terminal wipe is
+// invisible to it), so a queued instruction can be swallowed by that dead
+// waiter, and the spare copy agent-chat keeps is discarded by the first
+// send_progress the fresh agent makes. The file has neither failure mode.
+function maybeHandleClearPrefix(rawText) {
+  if (!isClearCommand(rawText)) return false;
+  var instruction = rawText === clearPrefix ? '' : rawText.slice(clearPrefix.length + 1).trim();
+  if (window.parent === window) {
+    addBubble(rawText, 'user', null, voiceMode ? 'voice' : null);
+    addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
+    return true;
+  }
+  freezeCurrentReplies(rawText);
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
+  firstMessageSent = false;
+  writeFirstMessageSent(false);
+  pendingClearResume = true;
+  showLoading();
+  setTimeout(function () {
+    if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
+      pendingClearResume = false;
+      addAgentMessage('Context cleared, but the chat connection dropped before the instruction was recorded. Type `check_messages` in the agent terminal to reconnect.', null, null, Date.now());
+      enableInput();
+      return;
+    }
+    var msg = { type: 'clear', text: instruction };
+    var tpl = getMsgStyle();
+    if (tpl) msg.template = tpl;
+    activeWs.send(JSON.stringify(msg));
+  }, clearWipeSettleMs);
+  return true;
+}
+
+// Types the line that brings the wiped agent back. The filename is fetched now
+// rather than cached at connect because set_chat_title renames the file
+// mid-session. No `@` in the text: typing one into the agent CLI opens its file
+// picker and the trailing Enter would pick an entry instead of submitting.
+function typeClearResumeLine() {
+  fetch('api/chatlog-path')
+    .then(function (r) { return r.json(); })
+    .catch(function () { return null; })
+    .then(function (d) {
+      var path = d && d.path ? d.path : '';
+      if (!path) {
+        addAgentMessage('Context cleared, but no chat log is being written (AGENT_CHAT_EXPORT_DIR is unset) — the agent resumes without the earlier conversation.', null, null, Date.now());
+      }
+      var text = path
+        ? 'resume ' + path + ' - read the whole file; the last USER entry in it is your instruction; reply with send_message'
+        : 'check_messages; reply me with a send_message';
+      window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
+    });
+}
+
 function handleSend() {
   var text = chatInput.value.trim();
   var fileRefs = [];
@@ -1536,6 +1615,15 @@ function handleSend() {
     if (stagedFiles[i].ref) fileRefs.push(stagedFiles[i].ref);
   }
   if (!text && fileRefs.length === 0) return;
+
+  // `/clear …` drives its own send sequence (wipe, then record, then resume)
+  // and must not fall through to the ordinary path.
+  if (text && fileRefs.length === 0 && maybeHandleClearPrefix(text)) {
+    chatInput.value = '';
+    autoGrow();
+    updateSendButton();
+    return;
+  }
 
   // Clear-context flow is handled purely client-side — intercept before any
   // sending/loading state changes so the input stays interactive.
@@ -1962,6 +2050,14 @@ chatInput.addEventListener('keydown', function (e) {
     }
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
+      // A bare `/clear` still has the `/` trigger live (it dies on the first
+      // space), so the dropdown would otherwise eat the Enter that submits it —
+      // silently, since a status-only dropdown has nothing to select either.
+      if (e.key === 'Enter' && isClearCommand(chatInput.value.trim())) {
+        acHide();
+        handleSend();
+        return;
+      }
       if (items[acActiveIndex]) {
         acSelect(items[acActiveIndex].dataset.value);
       }
@@ -3093,7 +3189,7 @@ function connect() {
     backoffDelay = BACKOFF_INITIAL;
     if (!motdShown && window.parent !== window) {
       motdShown = true;
-      addBubble('Tip: say **stop** to interrupt, or **clear context** to reset the agent context.', 'system');
+      addBubble('Tip: say **stop** to interrupt, or start a message with **`/clear `** to reset the agent context and hand it the rest as its next instruction.', 'system');
     }
   };
 
@@ -3247,6 +3343,13 @@ function connect() {
         break;
 
       case 'messageQueued':
+        // A `/clear …` is mid-flight: the marker and instruction are recorded,
+        // so the file is now complete and the resume line can name it.
+        if (pendingClearResume) {
+          pendingClearResume = false;
+          typeClearResumeLine();
+          break;
+        }
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
         if (pendingNotifyParent) {

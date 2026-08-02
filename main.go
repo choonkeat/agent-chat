@@ -39,6 +39,12 @@ var bus *EventBus
 var version = "dev"
 var commit = "unknown"
 
+// clearMarkerText is the bubble agent-chat writes where a `/clear …` wiped the
+// agent's memory. It exists to be found: the resume line currently re-reads the
+// whole log, but the marker is what a future "read only since the last clear"
+// mode would seek to, so it is written from day one.
+const clearMarkerText = "⟪ context cleared ⟫"
+
 // themeCookieName is the cookie the browser reads for light/dark theme.
 var themeCookieName string
 
@@ -373,6 +379,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/ws", handleWebSocket)
 	mux.HandleFunc("/upload", handleUpload)
 	mux.HandleFunc("/api/export", handleExport)
+	mux.HandleFunc("/api/chatlog-path", handleChatlogPath)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
@@ -501,6 +508,27 @@ func handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChatlogPath reports the streaming chat log's current filename, relative
+// to the working directory so the agent can open it verbatim. The browser reads
+// this at /clear time rather than caching it at connect: set_chat_title renames
+// the file mid-session, and a stale name would send the resumed agent to a file
+// that no longer exists. `path` is "" when AGENT_CHAT_EXPORT_DIR is unset —
+// there is no file to resume from, and the caller must say so rather than
+// inventing a name.
+func handleChatlogPath(w http.ResponseWriter, r *http.Request) {
+	path := ""
+	if chatStream != nil {
+		path = chatStream.MDPath()
+		if cwd, err := os.Getwd(); err == nil {
+			if rel, relErr := filepath.Rel(cwd, path); relErr == nil {
+				path = rel
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"path": path})
 }
 
 func saveUploadedFile(fh *multipart.FileHeader) (FileRef, error) {
@@ -702,6 +730,22 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 					default:
 					}
 				}
+			}
+		case "clear":
+			// Typed `/clear …` in the browser. The terminal wipe has already
+			// been sent, so nothing is listening on the agent side; record the
+			// boundary as a chat bubble (which is what puts it in the streamed
+			// .md) and queue the stripped instruction, if any, for the agent
+			// that comes back. messageQueued is sent either way — the browser
+			// waits for it before typing the resume line, and a bare `/clear`
+			// with no instruction must not leave it waiting forever.
+			bus.Publish(Event{Type: "agentMessage", Text: clearMarkerText})
+			if m.Text != "" || len(m.Files) > 0 {
+				bus.ReceiveUserMessage(m.Text, m.Files, m.Template)
+			}
+			select {
+			case writeCh <- map[string]string{"type": "messageQueued"}:
+			default:
 			}
 		case "ack":
 			if m.ID != "" {
