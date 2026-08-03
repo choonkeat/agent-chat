@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.9.1] — 2026-08-03
 
 ### Changes
 - **A bubble goes read the moment `check_messages` drains it.** The receipt used
@@ -27,6 +27,9 @@ All notable changes to agent-chat are documented in this file.
   drawing gets the same unread-then-read treatment as any other message. The ack
   machinery (`CreateAck`/`ResolveAck`, `pendingAckId`, the `ack_id` event field
   and the `ack` websocket message) is removed.
+- The "Conversation context only" checkbox in Settings now explains itself in one
+  line: "Every message clears the agent context first and points it at this
+  chat's log. The agent then knows only what this conversation says."
 
 ## [0.9.0] — 2026-08-02
 
