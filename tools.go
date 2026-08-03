@@ -911,6 +911,27 @@ func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 		}, nil, nil
 	})
 
+	// agent_waiting lets an orchestrator tell "the agent will receive this"
+	// from "this is sitting in a queue nobody is reading". A message pushed
+	// while no agent is parked stays unread until something types into the
+	// agent's terminal -- the browser UI does that itself, so headless callers
+	// (MCP, automation) otherwise have no wake-up at all.
+	//
+	// Deliberately does NOT cancel the active wait the way agent-facing tools
+	// do: asking the question must not consume the answer.
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "agent_waiting",
+		Description: "Report whether an agent is currently parked in a blocking send_message, i.e. whether a message pushed now would be delivered to it rather than left unread in the queue. Poll this after send_chat_message to decide whether the agent needs to be woken.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, params *struct{}) (*mcp.CallToolResult, any, error) {
+		data, err := json.Marshal(map[string]bool{"waiting": bus.HasActiveWait()})
+		if err != nil {
+			return nil, nil, fmt.Errorf("marshal agent_waiting: %w", err)
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(data)}},
+		}, nil, nil
+	})
+
 	type GetHistoryParams struct {
 		Cursor int64 `json:"cursor,omitempty" jsonschema:"Return events with seq > cursor. 0 returns all."`
 	}

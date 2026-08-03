@@ -561,6 +561,20 @@ func (eb *EventBus) CancelActiveWait() {
 	eb.waitMu.Unlock()
 }
 
+// HasActiveWait reports whether an agent is currently parked in a blocking
+// wait, i.e. whether a message pushed right now would be handed to it.
+//
+// This is what an external orchestrator needs to know before deciding to poke
+// the agent's terminal: with no active wait the message lands in the queue and
+// nothing tells the agent to look, so it sits unread indefinitely. The browser
+// UI covers this by typing a check_messages nudge itself, which leaves
+// headless callers (MCP, automation) with no wake-up at all.
+func (eb *EventBus) HasActiveWait() bool {
+	eb.waitMu.Lock()
+	defer eb.waitMu.Unlock()
+	return eb.activeWait != nil
+}
+
 // SetLastVoice records whether the last consumed user messages contained voice input.
 func (eb *EventBus) SetLastVoice(voice bool) {
 	eb.mu.Lock()

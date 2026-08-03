@@ -600,6 +600,37 @@ func TestBeginBlockingWaitSupersedesPrevious(t *testing.T) {
 	}
 }
 
+// HasActiveWait is what an orchestrator uses to tell "the agent will receive
+// this" from "this is queued and nobody is reading". Getting it wrong either
+// strands the message or types into a busy agent, so it must track the wait
+// exactly: false when idle, true while parked, false again once the wait ends
+// by any route.
+func TestHasActiveWaitTracksTheParkedAgent(t *testing.T) {
+	bus := NewEventBus()
+	if bus.HasActiveWait() {
+		t.Fatal("a fresh bus reports a waiting agent")
+	}
+
+	_, end := bus.BeginBlockingWait(context.Background())
+	if !bus.HasActiveWait() {
+		t.Fatal("a parked agent is not reported as waiting")
+	}
+
+	end()
+	if bus.HasActiveWait() {
+		t.Fatal("a finished wait is still reported as waiting")
+	}
+
+	// A cancelled wait (the zombie path) must also read as "nobody waiting" --
+	// otherwise the orchestrator suppresses the nudge and the message strands.
+	_, end2 := bus.BeginBlockingWait(context.Background())
+	defer end2()
+	bus.CancelActiveWait()
+	if bus.HasActiveWait() {
+		t.Fatal("a cancelled wait is still reported as waiting")
+	}
+}
+
 func TestEndBlockingWaitClearsOnlyItself(t *testing.T) {
 	bus := NewEventBus()
 	_, end1 := bus.BeginBlockingWait(context.Background())
