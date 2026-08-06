@@ -2,9 +2,19 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.10.0] — 2026-08-06
 
 ### Features
+- **`agent_waiting` tells a caller whether a pushed message will actually be
+  read.** A message pushed while an agent is parked in a blocking
+  `send_message` reaches it immediately; pushed while no agent is parked, it
+  lands in the queue and nothing tells the agent to look, so it sits unread.
+  The browser UI hides this by typing a `check_messages` nudge itself, which
+  left headless callers (MCP, automation) with no wake-up at all. The new tool
+  reports that state (`{"waiting": true|false}`) so an orchestrator can nudge
+  only when the message would otherwise strand. It deliberately does not cancel
+  the active wait the way agent-facing tools do -- asking the question must not
+  consume the answer.
 - **A ding when a long run finishes.** The Send button turning from amber back
   to blue was the only sign an answer had landed, and a run you walked away from
   finished silently. A short two-note tone now marks that transition for runs
