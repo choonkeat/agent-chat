@@ -2,6 +2,16 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.10.1] — 2026-08-06
+
+### Changes
+- **The Send button shows when "conversation context only" is on.** The setting
+  wipes the agent before every message, but nothing in the composer said so --
+  the only way to tell was to open Settings and look. The Send button now wears
+  a dark ring while it is on, in both of its colours (navy on the blue idle
+  button, brown on the amber agent-busy one). Drawn inside the button rather
+  than around it, so switching the setting on doesn't resize the button.
+
 ## [0.10.0] — 2026-08-06
 
 ### Features
