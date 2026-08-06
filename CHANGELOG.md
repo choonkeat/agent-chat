@@ -2,6 +2,29 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Features
+- **A ding when a long run finishes.** The Send button turning from amber back
+  to blue was the only sign an answer had landed, and a run you walked away from
+  finished silently. A short two-note tone now marks that transition for runs
+  longer than 20 seconds — long enough that a one-line answer never sounds, so
+  the tone keeps meaning "come back". Switchable in Settings (on by default,
+  remembered per browser), and switching it on plays it once so you can hear
+  what you chose. Generated in the page rather than loaded, so there is no asset
+  to fetch. Runs replayed from history on connect stay silent.
+
+### Changes
+- **"Conversation context only" belongs to the chat, not the browser.** It lived
+  in a cookie, and cookies ignore the port that tells one chat from another — so
+  ticking it anywhere ticked it everywhere, including chats already running. The
+  answer is now held by the chat's own server (`POST /api/ctx-only`, inlined
+  back as `CTX_ONLY_SESSION`), so a reload and a second tab on the same chat
+  agree while other chats are untouched. The cookie stays as the seed a chat
+  that has never been answered opens with, so switching on still carries into
+  the next chat you start. Unchanged fallback order: this chat's answer, then
+  the browser's last choice, then `-conversation-context-only`.
+
 ## [0.9.1] — 2026-08-03
 
 ### Changes

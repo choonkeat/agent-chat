@@ -36,8 +36,15 @@
           <label class="settings-check">
             <input type="checkbox" id="ctx-only-input">
             <span>
-              <strong>Conversation context only (experimental) <span class="settings-scope">every chat in this browser</span></strong>
-              <em>Every message clears the agent context first and points it at this chat's log. The agent then knows only what this conversation says.</em>
+              <strong>Conversation context only (experimental) <span class="settings-scope">this chat</span></strong>
+              <em>Every message clears the agent context first and points it at this chat's log. The agent then knows only what this conversation says. New chats start with whatever you last chose here.</em>
+            </span>
+          </label>
+          <label class="settings-check">
+            <input type="checkbox" id="ding-input">
+            <span>
+              <strong>Ding when a long reply lands <span class="settings-scope">every chat in this browser</span></strong>
+              <em>Plays a short tone when the Send button turns from amber back to blue, for runs longer than 20 seconds.</em>
             </span>
           </label>
           <div class="settings-row">

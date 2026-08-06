@@ -365,10 +365,10 @@ test.describe('/clear prefix', () => {
     }
   });
 
-  // The tick travels between sessions the way the message style does — it is
-  // how you want to be talked to, not a property of one conversation. Switching
-  // it on in one chat switches it on in the next.
-  test('the tick reaches every chat in the browser', async ({ page }) => {
+  // The answer seeds forward but never reaches back: a chat that has not been
+  // answered opens with the browser's last choice, and a chat already running
+  // keeps its own regardless of what happens elsewhere.
+  test('the tick seeds the next chat and leaves running chats alone', async ({ page }) => {
     const first = await startServer();
     const second = await startServer();
     try {
@@ -377,14 +377,19 @@ test.describe('/clear prefix', () => {
       await page.locator('#ctx-only-input').check();
       await expect(page.locator('#ctx-only-input')).toBeChecked();
 
-      // Same browser, a different session started separately: also on.
+      // A chat never answered here: opens with the browser's last choice.
       await gotoRetry(page, second.url);
       await page.locator('#btn-settings').click();
       await expect(page.locator('#ctx-only-input')).toBeChecked();
 
-      // Back off: the answer travels the other way too.
+      // Answering the second chat is the second chat's business only.
       await page.locator('#ctx-only-input').uncheck();
       await gotoRetry(page, first.url);
+      await page.locator('#btn-settings').click();
+      await expect(page.locator('#ctx-only-input')).toBeChecked();
+
+      // And it holds across a reload of the chat that owns it.
+      await gotoRetry(page, second.url);
       await page.locator('#btn-settings').click();
       await expect(page.locator('#ctx-only-input')).not.toBeChecked();
     } finally {
