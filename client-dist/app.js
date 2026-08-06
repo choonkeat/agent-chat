@@ -1419,39 +1419,80 @@ function dingIfLongRun(elapsedMs) {
   if (historyStreaming) return;
   if (elapsedMs < DING_MIN_MS) return;
   if (!getDing()) return;
+  // Logged because "I heard nothing" has two very different causes — the
+  // decision never happened, or it happened and the audio was refused — and
+  // only the console can tell them apart after the fact.
+  console.log('[' + ts() + '] Ding: run took ' + elapsedMs + 'ms, audio ' + (dingCtx ? dingCtx.state : 'not yet opened'));
   playDing();
 }
 
-// Two rising notes, generated here rather than loaded — no asset to embed, no
-// request to make, and nothing to fail behind a strict page policy. Browsers
-// refuse audio until the page has been interacted with; sending the message
-// that started the run is that interaction, so by the time a run can end, the
-// sound is allowed. Wrapped anyway: a blocked context must not take the
-// finished-run handling down with it.
-function playDing() {
+// --- The audio context ---
+//
+// One context for the life of the page, opened on the first interaction and
+// never closed. Building a fresh one at ding time looks tidier and does not
+// work: a context created without a user gesture, or in a hidden tab, can come
+// up 'suspended' and stay silent — and "hidden tab, nobody typing" is exactly
+// the situation the ding exists for. The symptom is precise: toggling the
+// setting sounds (a click is a gesture), a finished run does not.
+//
+// Opening it while the user is demonstrably present makes the later playback a
+// scheduling call on an already-running context, with no policy question left
+// to answer. resume() is still attempted on every gesture and again before
+// playing, because a context can be suspended out from under us.
+var dingCtx = null;
+
+function ensureDingCtx() {
   try {
     var Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    var ctx = new Ctx();
-    var start = ctx.currentTime;
-    [[880, 0], [1320, 0.13]].forEach(function (note) {
-      var osc = ctx.createOscillator();
-      var gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = 'sine';
-      osc.frequency.value = note[0];
-      // Ramped, not switched: a square-edged start and stop clicks.
-      var at = start + note[1];
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(0.2, at + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
-      osc.start(at);
-      osc.stop(at + 0.24);
-    });
-    // Audio contexts are a limited resource; this one has done its job.
-    setTimeout(function () { try { ctx.close(); } catch (e) { /* already gone */ } }, 800);
-  } catch (e) { /* audio unavailable — the run still finished */ }
+    if (!Ctx) return null;
+    if (!dingCtx) dingCtx = new Ctx();
+    if (dingCtx.state === 'suspended') dingCtx.resume().catch(function () { /* still blocked */ });
+    return dingCtx;
+  } catch (e) {
+    return null; // audio unavailable — the rest of the chat does not care
+  }
+}
+
+// Capture-phase and passive so nothing in the app can swallow the unlock, and
+// on every gesture rather than once: the first attempt can be refused.
+['pointerdown', 'keydown', 'touchstart'].forEach(function (evt) {
+  window.addEventListener(evt, function () { ensureDingCtx(); }, { capture: true, passive: true });
+});
+
+// Two rising notes, generated here rather than loaded — no asset to embed, no
+// request to make, and nothing to fail behind a strict page policy. Wrapped
+// throughout: a blocked context must not take the finished-run handling down
+// with it.
+function playDing() {
+  var ctx = ensureDingCtx();
+  if (!ctx) return;
+  var schedule = function () {
+    try {
+      var start = ctx.currentTime;
+      [[880, 0], [1320, 0.13]].forEach(function (note) {
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.value = note[0];
+        // Ramped, not switched: a square-edged start and stop clicks.
+        var at = start + note[1];
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.2, at + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+        osc.start(at);
+        osc.stop(at + 0.24);
+      });
+    } catch (e) { /* audio unavailable — the run still finished */ }
+  };
+  // Scheduling into a suspended context queues notes against a clock that is
+  // not moving: they are consumed, silently, and never heard.
+  if (ctx.state === 'running') {
+    schedule();
+  } else {
+    ctx.resume().then(schedule).catch(function () { /* blocked — stay silent */ });
+  }
 }
 
 // Render the elapsed time from the bubble's stored start timestamp. Always
