@@ -1382,6 +1382,78 @@ function appendAfterLoader(el) {
 
 var loaderTimer = null;
 
+// --- Done-ding ---
+// A long run ends silently: the Send button turns from amber back to blue and
+// nothing else happens, so an answer can sit unread for as long as it takes to
+// glance back at the tab. A short tone at that moment is the whole feature.
+//
+// Three things keep it from becoming noise:
+//   1. Only long runs. Under DING_MIN_MS the answer arrived while you were
+//      still looking at the screen, and a ding for every one-liner would be
+//      trained away within a day.
+//   2. Only live runs. History streams through the same showLoading /
+//      removeLoading path on connect, so a reconnect would replay every finish
+//      the chat ever had.
+//   3. Switchable, and remembered per browser — unlike the tick above, a
+//      preference about sound is about you, not about one conversation.
+//
+// Wall-clock from when THIS browser saw the run start, not the loader's
+// displayed elapsed time: that one is anchored to the previous bubble's
+// timestamp so the counter stays continuous across a reconnect, which would
+// make a freshly-opened tab ding for a wait it never sat through.
+
+var DING_COOKIE = 'agent-chat-ding';
+var DING_MIN_MS = 20000;
+var busySince = 0;          // when the current run started, 0 when idle
+var historyStreaming = false; // between 'connected' and 'historyEnd'
+
+function getDing() {
+  return getCookie(DING_COOKIE) !== '0'; // on unless switched off
+}
+
+function setDing(on) {
+  writeStyleCookie(DING_COOKIE, on ? '1' : '0');
+}
+
+function dingIfLongRun(elapsedMs) {
+  if (historyStreaming) return;
+  if (elapsedMs < DING_MIN_MS) return;
+  if (!getDing()) return;
+  playDing();
+}
+
+// Two rising notes, generated here rather than loaded — no asset to embed, no
+// request to make, and nothing to fail behind a strict page policy. Browsers
+// refuse audio until the page has been interacted with; sending the message
+// that started the run is that interaction, so by the time a run can end, the
+// sound is allowed. Wrapped anyway: a blocked context must not take the
+// finished-run handling down with it.
+function playDing() {
+  try {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    var ctx = new Ctx();
+    var start = ctx.currentTime;
+    [[880, 0], [1320, 0.13]].forEach(function (note) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = note[0];
+      // Ramped, not switched: a square-edged start and stop clicks.
+      var at = start + note[1];
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.2, at + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+      osc.start(at);
+      osc.stop(at + 0.24);
+    });
+    // Audio contexts are a limited resource; this one has done its job.
+    setTimeout(function () { try { ctx.close(); } catch (e) { /* already gone */ } }, 800);
+  } catch (e) { /* audio unavailable — the run still finished */ }
+}
+
 // Render the elapsed time from the bubble's stored start timestamp. Always
 // derives the value from (now - start) rather than incrementing a counter, so
 // a late/throttled interval tick self-corrects instead of accumulating drift.
@@ -1395,7 +1467,7 @@ function renderLoaderElapsed(div) {
 }
 
 function showLoading() {
-  removeLoading();
+  dropLoading();
   quickReplies.classList.remove('visible'); // loading and quick replies are mutually exclusive
   var div = document.createElement('div');
   div.className = 'bubble agent loading';
@@ -1417,14 +1489,29 @@ function showLoading() {
     messages.insertBefore(div, quickReplies);
   }
   sendBtn.classList.add('agent-busy');
+  // Only the first showLoading of a run starts the clock. Progress updates
+  // redraw the loader mid-run, and restarting here would reset a two-minute
+  // wait to zero and swallow the ding at the end of it.
+  if (!busySince) busySince = Date.now();
   scrollToBottom(false);
 }
 
-function removeLoading() {
+// Take the loader down without judging whether a run just ended — showLoading
+// redraws through here, and a redraw is not a finish.
+function dropLoading() {
   if (loaderTimer) { clearInterval(loaderTimer); loaderTimer = null; }
   var el = document.getElementById('loading-bubble');
   if (el) el.remove();
   sendBtn.classList.remove('agent-busy');
+}
+
+// The agent is done: amber Send goes back to blue. This is the one transition
+// worth a sound, so it is also where the ding is decided.
+function removeLoading() {
+  var startedAt = busySince;
+  busySince = 0;
+  dropLoading();
+  if (startedAt) dingIfLongRun(Date.now() - startedAt);
 }
 
 // The queue handed these IDs to a waiting request. That is NOT proof they
@@ -2501,19 +2588,34 @@ function setMsgStyle(v) {
 // Ticked, every message takes the `/clear …` route: the agent is wiped, the
 // message is recorded, and the resumed agent reads the chat log back.
 //
-// Off until switched on, and once switched, remembered for every chat in the
-// browser — the same reach as the message style, and for the same reason: it is
-// how you want to be talked to, not a property of one conversation. Measured
-// over ten turns of one session it held the context flat at ~40k while the same
-// work unbroken climbed past 335k, but wiping the agent on every message is a
-// big enough change to ask for rather than inherit.
+// Off until switched on. Measured over ten turns of one session it held the
+// context flat at ~40k while the same work unbroken climbed past 335k, but
+// wiping the agent on every message is a big enough change to ask for rather
+// than inherit.
 //
-// The session names the starting position (`-conversation-context-only`,
-// inlined as CTX_ONLY_DEFAULT) and the box overrides it. So the cookie stores
-// '1' or '0', never an empty string: "off" and "never answered" have to be told
-// apart, and only the second defers to the session.
+// The answer belongs to the chat, not to the browser: unlike the message style,
+// this is not how you want to be talked to, it is how this one conversation is
+// run — a long investigation wants its context kept, the next chat may not. The
+// server holds it (inlined as CTX_ONLY_SESSION), so a reload and a second tab
+// on the same chat agree, and a different chat is untouched.
+//
+// The cookie stays, demoted: it is the seed a chat that has never been answered
+// opens with, so switching on in one chat still carries into the next one you
+// start. Three answers, first one that exists wins:
+//
+//   1. this chat's own answer     CTX_ONLY_SESSION ('1' | '0' | '')
+//   2. the browser's last choice  cookie ('1' | '0' | absent)
+//   3. the session's flag         CTX_ONLY_DEFAULT (-conversation-context-only)
+//
+// Which is why both stores are tri-state: "off" and "never answered" pick
+// different fallbacks, so neither may be stored as an empty string.
 
 var CTX_ONLY_COOKIE = 'agent-chat-ctx-only';
+
+// This chat's answer, '1' | '0' | '' for unanswered. Seeded from the page and
+// updated locally on every tick, so the box is right even if the POST that
+// records it server-side never lands.
+var ctxOnlySession = typeof CTX_ONLY_SESSION === 'string' ? CTX_ONLY_SESSION : '';
 
 /** No inlined answer means an older server, which predates the setting; the
     current default is the right guess for it. */
@@ -2522,13 +2624,26 @@ function ctxOnlyDefault() {
 }
 
 function getCtxOnly() {
+  if (ctxOnlySession === '1' || ctxOnlySession === '0') return ctxOnlySession === '1';
   var raw = getCookie(CTX_ONLY_COOKIE);
   if (raw !== '1' && raw !== '0') return ctxOnlyDefault();
   return raw === '1';
 }
 
 function setCtxOnly(on) {
+  ctxOnlySession = on ? '1' : '0';
+  // Also the seed for the next chat started in this browser — the setting still
+  // travels forward, it just stops reaching back into chats already running.
   writeStyleCookie(CTX_ONLY_COOKIE, on ? '1' : '0');
+  // Best effort: an older server has no such route, and the cookie alone then
+  // behaves exactly as it did before this became per-chat.
+  try {
+    fetch('api/ctx-only', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on: on })
+    }).catch(function () { /* offline or old server — cookie carries it */ });
+  } catch (e) { /* no fetch — same fallback */ }
 }
 
 function writeStyleCookie(name, value) {
@@ -2590,12 +2705,24 @@ var btnStyleSaveCancel = document.getElementById('btn-style-save-cancel');
 var settingsActions = document.querySelector('.settings-actions');
 var pillUnsaved = document.getElementById('preset-unsaved');
 var ctxOnlyInput = document.getElementById('ctx-only-input');
+var dingInput = document.getElementById('ding-input');
+
+if (dingInput) {
+  dingInput.addEventListener('change', function () {
+    setDing(dingInput.checked);
+    dingInput.checked = getDing();
+    // Switching it on plays the tone once: a sound setting you cannot hear
+    // while choosing it is a setting you have to test by waiting for a run.
+    if (dingInput.checked) playDing();
+  });
+}
 
 if (ctxOnlyInput) {
   ctxOnlyInput.addEventListener('change', function () {
     setCtxOnly(ctxOnlyInput.checked);
-    // A cookie the browser refused (privacy mode) would leave the box ticked
-    // and the behaviour off, so the box follows what was actually stored.
+    // The box follows what was actually stored. Now that the answer is held in
+    // memory for this chat, a cookie the browser refused (privacy mode) no
+    // longer costs the tick — it only costs the seed for the next chat.
     ctxOnlyInput.checked = getCtxOnly();
   });
 }
@@ -2738,6 +2865,7 @@ function openSettings() {
   if (!settingsPanel) return;
   msgStyleInput.value = getMsgStyle();
   if (ctxOnlyInput) ctxOnlyInput.checked = getCtxOnly();
+  if (dingInput) dingInput.checked = getDing();
   renderSavedStyles();
   hideSaveRow();
   settingsPanel.hidden = false;
@@ -3558,11 +3686,19 @@ function connect() {
         // cause freezeCurrentReplies to freeze the wrong replies when
         // history events stream in.
         connectQuickReplies = data.quickReplies || null;
+        // History streams in as ordinary events from here until historyEnd,
+        // finished runs and all. Keep the ding quiet until it's live.
+        historyStreaming = true;
         // Don't steal focus on a background reconnect; do focus on first connect.
         enableInput(undefined, !isReconnect);
         break;
 
       case 'historyEnd':
+        historyStreaming = false;
+        // A run already in flight when this browser connected started before
+        // this browser existed. Time it from here, so the ding measures the
+        // wait actually sat through rather than one inherited from the log.
+        if (busySince) busySince = Date.now();
         // History replay complete — show deferred quick replies if the
         // event stream didn't already set them (e.g. reconnect with no
         // missed events, or last event was an agentMessage with replies).

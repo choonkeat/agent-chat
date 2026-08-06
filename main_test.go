@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -1025,5 +1026,50 @@ func TestBuiltinFilepathSlashListsRoots(t *testing.T) {
 	}
 	if has(results, root2) {
 		t.Errorf("prefix matching only root1 must not list root2, got %v", results)
+	}
+}
+
+// The tick is this chat's answer, so the page has to be able to tell "off" from
+// "never answered" — the second one falls through to the browser's last choice,
+// the first one must not.
+func TestCtxOnlySessionTriState(t *testing.T) {
+	ctxOnlyMu.Lock()
+	ctxOnlySession = nil
+	ctxOnlyMu.Unlock()
+	if got := ctxOnlyInlined(); got != "" {
+		t.Fatalf("untouched chat should inline \"\", got %q", got)
+	}
+
+	for _, tc := range []struct {
+		on   bool
+		want string
+	}{{true, "1"}, {false, "0"}} {
+		body := strings.NewReader(fmt.Sprintf(`{"on":%t}`, tc.on))
+		req := httptest.NewRequest(http.MethodPost, "/api/ctx-only", body)
+		rr := httptest.NewRecorder()
+
+		handleCtxOnly(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("on=%t: expected 200, got %d", tc.on, rr.Code)
+		}
+		if got := ctxOnlyInlined(); got != tc.want {
+			t.Errorf("on=%t: inlined %q, want %q", tc.on, got, tc.want)
+		}
+	}
+
+	ctxOnlyMu.Lock()
+	ctxOnlySession = nil
+	ctxOnlyMu.Unlock()
+}
+
+func TestCtxOnlyMethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/ctx-only", nil)
+	rr := httptest.NewRecorder()
+
+	handleCtxOnly(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rr.Code)
 	}
 }

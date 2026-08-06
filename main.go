@@ -59,15 +59,51 @@ var autocompleteTriggers string
 // -welcome-replies flag; set to "" to disable.
 var welcomeReplies []string
 
-// conversationContextOnly is what a browser that has never touched the
-// "conversation context only" box starts with: every message resets the agent
-// and points it at the chat log. Off by default — resetting the agent on every
-// message is a large change to how a session behaves, so it is something you
-// switch on, not something that happens to you. `-conversation-context-only`
-// turns it on for a session; a browser that has ticked or unticked the box
-// keeps its own answer either way, which is how the setting travels between
-// sessions the way the message style does.
+// conversationContextOnly is the last-resort opening position for "conversation
+// context only": every message resets the agent and points it at the chat log.
+// Off by default — resetting the agent on every message is a large change to
+// how a session behaves, so it is something you switch on, not something that
+// happens to you. Outranked by this chat's own answer and, failing that, by the
+// browser's last choice (see ctxOnlySession below).
 var conversationContextOnly bool
+
+// The tick belongs to the chat, not to the browser. It used to live only in a
+// cookie, and cookies ignore the port that tells one chat apart from another —
+// so answering in one chat silently answered for every chat on the host, which
+// is wrong for a switch that changes how THIS conversation is run. This process
+// is one conversation, so it holds this conversation's answer.
+//
+// nil until the box is touched here: "never answered" has to outrank nothing,
+// so it can fall through to the browser's last choice (the cookie, now demoted
+// to the seed a brand-new chat opens with) and then to the session flag.
+//
+// In memory only. A restart loses the answer and the chat re-seeds from the
+// cookie, which is the same place it would have come from anyway.
+var (
+	ctxOnlyMu      sync.Mutex
+	ctxOnlySession *bool
+)
+
+// ctxOnlyInlined renders this chat's answer for the page: "1", "0", or "" for
+// never answered. A tri-state, because "off" and "unanswered" pick different
+// fallbacks.
+func ctxOnlyInlined() string {
+	ctxOnlyMu.Lock()
+	defer ctxOnlyMu.Unlock()
+	if ctxOnlySession == nil {
+		return ""
+	}
+	if *ctxOnlySession {
+		return "1"
+	}
+	return "0"
+}
+
+func setCtxOnlySession(on bool) {
+	ctxOnlyMu.Lock()
+	defer ctxOnlyMu.Unlock()
+	ctxOnlySession = &on
+}
 
 // triggerMap is the resolved flat map of trigger character → URL.
 // A URL of "builtin:filepath" signals the built-in filepath handler.
@@ -224,7 +260,7 @@ func main() {
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
-	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; a browser that has ticked or unticked the box keeps its own answer either way")
+	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; the opening position for this chat only, outranked by the box in Settings and by the browser's last choice")
 	flag.Parse()
 
 	conversationContextOnly = *ctxOnlyFlag
@@ -388,6 +424,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/api/export", handleExport)
 	mux.HandleFunc("/api/chatlog-path", handleChatlogPath)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
+	mux.HandleFunc("/api/ctx-only", handleCtxOnly)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
 	// This avoids relative-path resolution failures when the page is served
@@ -395,13 +432,19 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	indexHTML, _ := fs.ReadFile(staticSub, "index.html")
 	triggerMap = buildTriggerMap(autocompleteTriggers, autocompleteURL)
 	triggerCharsJSON, _ := json.Marshal(triggerChars(triggerMap))
-	configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t;</script>",
-		themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly)
-	indexPage := strings.Replace(string(indexHTML), "<!--CONFIG-->", configScript, 1)
+	// Rendered per request, not once at startup: CTX_ONLY_SESSION changes
+	// whenever the box is touched, and a reloaded page has to see the answer
+	// this chat is actually running with.
+	indexBefore, indexAfter, _ := strings.Cut(string(indexHTML), "<!--CONFIG-->")
+	renderIndex := func() string {
+		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q;</script>",
+			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined())
+		return indexBefore + configScript + indexAfter
+	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			fmt.Fprint(w, indexPage)
+			fmt.Fprint(w, renderIndex())
 			return
 		}
 		fileServer.ServeHTTP(w, r)
@@ -536,6 +579,29 @@ func handleChatlogPath(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"path": path})
+}
+
+// handleCtxOnly records this chat's answer to "conversation context only". The
+// browser posts on every tick and untick, so a reload — or a second tab on the
+// same chat — reads back what this conversation is running with rather than
+// what the browser last chose somewhere else. An older server has no route
+// here; the browser treats the failure as "cookie only", which is exactly how
+// it behaved before.
+func handleCtxOnly(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	setCtxOnlySession(body.On)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"on": body.On})
 }
 
 func saveUploadedFile(fh *multipart.FileHeader) (FileRef, error) {
