@@ -176,6 +176,31 @@ test.describe('Done-ding on long runs', () => {
     await expect(page.locator('#ding-input')).not.toBeChecked();
   });
 
+  // The decision to play was never the fragile half. Building a fresh
+  // AudioContext at ding time was: one created without a user gesture, or in a
+  // backgrounded tab, can come up suspended and stay silent — precisely when
+  // the ding matters. So the context is opened by the first interaction, kept
+  // running, and reused.
+  test('one audio context is opened by interaction and reused, never closed', async ({ page }) => {
+    await gotoRetry(page, server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    // A real click — the gesture that unlocks audio.
+    await page.locator('#chat-input').click();
+    await expect.poll(() => page.evaluate(() => window.dingCtx && window.dingCtx.state))
+      .toBe('running');
+
+    const reused = await page.evaluate(async () => {
+      const first = window.dingCtx;
+      window.playDing();
+      window.playDing();
+      await new Promise((r) => setTimeout(r, 1200)); // past the old 800ms close
+      return { same: window.dingCtx === first, state: window.dingCtx.state };
+    });
+    expect(reused.same).toBe(true);
+    expect(reused.state).toBe('running');
+  });
+
   test('the box is on by default and survives a reload', async ({ page }) => {
     await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
