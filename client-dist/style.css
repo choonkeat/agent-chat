@@ -1333,6 +1333,18 @@ body {
   background: #ea580c;
 }
 
+/* "Conversation context only" is on: every message wipes the agent first, so
+   the button that sends it wears a dark ring in both colours. Drawn as an
+   inset shadow rather than a border so the button doesn't change size when the
+   setting is switched on. */
+#btn-send.ctx-only {
+  box-shadow: inset 0 0 0 2px #1e3a8a;
+}
+
+#btn-send.ctx-only.agent-busy {
+  box-shadow: inset 0 0 0 2px #7c2d12;
+}
+
 #btn-send.loading,
 #btn-send.sending {
   opacity: 1;

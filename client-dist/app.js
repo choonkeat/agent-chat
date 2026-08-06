@@ -2765,8 +2765,20 @@ if (ctxOnlyInput) {
     // memory for this chat, a cookie the browser refused (privacy mode) no
     // longer costs the tick — it only costs the seed for the next chat.
     ctxOnlyInput.checked = getCtxOnly();
+    syncCtxOnlySendBtn();
   });
 }
+
+/** Ringed Send button while "conversation context only" is on. The setting
+    wipes the agent on every message, which is invisible from the composer
+    unless the button that does it says so — and it has to survive both button
+    colours (blue idle, amber agent-busy), so it rides as its own class. */
+function syncCtxOnlySendBtn() {
+  if (!sendBtn) return;
+  sendBtn.classList.toggle('ctx-only', getCtxOnly());
+}
+
+syncCtxOnlySendBtn();
 
 /** Rebuild the saved-style pills, keeping them ahead of the "Custom" pill. */
 function renderSavedStyles() {
