@@ -1534,6 +1534,7 @@ function showLoading() {
   // redraw the loader mid-run, and restarting here would reset a two-minute
   // wait to zero and swallow the ding at the end of it.
   if (!busySince) busySince = Date.now();
+  reportTurnState(false);
   scrollToBottom(false);
 }
 
@@ -1553,7 +1554,88 @@ function removeLoading() {
   busySince = 0;
   dropLoading();
   if (startedAt) dingIfLongRun(Date.now() - startedAt);
+  reportTurnState(!!startedAt);
 }
+
+// --- Tab title ---
+// The browser tab is the only part of a chat that is visible when the chat is
+// not. It carries the same three facts the loader carries, in the same clock:
+//
+//   hourglass 5m32s - {title}   the agent is working, and for how long
+//   green circle {title}        it finished while you were looking elsewhere
+//   {title}                     nothing waiting on you
+//
+// The green circle is deliberately not a permanent "you have a reply" badge:
+// it is cleared the moment this window takes focus, because at that point the
+// reply is on screen and the mark has done its job.
+//
+// Reported to the surrounding page as well as applied here. Inside swe-swe
+// this document is an iframe, so its own title is never rendered anywhere and
+// the parent owns the tab -- but agent-chat is also opened as a page of its
+// own, where the local title is all there is.
+var TITLE_BUSY = '⏳';       // hourglass
+var TITLE_DONE = '🟢'; // large green circle
+var titleBase = '';
+var titleTimer = null;
+var titleDone = false;
+var turnState = { busy: false, since: 0 };
+
+function formatTitleElapsed(startedAt) {
+  var secs = Math.floor((Date.now() - startedAt) / 1000);
+  if (secs < 0) secs = 0;
+  if (secs < 60) return secs + 's';
+  var mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm' + String(secs % 60).padStart(2, '0') + 's';
+  return Math.floor(mins / 60) + 'h' + String(mins % 60).padStart(2, '0') + 'm';
+}
+
+function renderTitle() {
+  if (turnState.busy && turnState.since) {
+    document.title = TITLE_BUSY + formatTitleElapsed(turnState.since) + ' - ' + titleBase;
+  } else if (titleDone) {
+    document.title = TITLE_DONE + ' ' + titleBase;
+  } else {
+    document.title = titleBase;
+  }
+}
+
+// finished is the busy -> idle edge, not merely "not busy": every redraw of the
+// loader passes through here and only one of them ends a run.
+function reportTurnState(finished) {
+  var div = document.getElementById('loading-bubble');
+  // A reconnect replays the whole conversation through showLoading /
+  // removeLoading, so history finishing is not this browser watching a run end
+  // -- same reasoning that keeps the ding quiet on replay.
+  var justFinished = !!finished && !historyStreaming;
+  var state = {
+    type: 'agent-chat-turn-state',
+    busy: !!div,
+    since: div ? Number(div.dataset.loaderStart) || Date.now() : 0,
+    finished: justFinished,
+  };
+  if (window.parent !== window) {
+    window.parent.postMessage(state, '*');
+  }
+
+  if (!titleBase) titleBase = document.title;
+  turnState = { busy: state.busy, since: state.since };
+  if (state.busy) {
+    titleDone = false;
+  } else if (justFinished && !document.hasFocus()) {
+    titleDone = true;
+  }
+  if (titleTimer) { clearInterval(titleTimer); titleTimer = null; }
+  if (turnState.busy) {
+    titleTimer = setInterval(renderTitle, 1000);
+  }
+  renderTitle();
+}
+
+window.addEventListener('focus', function () {
+  if (!titleDone) return;
+  titleDone = false;
+  renderTitle();
+});
 
 // The queue handed these IDs to a waiting request. That is NOT proof they
 // arrived — if the user broke out of the tool call in the host terminal, the
