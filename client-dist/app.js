@@ -1574,11 +1574,25 @@ function removeLoading() {
 // the parent owns the tab -- but agent-chat is also opened as a page of its
 // own, where the local title is all there is.
 var TITLE_BUSY = '⏳';       // hourglass
-var TITLE_DONE = '🟢'; // large green circle
+var TITLE_DONE = '●';       // small filled dot -- the unread mark, deliberately quiet
 var titleBase = '';
 var titleTimer = null;
 var titleDone = false;
 var turnState = { busy: false, since: 0 };
+
+// Everything the title format amounts to, in one place. What goes in front of
+// whatever name the tab already carries -- and the empty string when nothing
+// is waiting. This is the ONLY place either project spells the format out:
+// swe-swe drops this verbatim in front of its session name rather than keeping
+// a second copy of the symbols and the clock that would have to be kept in
+// step with this one by hand.
+function titlePrefix() {
+  if (turnState.busy && turnState.since) {
+    return TITLE_BUSY + formatTitleElapsed(turnState.since) + ' - ';
+  }
+  if (titleDone) return TITLE_DONE + ' ';
+  return '';
+}
 
 function formatTitleElapsed(startedAt) {
   var secs = Math.floor((Date.now() - startedAt) / 1000);
@@ -1589,14 +1603,25 @@ function formatTitleElapsed(startedAt) {
   return Math.floor(mins / 60) + 'h' + String(mins % 60).padStart(2, '0') + 'm';
 }
 
+// The prefix goes out with every render, not only on the busy/idle edges: the
+// clock inside it changes once a second and the parent no longer has the means
+// to advance it on its own.
+function postTurnPrefix(extra) {
+  if (window.parent === window) return;
+  var msg = {
+    type: 'agent-chat-turn-state',
+    busy: turnState.busy,
+    since: turnState.since,
+    finished: false,
+    titlePrefix: titlePrefix(),
+  };
+  for (var k in extra) msg[k] = extra[k];
+  window.parent.postMessage(msg, '*');
+}
+
 function renderTitle() {
-  if (turnState.busy && turnState.since) {
-    document.title = TITLE_BUSY + formatTitleElapsed(turnState.since) + ' - ' + titleBase;
-  } else if (titleDone) {
-    document.title = TITLE_DONE + ' ' + titleBase;
-  } else {
-    document.title = titleBase;
-  }
+  document.title = titlePrefix() + titleBase;
+  postTurnPrefix();
 }
 
 // finished is the busy -> idle edge, not merely "not busy": every redraw of the
@@ -1607,19 +1632,13 @@ function reportTurnState(finished) {
   // removeLoading, so history finishing is not this browser watching a run end
   // -- same reasoning that keeps the ding quiet on replay.
   var justFinished = !!finished && !historyStreaming;
-  var state = {
-    type: 'agent-chat-turn-state',
-    busy: !!div,
-    since: div ? Number(div.dataset.loaderStart) || Date.now() : 0,
-    finished: justFinished,
-  };
-  if (window.parent !== window) {
-    window.parent.postMessage(state, '*');
-  }
 
   if (!titleBase) titleBase = document.title;
-  turnState = { busy: state.busy, since: state.since };
-  if (state.busy) {
+  turnState = {
+    busy: !!div,
+    since: div ? Number(div.dataset.loaderStart) || Date.now() : 0,
+  };
+  if (turnState.busy) {
     titleDone = false;
   } else if (justFinished && !document.hasFocus()) {
     titleDone = true;
@@ -1628,13 +1647,23 @@ function reportTurnState(finished) {
   if (turnState.busy) {
     titleTimer = setInterval(renderTitle, 1000);
   }
-  renderTitle();
+  document.title = titlePrefix() + titleBase;
+  // `finished` rides only this edge, so it cannot go through renderTitle.
+  postTurnPrefix({ finished: justFinished });
 }
 
+// Focus landing in THIS window has to be reported upwards, not just acted on
+// locally. The surrounding page paints the mark on the tab you are actually
+// looking at, and when we are an iframe the focus that clears ours is focus
+// the parent window never sees: the focus event fires on the browsing context
+// that gained focus, so clicking into this iframe -- or returning to a tab
+// whose focus already rested here -- delivers it to us and blur to the parent.
+// Left to itself the parent's mark would survive exactly the act of reading
+// the reply it is pointing at.
 window.addEventListener('focus', function () {
-  if (!titleDone) return;
   titleDone = false;
-  renderTitle();
+  document.title = titlePrefix() + titleBase;
+  postTurnPrefix({ focused: true });
 });
 
 // The queue handed these IDs to a waiting request. That is NOT proof they
