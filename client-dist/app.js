@@ -1397,10 +1397,13 @@ var loaderTimer = null;
 //   3. Switchable, and remembered per browser — unlike the tick above, a
 //      preference about sound is about you, not about one conversation.
 //
-// Wall-clock from when THIS browser saw the run start, not the loader's
-// displayed elapsed time: that one is anchored to the previous bubble's
-// timestamp so the counter stays continuous across a reconnect, which would
-// make a freshly-opened tab ding for a wait it never sat through.
+// The run is timed from the bubble that started it, not from the moment this
+// browser happened to see the loader appear. A phone drops its connection every
+// time the screen goes off and reconnects with a fresh clock, so the
+// browser-lifetime version measured the tail of a long wait and stayed quiet
+// through exactly the runs the ding exists for. The cost is a page opened
+// mid-run dinging once for a wait it did not sit through, which is a reply
+// landing in front of you and worth the sound.
 
 var DING_COOKIE = 'agent-chat-ding';
 var DING_MIN_MS = 20000;
@@ -1533,7 +1536,15 @@ function showLoading() {
   // Only the first showLoading of a run starts the clock. Progress updates
   // redraw the loader mid-run, and restarting here would reset a two-minute
   // wait to zero and swallow the ding at the end of it.
-  if (!busySince) busySince = Date.now();
+  //
+  // From the timestamp of the bubble the run started after, so a replayed
+  // history hands back the true start rather than the instant of the replay --
+  // a run this browser reconnected into is still the run it has been waiting
+  // on. Now when there is no prior bubble to date it from, and when the
+  // server's clock reads later than this one's.
+  if (!busySince) {
+    busySince = lastBubbleTs && lastBubbleTs <= Date.now() ? lastBubbleTs : Date.now();
+  }
   reportTurnState(false);
   scrollToBottom(false);
 }
@@ -3859,10 +3870,12 @@ function connect() {
 
       case 'historyEnd':
         historyStreaming = false;
-        // A run already in flight when this browser connected started before
-        // this browser existed. Time it from here, so the ding measures the
-        // wait actually sat through rather than one inherited from the log.
-        if (busySince) busySince = Date.now();
+        // busySince is deliberately left alone. A run already in flight when
+        // this browser connected began at the timestamp showLoading read out of
+        // the replayed history, and that is the wait the user is sitting
+        // through -- restarting the clock here is what kept a phone, which
+        // reconnects every time its screen comes back on, silent through every
+        // long run it ever waited for.
         // History replay complete — show deferred quick replies if the
         // event stream didn't already set them (e.g. reconnect with no
         // missed events, or last event was an agentMessage with replies).

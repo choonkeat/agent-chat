@@ -148,6 +148,43 @@ test.describe('Done-ding on long runs', () => {
     expect(await dings(page)).toBe(1);
   });
 
+  // A phone drops its connection every time the screen goes off. It reconnects
+  // into a run that started minutes ago, and the run it is waiting on is the
+  // one in the history it just replayed -- not the fraction of it this page has
+  // been alive for. Timing from the bubble the run started after is what makes
+  // the ding survive that.
+  test('a run inherited from a reconnect is timed from the message that started it', async ({ page }) => {
+    await setupPage(page, server.url, 300);
+
+    await page.evaluate(() => {
+      window.lastBubbleTs = Date.now() - 1000; // the user's message, a second ago
+      window.showLoading();
+    });
+    // Timed from the message: no waiting here, and it is already past 300ms.
+    expect(await page.evaluate(() => window.busySince)).toBe(
+      await page.evaluate(() => window.lastBubbleTs)
+    );
+    await page.evaluate(() => window.removeLoading());
+
+    expect(await dings(page)).toBe(1);
+  });
+
+  // The timestamp comes off the server's clock and the comparison happens on
+  // this one. A server running ahead would otherwise date every run in the
+  // future and make the elapsed time negative.
+  test('a timestamp from a clock ahead of this one falls back to now', async ({ page }) => {
+    await setupPage(page, server.url, 5000);
+
+    await page.evaluate(() => {
+      window.lastBubbleTs = Date.now() + 60000;
+      window.showLoading();
+    });
+    await page.waitForTimeout(100);
+    await page.evaluate(() => window.removeLoading());
+
+    expect(await dings(page)).toBe(0);
+  });
+
   test('history streaming in on connect never dings', async ({ page }) => {
     await setupPage(page, server.url);
 
