@@ -2,6 +2,44 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.11.0] — 2026-08-15
+
+### Features
+- **The browser tab reports the turn: whether the agent is working, and for how
+  long.** The tab is the only part of a chat visible when the chat is not, and
+  it read "Agent Chat" whether the agent had been running for four seconds or
+  four minutes. The transitions that already know -- the ones driving the
+  loader's clock and the ding -- now publish it too: an hourglass and a running
+  clock while the agent works, a green dot when a run finished while you were
+  looking elsewhere, and nothing when nothing is waiting on you. Applied to this
+  page and posted to the surrounding page as `agent-chat-turn-state`, so
+  swe-swe's session tab -- the one most people are actually looking at, and
+  which cannot read this document any other way -- carries the same prefix from
+  the same code. `titlePrefix()` is the single place the format is spelled out;
+  swe-swe drops it in front of its session name instead of hand-copying the
+  symbols. The green mark is set only when the run ended unfocused and dropped
+  on the next focus, and history replay never raises it -- a freshly opened tab
+  would otherwise light up for every finish the conversation ever had.
+
+### Fixes
+- **The ding survives a phone locking its screen.** A phone drops its connection
+  every time the screen goes off, and the run's clock started when this browser
+  saw the loader -- so a reconnect measured only the tail of the wait, and the
+  ding stayed silent through exactly the long runs it exists for. A run is now
+  dated from the message that started it (falling back to now when there is no
+  prior bubble, or when the server's clock reads ahead of this one's), and
+  reconnect no longer restarts it. Cost: a page opened mid-run dings once for a
+  wait it did not sit through -- which is a reply landing in front of you.
+  Verified on an iPhone: locked screen, 25s wait, ding on reply.
+- **The finished-run mark clears when you return to the chat.** It was cleared
+  on the surrounding page's focus event, which is the one arrival that never
+  happens when the user comes back here: focus fires on the context that gains
+  it, so clicking into this iframe delivers focus to us and blur to the parent.
+  We cleared our own copy and told no one. Focus is now reported upward, and the
+  title prefix rides every render rather than only the busy/idle edges, because
+  the clock inside it advances once a second and the parent has no way to
+  advance it alone.
+
 ## [0.10.1] — 2026-08-06
 
 ### Changes
