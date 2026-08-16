@@ -316,15 +316,28 @@ func slugifyTitle(title string) string {
 	return out
 }
 
-// nextDailyIndex returns the next per-day running index for dir. It looks for
-// files named `{date}-NN-…` where NN is 2 or 3 digits and returns max(NN)+1,
-// or 1 if no matching file exists.
-func nextDailyIndex(dir, date string) int {
+// nextDailyIndex returns the next per-day running index for the archive at
+// root: max(NN)+1 over that date's exports, or 1 when the date has none.
+//
+// Both layouts are counted — `{YYYY-MM}/{DD}-NN-…` and any legacy flat
+// `{YYYY-MM-DD}-NN-…` still awaiting migration — so a session started before
+// the archive is migrated cannot mint an NN that a flat file already used.
+func nextDailyIndex(root, date string) int {
+	maxIdx := maxDailyIndex(root, date+"-")
+	if month := monthOf(date); month != "" {
+		if n := maxDailyIndex(filepath.Join(root, month), dayOf(date)+"-"); n > maxIdx {
+			maxIdx = n
+		}
+	}
+	return maxIdx + 1
+}
+
+// maxDailyIndex returns the largest NN among dir's `{prefix}NN-…` files, or 0.
+func maxDailyIndex(dir, prefix string) int {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 1
+		return 0
 	}
-	prefix := date + "-"
 	maxIdx := 0
 	for _, e := range entries {
 		if e.IsDir() {
@@ -350,7 +363,7 @@ func nextDailyIndex(dir, date string) int {
 			maxIdx = n
 		}
 	}
-	return maxIdx + 1
+	return maxIdx
 }
 
 func registerTools(server *mcp.Server, bus *EventBus) {
@@ -750,8 +763,7 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 		// (i.e. previously closed out, and probably committed) would be left
 		// pointing at a filename that no longer exists. An export still
 		// private to this session is left out of the tracked index.html.
-		oldBase := filepath.Base(chatStream.MDPath())
-		published := indexReferencesMD(chatStream.Dir(), oldBase)
+		published := indexReferencesMD(chatStream.Dir(), chatStream.MDPath())
 		if err := chatStream.SetTitle(params.Title, events); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "error: " + err.Error()}},
@@ -801,8 +813,15 @@ Read whiteboard://diagramming-guide for layout rules and cognitive principles.
 				}
 			}
 		}
+		text := "Streaming chat-log export closed — the .md is frozen (set_chat_title re-opens it with full backfill; the JSONL event log keeps recording). Commit exactly these paths:\n" + strings.Join(paths, "\n")
+		// Commit time is the one moment the user is already looking at the
+		// archive, so it is where a pending layout migration is worth naming —
+		// once, as a suggestion, never as something this tool does on its own.
+		if n := legacyChatExportCount(chatStream.Dir()); n > 0 {
+			text += fmt.Sprintf("\n\nNote: %d older chat(s) still sit flat in the archive root. `agent-chat migrate-chatlogs` prints the `git mv` lines to file them by month (add -apply to run them). Offer it to the user as a SEPARATE commit — never fold it into this one.", n)
+		}
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: "Streaming chat-log export closed — the .md is frozen (set_chat_title re-opens it with full backfill; the JSONL event log keeps recording). Commit exactly these paths:\n" + strings.Join(paths, "\n")}},
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
 	})
 

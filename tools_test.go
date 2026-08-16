@@ -496,7 +496,7 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
-	wantBase := "2026-04-30-01-test-chat.md"
+	wantBase := "30-01-test-chat.md"
 	if filepath.Base(mdPath) != wantBase {
 		t.Errorf("md path = %s, want base %s", mdPath, wantBase)
 	}
@@ -549,7 +549,7 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 	}
 	idxStr := string(idx)
 	wantIdx := []string{
-		`{ md: './2026-04-30-01-test-chat.md', date: '2026-04-30', idx: '01', title: 'Test Chat' },`,
+		`{ md: './2026-04/30-01-test-chat.md', date: '2026-04-30', idx: '01', title: 'Test Chat' },`,
 		"agent-chat:manifest-insert",
 	}
 	for _, w := range wantIdx {
@@ -576,8 +576,8 @@ func TestRunChatMarkdownExportPrependsToExistingIndex(t *testing.T) {
 		t.Fatalf("read index.html: %v", err)
 	}
 	idxStr := string(idx)
-	posSecond := strings.Index(idxStr, "2026-04-30-02-second.md")
-	posFirst := strings.Index(idxStr, "2026-04-30-01-first.md")
+	posSecond := strings.Index(idxStr, "2026-04/30-02-second.md")
+	posFirst := strings.Index(idxStr, "2026-04/30-01-first.md")
 	if posSecond < 0 || posFirst < 0 {
 		t.Fatalf("missing entries; second=%d first=%d", posSecond, posFirst)
 	}
@@ -676,7 +676,7 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 	}
 
 	// The bytes must have been copied into assets/.
-	if _, err := os.Stat(filepath.Join(dir, "assets", asset)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "2026-05", "assets", asset)); err != nil {
 		t.Errorf("agent screenshot not copied to assets: %v", err)
 	}
 }

@@ -18,7 +18,7 @@
   <input type="search" id="filter" class="filter" placeholder="Filter…">
   <nav id="chat-list" class="chat-list" aria-label="Chats"></nav>
   <div class="footer-links">
-    <a href="./assets/" target="_blank">browse assets/ →</a>
+    <a id="assets-link" href="./assets/" target="_blank">browse assets/ →</a>
   </div>
 </aside>
 
@@ -82,6 +82,9 @@ async function selectChat(entry) {
   const rawMd = document.getElementById('raw-md-link');
   rawMd.href = entry.md;
   rawMd.hidden = false;
+  // Attachments live beside the chat that uses them, so the browse link
+  // follows the selection into that month's directory.
+  document.getElementById('assets-link').href = new URL('assets/', new URL(entry.md, location.href)).href;
 
   await viewer.load(entry.md, document.getElementById('chat-pane'));
   history.replaceState(null, '', '#' + encodeURIComponent(entry.md));

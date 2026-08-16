@@ -125,8 +125,11 @@ test.describe('export_chat_md — content-addressed asset filenames', () => {
     expect(mdMatch, `export summary should name the .md file; got: ${summary}`).toBeTruthy();
     const mdPath = mdMatch[1];
 
-    // The asset must exist on disk with the content digest before the extension.
-    const assetsDir = path.join(server.dir, 'agent-chats', 'assets');
+    // The asset must exist on disk with the content digest before the
+    // extension, in the assets/ directory beside its own .md — chats are filed
+    // one directory per month, so that is agent-chats/{YYYY-MM}/assets/.
+    const assetsDir = path.join(path.dirname(mdPath), 'assets');
+    expect(path.relative(path.join(server.dir, 'agent-chats'), assetsDir)).toMatch(/^\d{4}-\d{2}[\\/]assets$/);
     const assets = fs.readdirSync(assetsDir).filter((f) => f.endsWith('.png'));
     expect(assets.length, `expected one png asset, got ${JSON.stringify(assets)}`).toBe(1);
     const asset = assets[0];

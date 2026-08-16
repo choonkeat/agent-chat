@@ -2,6 +2,41 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Features
+- **The chat archive is filed one directory per month.** A new export writes to
+  `agent-chats/{YYYY-MM}/{DD}-{NN}-{title}.md` with its attachments in that
+  month's `assets/`, so a year of daily chats is twelve directories instead of
+  one flat pile of hundreds of files. `index.html` and `assets/viewer.{css,js}`
+  stay at the archive root — the viewer's own files are rewritten on every
+  export, and per-month copies would mean twelve churning duplicates a year.
+  Attachment basenames keep their full `{YYYY-MM-DD}-{NN}-…` form even inside a
+  month directory, so every `./assets/…` link in already-committed markdown
+  keeps resolving and migrating an old chat is a pure `git mv` with no content
+  rewritten.
+- **`agent-chat migrate-chatlogs` moves an existing flat archive into the new
+  layout.** It ships in the server binary — every machine that writes an
+  archive can already migrate one — and by default only *prints* the `git mv`
+  lines; `-apply` runs them (through git where the file is tracked, so history
+  follows) and regenerates `index.html`. Attachments are routed by what the
+  markdown actually links to, not just by filename, so a hand-added screenshot
+  travels with the chat that shows it; one referenced from two different months
+  is left at the root and reported rather than silently breaking one of them.
+  `chatlog_close` names the migration once while any flat chat remains.
+- Both layouts are read everywhere — index manifest, session resume, daily `NN`
+  numbering — so an un-migrated archive keeps working and a session started
+  mid-migration cannot mint a duplicate `NN`. `set_chat_title` renames a file in
+  place and never relocates it; only the migration moves anything.
+
+### Fixes
+- **The viewer resolves a chat's images against the chat, not against
+  `index.html`.** Parsed markdown is injected into the landing page's document,
+  so the browser was resolving `./assets/x.png` relative to `index.html` — the
+  same directory until exports moved into month subdirectories, one level off
+  after. Relative `src`/`href` are now rebased onto the `.md`'s own URL, which
+  is also how GitHub renders the identical markdown.
+
 ## [0.11.0] — 2026-08-15
 
 ### Features

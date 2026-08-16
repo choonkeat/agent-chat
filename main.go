@@ -251,6 +251,14 @@ func parseWelcomeReplies(raw string) []string {
 }
 
 func main() {
+	// One-off maintenance subcommands, dispatched before flag parsing: the
+	// server is normally launched with flags only, never a bare first
+	// argument, so a leading verb is unambiguous. Shipping them in this binary
+	// means every machine that writes a chat archive can also migrate one.
+	if len(os.Args) > 1 && os.Args[1] == "migrate-chatlogs" {
+		os.Exit(runMigrateChatLogs(os.Args[2:]))
+	}
+
 	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")

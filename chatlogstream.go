@@ -94,7 +94,7 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-	if err := ensureViewerAssets(filepath.Join(dir, "assets")); err != nil {
+	if err := ensureViewerAssets(viewerAssetsDir(dir)); err != nil {
 		return nil, err
 	}
 
@@ -112,6 +112,9 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 		slug = "untitled-" + suffix
 	}
 	idxNum := nextDailyIndex(dir, date)
+	if err := os.MkdirAll(chatMonthDir(dir, date), 0755); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", chatMonthDir(dir, date), err)
+	}
 	var (
 		f      *os.File
 		idx    string
@@ -119,7 +122,7 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 	)
 	for {
 		idx = fmt.Sprintf("%02d", idxNum)
-		mdPath = filepath.Join(dir, fmt.Sprintf("%s-%s-%s.md", date, idx, slug))
+		mdPath = chatMDPath(dir, date, idx, slug)
 		var err error
 		f, err = os.OpenFile(mdPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {
@@ -165,43 +168,35 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 // resumeChatLogStream scans dir for an export whose header `session:` line
 // matches sessionID and, if found, reopens it for appending with the fold
 // state recovered from history. Returns (nil, nil) when no file matches.
+//
+// The scan covers every month directory plus any legacy flat exports, not just
+// the current month: a session that started on the last day of a month and was
+// restarted after midnight must still find its own file.
 func resumeChatLogStream(dir, sessionID, agent, version string, history []Event) (*chatLogStream, error) {
 	if sessionID == "" {
 		return nil, nil
 	}
-	dirEntries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("read dir %s: %w", dir, err)
-	}
-	for _, de := range dirEntries {
-		if de.IsDir() {
-			continue
-		}
-		m := mdExportNameRE.FindStringSubmatch(de.Name())
-		if m == nil {
-			continue
-		}
-		header := readChatHeader(filepath.Join(dir, de.Name()))
+	for _, ex := range scanChatExports(dir) {
+		header := readChatHeader(ex.Path)
 		if header["session"] != sessionID {
 			continue
 		}
-		mdPath := filepath.Join(dir, de.Name())
-		f, err := os.OpenFile(mdPath, os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(ex.Path, os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			return nil, fmt.Errorf("reopen %s: %w", mdPath, err)
+			return nil, fmt.Errorf("reopen %s: %w", ex.Path, err)
 		}
 		title := header["title"]
 		if title == "" {
-			title = humanTitle(m[3])
+			title = humanTitle(ex.Slug)
 		}
 		s := &chatLogStream{
 			dir:    dir,
-			mdPath: mdPath,
+			mdPath: ex.Path,
 			meta: chatExportMeta{
 				Title:   title,
-				Date:    m[1],
-				Index:   m[2],
-				Slug:    m[3],
+				Date:    ex.Date,
+				Index:   ex.Index,
+				Slug:    ex.Slug,
 				Session: sessionID,
 				Agent:   agent,
 				Version: version,
@@ -222,7 +217,7 @@ func resumeChatLogStream(dir, sessionID, agent, version string, history []Event)
 // sources may be long gone), so each ordinal is matched back to the existing
 // `{date}-{NN}-{n}-{sha12}…` file in assets/ instead of being recopied.
 func (s *chatLogStream) recoverFromHistory(history []Event) {
-	assetsDir := filepath.Join(s.dir, "assets")
+	assetsDir := exportAssetsDir(s.mdPath)
 	for _, e := range history {
 		switch e.Type {
 		case "userMessage", "agentMessage", "verbalReply":
@@ -237,7 +232,7 @@ func (s *chatLogStream) recoverFromHistory(history []Event) {
 				continue
 			}
 			s.assetN++
-			prefix := fmt.Sprintf("%s-%s-%d-", s.meta.Date, s.meta.Index, s.assetN)
+			prefix := fmt.Sprintf("%s%d-", chatAssetPrefix(s.meta.Date, s.meta.Index), s.assetN)
 			if matches, _ := filepath.Glob(filepath.Join(assetsDir, prefix+"*")); len(matches) > 0 {
 				s.imageMap[fr.Path] = "./assets/" + filepath.Base(matches[0])
 			}
@@ -270,7 +265,7 @@ func (s *chatLogStream) setTitleLocked(title string, history []Event) error {
 	meta := s.meta
 	meta.Slug = slug
 	meta.Title = humanTitle(slug)
-	newPath := filepath.Join(s.dir, fmt.Sprintf("%s-%s-%s.md", meta.Date, meta.Index, slug))
+	newPath := renamedMDPath(s.mdPath, s.dir, meta.Date, meta.Index, slug)
 
 	// Full rewrite: fresh fold state, but the existing imageMap — assets were
 	// copied when their events streamed and the upload sources may be gone.
@@ -363,19 +358,19 @@ func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error
 	}
 	s.stopped = true
 	dir, mdPath := s.dir, s.mdPath
-	assetPrefix := s.meta.Date + "-" + s.meta.Index + "-"
+	assetPrefix := chatAssetPrefix(s.meta.Date, s.meta.Index)
 	s.mu.Unlock()
 
 	if err := regenerateIndexHTML(dir); err != nil {
 		return nil, fmt.Errorf("regenerate index: %w", err)
 	}
 	paths := []string{mdPath}
-	assets, _ := filepath.Glob(filepath.Join(dir, "assets", assetPrefix+"*"))
+	assets, _ := filepath.Glob(filepath.Join(exportAssetsDir(mdPath), assetPrefix+"*"))
 	paths = append(paths, assets...)
 	for _, shared := range []string{
 		filepath.Join(dir, "index.html"),
-		filepath.Join(dir, "assets", "viewer.css"),
-		filepath.Join(dir, "assets", "viewer.js"),
+		filepath.Join(viewerAssetsDir(dir), "viewer.css"),
+		filepath.Join(viewerAssetsDir(dir), "viewer.js"),
 	} {
 		if _, err := os.Stat(shared); err == nil {
 			paths = append(paths, shared)
@@ -497,7 +492,7 @@ func (s *chatLogStream) HandleEvent(e Event) {
 		return
 	}
 	if len(e.Files) > 0 {
-		warnings, err := writeEventAttachments(e, filepath.Join(s.dir, "assets"), s.meta.Date, s.meta.Index, &s.assetN, s.imageMap)
+		warnings, err := writeEventAttachments(e, exportAssetsDir(s.mdPath), s.meta.Date, s.meta.Index, &s.assetN, s.imageMap)
 		for _, w := range warnings {
 			log.Printf("agent-chat: chatlog stream: %s", w)
 		}

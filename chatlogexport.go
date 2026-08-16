@@ -305,17 +305,25 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 	return out, warnings, nil
 }
 
-// writeEventAttachments copies a single event's attachments into assetsDir
-// (which must already exist), advancing *n for each new asset and recording
-// source-path → relative-URL mappings in out. Paths already present in out are
-// skipped, so a shared map dedups across events. Missing source files produce
-// warnings, not errors (see writeImageAttachments). This is the per-event
-// primitive both the batch exporter and the streaming writer use.
+// writeEventAttachments copies a single event's attachments into assetsDir,
+// advancing *n for each new asset and recording source-path → relative-URL
+// mappings in out. Paths already present in out are skipped, so a shared map
+// dedups across events. Missing source files produce warnings, not errors (see
+// writeImageAttachments). This is the per-event primitive both the batch
+// exporter and the streaming writer use.
+//
+// It creates assetsDir itself: the copy below reports a missing destination
+// directory as os.ErrNotExist, indistinguishable from a vanished upload, so a
+// month directory that doesn't exist yet would silently "skip" every
+// attachment instead of failing loudly.
 func writeEventAttachments(e Event, assetsDir, date, idx string, n *int, out map[string]string) ([]string, error) {
 	var warnings []string
 	for _, f := range e.Files {
 		if f.Path == "" {
 			continue
+		}
+		if err := os.MkdirAll(assetsDir, 0755); err != nil {
+			return warnings, fmt.Errorf("mkdir %s: %w", assetsDir, err)
 		}
 		if _, ok := out[f.Path]; ok {
 			continue
@@ -473,26 +481,27 @@ func readChatHeader(path string) map[string]string {
 	return fields
 }
 
-// indexReferencesMD reports whether dir/index.html already carries a manifest
-// entry for the given .md basename. It is the "is this export already
+// indexReferencesMD reports whether root/index.html already carries a manifest
+// entry for the export at mdPath. It is the "is this export already
 // published?" test that keeps index.html — a tracked file — from being dirtied
 // on behalf of an export that is still private to the running session: a
 // rename only has to be reflected in the index if the old name was in there.
 // A missing or unreadable index.html answers false.
-func indexReferencesMD(dir, mdBase string) bool {
-	data, err := os.ReadFile(filepath.Join(dir, "index.html"))
+func indexReferencesMD(root, mdPath string) bool {
+	data, err := os.ReadFile(filepath.Join(root, "index.html"))
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), "'./"+mdBase+"'")
+	return strings.Contains(string(data), "'"+manifestRef(root, mdPath)+"'")
 }
 
 // regenerateIndexHTML rewrites dir/index.html from scratch: the embedded
-// template plus a MANIFEST derived entirely from the `*.md` export files
-// present in dir (newest first; title read from each file's header comment,
-// falling back to humanTitle(slug)). Because the output is a pure function of
-// the directory contents it is idempotent, and a corrupted index.html (e.g.
-// git merge markers) is healed by simply being rewritten.
+// template plus a MANIFEST derived entirely from the export files present
+// under dir — both `{YYYY-MM}/{DD}-{NN}-{slug}.md` and any legacy flat
+// `{YYYY-MM-DD}-{NN}-{slug}.md` — newest first, title read from each file's
+// header comment, falling back to humanTitle(slug). Because the output is a
+// pure function of the directory contents it is idempotent, and a corrupted
+// index.html (e.g. git merge markers) is healed by simply being rewritten.
 //
 // index.html is tracked by git, so callers must only invoke this at moments
 // the export set changes in a *committable* way: chatlog_close, chatlog_optout
@@ -502,8 +511,7 @@ func indexReferencesMD(dir, mdBase string) bool {
 // working tree permanently dirty with manifest entries pointing at untracked,
 // still-renameable `untitled-{uuid}.md` files.
 func regenerateIndexHTML(dir string) error {
-	dirEntries, err := os.ReadDir(dir)
-	if err != nil {
+	if _, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
 	type sortableEntry struct {
@@ -511,33 +519,25 @@ func regenerateIndexHTML(dir string) error {
 		idxNum int
 	}
 	var entries []sortableEntry
-	for _, de := range dirEntries {
-		if de.IsDir() {
-			continue
-		}
-		m := mdExportNameRE.FindStringSubmatch(de.Name())
-		if m == nil {
-			continue
-		}
-		date, idx, slug := m[1], m[2], m[3]
+	for _, ex := range scanChatExports(dir) {
 		// A provisional `untitled` / `untitled-{uuid}` export is by definition
 		// not commit-ready — chatlog_close refuses to close one — and its
 		// filename still changes under set_chat_title. Listing it would put a
 		// soon-to-be-dead link into a tracked file, so it stays out of the
 		// manifest until it has a real title.
-		if isProvisionalSlug(slug) {
+		if isProvisionalSlug(ex.Slug) {
 			continue
 		}
-		idxNum, err := strconv.Atoi(idx)
+		idxNum, err := strconv.Atoi(ex.Index)
 		if err != nil {
 			continue
 		}
-		title := readChatHeader(filepath.Join(dir, de.Name()))["title"]
+		title := readChatHeader(ex.Path)["title"]
 		if title == "" {
-			title = humanTitle(slug)
+			title = humanTitle(ex.Slug)
 		}
 		entries = append(entries, sortableEntry{
-			manifestEntry: manifestEntry{MD: "./" + de.Name(), Date: date, Index: idx, Title: title},
+			manifestEntry: manifestEntry{MD: "./" + ex.Rel, Date: ex.Date, Index: ex.Index, Title: title},
 			idxNum:        idxNum,
 		})
 	}
@@ -578,16 +578,15 @@ func regenerateIndexHTML(dir string) error {
 func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, now time.Time) (string, []string, error) {
 	date := now.Format("2006-01-02")
 	idx := fmt.Sprintf("%02d", nextDailyIndex(rootDir, date))
-	mdPath := filepath.Join(rootDir, fmt.Sprintf("%s-%s-%s.md", date, idx, slug))
-	assetsDir := filepath.Join(rootDir, "assets")
+	mdPath := chatMDPath(rootDir, date, idx, slug)
 
-	if err := os.MkdirAll(rootDir, 0755); err != nil {
+	if err := os.MkdirAll(chatMonthDir(rootDir, date), 0755); err != nil {
 		return "", nil, fmt.Errorf("mkdir %s: %w", rootDir, err)
 	}
-	if err := ensureViewerAssets(assetsDir); err != nil {
+	if err := ensureViewerAssets(viewerAssetsDir(rootDir)); err != nil {
 		return "", nil, err
 	}
-	imageMap, warnings, err := writeImageAttachments(events, assetsDir, date, idx)
+	imageMap, warnings, err := writeImageAttachments(events, chatAssetsDir(rootDir, date), date, idx)
 	if err != nil {
 		return "", nil, err
 	}
