@@ -2151,7 +2151,7 @@ function typeClearResumeLine() {
       }
       var text = path
         ? 'resume ' + path + ' - read the whole file for context, then check_messages for your instruction (if it returns nothing, the last USER entry in the file is your instruction)'
-        : 'check_messages; reply me with a send_message';
+        : 'agent-chat mcp: check_messages; report progress before you start processing';
       window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
     });
 }
@@ -3996,7 +3996,7 @@ function connect() {
         if (pendingNotifyParent) {
           var nudgeText = pendingInterrupt
             ? 'check_messages; ask me how to proceed'
-            : 'check_messages; reply me with a send_message';
+            : 'agent-chat mcp: check_messages; report progress before you start processing';
           if (window.parent !== window) {
             if (pendingInterrupt) {
               // Voice interrupt: send Esc-Esc to abort current tool, then
