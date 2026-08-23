@@ -189,8 +189,8 @@ test.describe('Frozen quick-reply placement', () => {
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Edge case: chips are active but no agent bubble exists in #messages.
-    // (Possible on a fresh chat where the very first agent event is a draw
-    // canvas or similar non-bubble.) The fallback path must still append.
+    // (Possible on a fresh chat where the very first agent event renders no
+    // bubble at all.) The fallback path must still append.
     await page.evaluate(() => {
       window.setQuickReplies(['A', 'B']);
       window.quickReplies.classList.add('visible');

@@ -254,12 +254,6 @@ function ts() {
   return new Date().toISOString().slice(11, 23);
 }
 
-// --- Canvas constants ---
-
-var CANVAS_W = 900;
-var CANVAS_H = 550;
-var DPR = window.devicePixelRatio || 1;
-
 // --- Message rendering ---
 
 function clearMessages() {
@@ -899,61 +893,6 @@ function addUserMessage(text, files, extraClass, timestamp) {
   if (text || (files && files.length > 0)) {
     addBubble(text, 'user', files, extraClass, timestamp);
   }
-}
-
-// --- Canvas bubble ---
-
-function canvasToImg(canvas, div) {
-  var img = document.createElement('img');
-  img.src = canvas.toDataURL('image/png');
-  var w = div.getBoundingClientRect().width;
-  div.style.height = (w * CANVAS_H / CANVAS_W) + 'px';
-  div.replaceChild(img, canvas);
-}
-
-function addCanvasBubble(instructions, skipAnimation, onDone) {
-  var div = document.createElement('div');
-  div.className = 'bubble agent canvas-bubble';
-
-  var canvas = document.createElement('canvas');
-  canvas.width = CANVAS_W * DPR;
-  canvas.height = CANVAS_H * DPR;
-  div.appendChild(canvas);
-
-  appendMessage(div);
-  scrollToBottom(false);
-
-  var finalize = function () {
-    // Wait two frames so the renderer composites before we snapshot
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
-        canvasToImg(canvas, div);
-        scrollToBottom(false);
-        if (onDone) onDone();
-      });
-    });
-  };
-
-  var board = new CanvasBundle.AgentWhiteboard(canvas, {
-    width: CANVAS_W,
-    height: CANVAS_H,
-    backgroundColor: '#0d1525',
-    onQueueEmpty: finalize,
-  });
-  board.resize(CANVAS_W, CANVAS_H, DPR);
-
-  if (skipAnimation) {
-    board.setSkipAnimation(true);
-  }
-
-  // Validate instructions
-  var result = CanvasBundle.validateInstructions(instructions);
-  if (result.errors.length > 0) {
-    console.warn('Canvas instruction validation errors:', result.errors);
-  }
-  board.addInstructions(result.valid);
-
-  return { div: div, board: board, canvas: canvas };
 }
 
 // --- Input enable/disable ---
@@ -3761,12 +3700,6 @@ function replayHistory(history) {
           }
         }
         break;
-      case 'draw':
-        if (event.instructions) {
-          addCanvasBubble(event.instructions, true, null);
-        }
-        pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
-        break;
       case 'verbalReply':
         if (event.text || (event.files && event.files.length > 0)) {
           var hasReplies = event.quick_replies && event.quick_replies.length > 0;
@@ -3896,14 +3829,6 @@ function connect() {
         if (data.quick_replies && data.quick_replies.length > 0) {
           enableInput(data.quick_replies);
         }
-        break;
-
-      case 'draw':
-        console.log('[' + ts() + '] Draw event received (' + (data.instructions || []).length + ' instructions)');
-
-        addCanvasBubble(data.instructions || [], false, function () {
-          enableInput(data.quick_replies); // removes loading via mutual exclusivity
-        });
         break;
 
       case 'verbalReply':
@@ -4138,29 +4063,14 @@ async function buildExportHtml(opts) {
 
     if (!b.classList.contains('bubble')) continue;
 
-    if (b.classList.contains('canvas-bubble')) {
-      var img = b.querySelector('img');
-      if (img) {
-        // Canvas bubbles are already rasterized to data: URIs by canvas-bundle,
-        // but inline defensively in case that ever changes. We always keep
-        // canvas drawings full-size because they're the agent's drawings, not
-        // user uploads — thumbnailing them would lose the diagram detail that
-        // motivated drawing them in the first place.
-        var clone = document.createElement('div');
-        clone.innerHTML = '<div class="bubble agent canvas-bubble"><img src="' + img.src + '" style="width:100%;height:auto;display:block;border-radius:8px;"></div>';
-        await inlineImagesIn(clone, 'fullsize');
-        items.push(clone.innerHTML);
-      }
-    } else {
-      var role = b.classList.contains('user') ? 'user' : b.classList.contains('system') ? 'system' : 'agent';
-      var voice = b.classList.contains('voice') ? ' voice' : '';
-      // Clone before inlining so we don't bloat the live DOM with multi-MB
-      // data URIs.
-      var bubbleClone = b.cloneNode(true);
-      dehrefFileLinks(bubbleClone);
-      await inlineImagesIn(bubbleClone, imageMode);
-      items.push('<div class="bubble ' + role + voice + '">' + bubbleClone.innerHTML + '</div>');
-    }
+    var role = b.classList.contains('user') ? 'user' : b.classList.contains('system') ? 'system' : 'agent';
+    var voice = b.classList.contains('voice') ? ' voice' : '';
+    // Clone before inlining so we don't bloat the live DOM with multi-MB
+    // data URIs.
+    var bubbleClone = b.cloneNode(true);
+    dehrefFileLinks(bubbleClone);
+    await inlineImagesIn(bubbleClone, imageMode);
+    items.push('<div class="bubble ' + role + voice + '">' + bubbleClone.innerHTML + '</div>');
   }
 
   var html = '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chat Export</title><style>'
@@ -4173,7 +4083,6 @@ async function buildExportHtml(opts) {
     + '.bubble.agent.voice{background:#1e293b;border-left:3px solid #7c3aed;}'
     + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;}'
     + '.system-collapse-counter{align-self:center;color:#666;font-size:0.65rem;padding:0.15rem 0.5rem;opacity:0.5;}'
-    + '.bubble.canvas-bubble{padding:0;background:#0d1525;overflow:hidden;max-width:90%;}'
     + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
     + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
     + '.bubble pre code{background:none;padding:0;font-size:inherit;}'

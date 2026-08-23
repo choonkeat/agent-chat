@@ -266,51 +266,50 @@ func TestComposedResultVoiceMessage(t *testing.T) {
 
 // --- one reply path for every blocking tool ---
 //
-// send_message, send_verbal_reply and draw used to differ: the first two parked
-// on the message queue, while draw parked on a private acknowledgement channel
-// that bypassed the queue entirely — no attachments, no message-style template,
-// no unsend, no redelivery, and the bubble was marked read the instant it was
-// sent. waitForUserReply is now the single path all three take.
+// send_message and send_verbal_reply both park on the message queue, so every
+// reply carries attachments, the message-style template, unsend and redelivery,
+// and its bubble stays unread until proven. waitForUserReply is the single path
+// they take.
 
 func TestWaitForUserReplyReturnsTheQueuedMessage(t *testing.T) {
 	bus := NewEventBus()
 	bus.ReceiveUserMessage("the blue one", nil, "")
 
-	got, err := waitForUserReply(context.Background(), bus, "draw", 1)
+	got, err := waitForUserReply(context.Background(), bus, "send_message", 1)
 	if err != nil {
 		t.Fatalf("waitForUserReply: %v", err)
 	}
 	want := userRespondedText([]UserMessage{{Text: "the blue one"}})
 	if got != want {
-		t.Errorf("draw reply:\ngot:  %q\nwant: %q", got, want)
+		t.Errorf("reply:\ngot:  %q\nwant: %q", got, want)
 	}
 	if bus.LastVoice() {
 		t.Error("a typed reply must not leave the bus in voice mode")
 	}
 }
 
-// A reply to a drawing carries everything an ordinary message carries — here,
-// the per-message template the browser attaches from the message-style setting.
+// A reply carries everything an ordinary message carries — here, the
+// per-message template the browser attaches from the message-style setting.
 func TestWaitForUserReplyAppliesMessageTemplate(t *testing.T) {
 	bus := NewEventBus()
 	bus.ReceiveUserMessage("the blue one", nil, "In one line: {{message}}")
 
-	got, err := waitForUserReply(context.Background(), bus, "draw", 1)
+	got, err := waitForUserReply(context.Background(), bus, "send_message", 1)
 	if err != nil {
 		t.Fatalf("waitForUserReply: %v", err)
 	}
 	if !strings.Contains(got, "In one line: the blue one") {
-		t.Errorf("template not applied to a drawing reply:\n%s", got)
+		t.Errorf("template not applied to a reply:\n%s", got)
 	}
 }
 
 // The reply also switches the bus into voice mode, so the agent is told to
-// answer by voice — the old acknowledgement path never did this.
+// answer by voice.
 func TestWaitForUserReplyTracksVoice(t *testing.T) {
 	bus := NewEventBus()
 	bus.ReceiveUserMessage("\U0001f3a4 the blue one", nil, "")
 
-	if _, err := waitForUserReply(context.Background(), bus, "draw", 1); err != nil {
+	if _, err := waitForUserReply(context.Background(), bus, "send_message", 1); err != nil {
 		t.Fatalf("waitForUserReply: %v", err)
 	}
 	if !bus.LastVoice() {
@@ -324,7 +323,7 @@ func TestWaitForUserReplyLeavesBatchUnproven(t *testing.T) {
 	bus := NewEventBus()
 	id := bus.ReceiveUserMessage("the blue one", nil, "")
 
-	if _, err := waitForUserReply(context.Background(), bus, "draw", 1); err != nil {
+	if _, err := waitForUserReply(context.Background(), bus, "send_message", 1); err != nil {
 		t.Fatalf("waitForUserReply: %v", err)
 	}
 	if reads := readEventIDs(bus); len(reads) != 0 {
@@ -344,7 +343,7 @@ func TestWaitForUserReplyPropagatesCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := waitForUserReply(ctx, bus, "draw", 1); err == nil {
+	if _, err := waitForUserReply(ctx, bus, "send_message", 1); err == nil {
 		t.Fatal("cancelled wait returned no error")
 	}
 }
@@ -1009,11 +1008,11 @@ func TestEveryAgentChatToolProvesPreviousDelivery(t *testing.T) {
 		return true
 	})
 
-	// All ten agent-chat tools: send_message, send_verbal_reply, draw,
+	// All nine agent-chat tools: send_message, send_verbal_reply,
 	// send_progress, send_verbal_progress, check_messages, set_chat_title,
 	// chatlog_close, chatlog_optout, export_chat_md.
-	if handlers != 10 {
-		t.Errorf("found %d agent-chat tool handlers, want 10 — a new tool must prove delivery too", handlers)
+	if handlers != 9 {
+		t.Errorf("found %d agent-chat tool handlers, want 9 — a new tool must prove delivery too", handlers)
 	}
 }
 

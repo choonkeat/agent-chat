@@ -367,7 +367,6 @@ func main() {
 	mcpServerRef = server
 	if !disabled {
 		registerTools(server, bus)
-		registerResources(server)
 
 		if err := ensureHTTPServer(); err != nil {
 			log.Fatalf("failed to start HTTP server: %v", err)

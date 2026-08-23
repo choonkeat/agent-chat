@@ -25,11 +25,8 @@ func TestEventBusWritesJSONL(t *testing.T) {
 	// Log a userMessage
 	bus.LogUserMessage("hello from user", nil)
 
-	// Publish a draw event
-	bus.Publish(Event{
-		Type:         "draw",
-		Instructions: []any{map[string]any{"type": "drawRect", "x": 0, "y": 0}},
-	})
+	// Publish a verbalReply event
+	bus.Publish(Event{Type: "verbalReply", Text: "spoken"})
 
 	bus.Close()
 
@@ -63,8 +60,8 @@ func TestEventBusWritesJSONL(t *testing.T) {
 	if events[1].Type != "userMessage" || events[1].Text != "hello from user" {
 		t.Errorf("event 1: got type=%q text=%q", events[1].Type, events[1].Text)
 	}
-	if events[2].Type != "draw" || len(events[2].Instructions) == 0 {
-		t.Errorf("event 2: got type=%q instructions=%v", events[2].Type, events[2].Instructions)
+	if events[2].Type != "verbalReply" || events[2].Text != "spoken" {
+		t.Errorf("event 2: got type=%q text=%q", events[2].Type, events[2].Text)
 	}
 }
 

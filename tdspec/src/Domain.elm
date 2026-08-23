@@ -1,9 +1,8 @@
 module Domain exposing
     ( FileRef, UserMessage
     , Seq(..), AckId(..), Timestamp(..), Version(..)
-    , Event(..), ChatMessageData, UserMessageData, DrawEventData
+    , Event(..), ChatMessageData, UserMessageData
     , QuickReplies
-    , Json(..)
     )
 
 {-| Shared types for the agent-chat bridge.
@@ -15,9 +14,8 @@ Source of truth: eventbus.go (types), tools.go (params), main.go (protocol)
 
 @docs FileRef, UserMessage
 @docs Seq, AckId, Timestamp, Version
-@docs Event, ChatMessageData, UserMessageData, DrawEventData
+@docs Event, ChatMessageData, UserMessageData
 @docs QuickReplies
-@docs Json
 
 -}
 
@@ -101,7 +99,6 @@ The ADT makes these constraints explicit.
         Text         string    `json:"text,omitempty"`
         AckID        string    `json:"ack_id,omitempty"`
         QuickReplies []string  `json:"quick_replies,omitempty"`
-        Instructions []any     `json:"instructions,omitempty"`
         Files        []FileRef `json:"files,omitempty"`
         Timestamp    int64     `json:"ts,omitempty"`
     }
@@ -121,16 +118,6 @@ type Event
       {- "userMessage" -- broadcast of user's reply to all browsers.
          Also appended to event log for reconnect replay.
       -}
-    | DrawEvent DrawEventData
-
-
-
-{- "draw" -- canvas drawing instructions.
-   Rendered as inline canvas bubble in chat history.
-   May include quick_replies and ack_id.
-   Note: draw events do NOT carry text -- the text goes in a
-   separate AgentMessage event published immediately before the draw.
--}
 
 
 {-| Payload for AgentMessage and VerbalReply events.
@@ -154,23 +141,3 @@ type alias UserMessageData =
     , files : List FileRef
     }
 
-
-{-| Payload for DrawEvent.
-
-Note: does NOT include a text field. The caption text is published
-as a separate AgentMessage event before the draw (see tools.go draw handler).
-
--}
-type alias DrawEventData =
-    { seq : Seq
-    , timestamp : Timestamp
-    , instructions : List Json
-    , ackId : Maybe AckId
-    , quickReplies : QuickReplies
-    }
-
-
-{-| Opaque JSON value -- draw instructions are untyped JSON objects.
--}
-type Json
-    = Json

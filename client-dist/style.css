@@ -780,24 +780,6 @@ body {
 [data-theme="light"] .hl-c { color: #6b7280; }
 [data-theme="light"] .hl-n { color: #ea580c; }
 
-/* --- Canvas bubbles --- */
-
-.bubble.canvas-bubble {
-  padding: 0;
-  background: var(--bg-tertiary);
-  overflow: hidden;
-  width: 90%;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.bubble.canvas-bubble canvas,
-.bubble.canvas-bubble img {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

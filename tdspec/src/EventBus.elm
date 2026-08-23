@@ -170,7 +170,7 @@ unsubscribe sub =
 {-| Poll until at least one subscriber is connected.
 Timeout: 30 seconds. Poll interval: 100ms.
 
-Used by blocking MCP tools (send\_message, send\_verbal\_reply, draw)
+Used by blocking MCP tools (send\_message, send\_verbal\_reply)
 to ensure at least one browser is watching before publishing.
 
 Source: eventbus.go `WaitForSubscriber` method.
@@ -227,7 +227,7 @@ waitForMessages () =
 
 {-| Returns True if there are user messages waiting in the queue.
 
-Used by blocking tools (send\_message, send\_verbal\_reply, draw)
+Used by blocking tools (send\_message, send\_verbal\_reply)
 to short-circuit: if messages are already queued, skip quick\_replies
 and return immediately since the replies would be stale.
 

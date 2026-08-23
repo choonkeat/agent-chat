@@ -1,4 +1,4 @@
-.PHONY: build bundle-client publish publish-dry test unit-test e2e-test e2e-report bump refresh-npx-cache
+.PHONY: build publish publish-dry test unit-test e2e-test e2e-report bump refresh-npx-cache
 
 build: build-platforms refresh-npx-cache
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
@@ -7,9 +7,6 @@ build: build-platforms refresh-npx-cache
 # `npm link` alone leaves new sessions running the last published binary.
 refresh-npx-cache:
 	./scripts/refresh-npx-cache.sh
-
-bundle-client:
-	npx esbuild canvas-entry.ts --bundle --format=iife --global-name=CanvasBundle --outfile=client-dist/canvas-bundle.js --target=es2020
 
 test: unit-test e2e-test
 
@@ -26,7 +23,7 @@ e2e-report:
 	echo "Serving HTML report on http://localhost:$$E2E_REPORT_PORT"; \
 	npx -y http-server playwright-report -p $$E2E_REPORT_PORT --host 0.0.0.0 -c-1
 
-build-platforms: bundle-client
+build-platforms:
 	./scripts/build-platforms.sh
 
 publish-dry: build-platforms

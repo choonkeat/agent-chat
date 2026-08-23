@@ -48,13 +48,12 @@ type UserMessage struct {
 // call has proven actually reached the agent; only then does the browser render
 // the bubble as read.
 type Event struct {
-	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "userMessagesRead", "draw"
+	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "userMessagesRead"
 	Seq          int64     `json:"seq"`                    // monotonic sequence number
 	ID           string    `json:"id,omitempty"`           // userMessage: the message's unique ID
 	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed / userMessagesRead: which IDs
 	Text         string    `json:"text,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
-	Instructions []any     `json:"instructions,omitempty"` // draw instructions
 	Files        []FileRef `json:"files,omitempty"`
 	Timestamp    int64     `json:"ts,omitempty"` // Unix milliseconds
 

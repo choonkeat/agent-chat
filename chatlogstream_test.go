@@ -137,7 +137,7 @@ func TestChatLogStreamSkipsHiddenEvents(t *testing.T) {
 	for _, e := range []Event{
 		{Type: "toolMarker", AgentToolName: "check_messages", AgentToolSeq: 1},
 		{Type: "userMessagesConsumed", IDs: []string{"x"}},
-		{Type: "draw", Instructions: []any{"x"}},
+		{Type: "userMessagesRead", IDs: []string{"x"}},
 		{Type: "userMessage", Text: "   "}, // whitespace-only: no bubble
 	} {
 		s.HandleEvent(e)

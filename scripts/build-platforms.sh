@@ -12,9 +12,6 @@ COMMIT="${COMMIT:-$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || ec
 
 echo "Building agent-chat v${VERSION} (${COMMIT})"
 
-# ── 0. Pre-build (repo-specific) ─────────────────────────────────────
-make -C "$REPO_ROOT" bundle-client
-
 # ── 1. Cross-compile Go binary for each platform ─────────────────────────
 TARGETS=(
   "linux   amd64  linux-x64"

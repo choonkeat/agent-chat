@@ -1,6 +1,6 @@
 # Agent Chat
 
-An MCP server that gives your AI agent a rich chat interface. Instead of reading raw tool calls in a terminal, your users get a rendered conversation with markdown, code blocks, canvas diagrams, quick reply buttons, and voice support.
+An MCP server that gives your AI agent a rich chat interface. Instead of reading raw tool calls in a terminal, your users get a rendered conversation with markdown, code blocks, quick reply buttons, and voice support.
 
 This is the MCP that powers the **Agent Chat** tab in [swe-swe](https://swe-swe.netlify.app/).
 
@@ -22,20 +22,18 @@ Same conversation, two views. The terminal shows MCP tool calls and code diffs. 
 - **Rich markdown** — messages render with full markdown, syntax-highlighted code blocks, and blockquotes
 - **File drag & drop** — drop files into the chat to share them with the agent
 - **Images in messages** — agents can include screenshots and images inline
-- **Canvas drawing** — agents can draw diagrams and visualizations on an interactive canvas
 - **Voice conversation** — speak to your agent and hear responses via text-to-speech
 - **Quick replies** — agents can offer clickable response buttons for common actions
 - **Permission prompts in chat** — when Claude Code is launched with `--dangerously-load-development-channels server:swe-swe-agent-chat`, tool-use permission prompts are intercepted from stdin and surfaced as Allow/Deny quick replies in the chat UI (and spoken aloud in voice mode), instead of blocking on a TUI prompt
 
 ## How it works
 
-Agent Chat runs as an MCP server alongside your AI agent. The agent calls tools like `send_message`, `draw`, and `check_messages` to communicate with the user through a browser-based chat UI.
+Agent Chat runs as an MCP server alongside your AI agent. The agent calls tools like `send_message`, `send_progress`, and `check_messages` to communicate with the user through a browser-based chat UI.
 
 ```
 Agent (Claude, etc.)
   │
   ├─ send_message("Here's what I found...")  →  Chat UI shows rich message
-  ├─ draw([...instructions...])              →  Chat UI renders canvas diagram
   ├─ send_progress("Working on it...")       →  Chat UI shows progress indicator
   └─ check_messages()                        ←  Chat UI returns user's reply
 ```
@@ -46,7 +44,6 @@ Agent (Claude, etc.)
 |------|-------------|
 | `send_message` | Send a message and wait for user response. Supports quick reply buttons. |
 | `send_verbal_reply` | Send a spoken reply in voice mode (text-to-speech). |
-| `draw` | Draw a canvas diagram and wait for user response. |
 | `send_progress` | Send a non-blocking progress update. |
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |

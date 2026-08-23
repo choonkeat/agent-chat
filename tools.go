@@ -202,8 +202,8 @@ func userRespondedText(msgs []UserMessage) string {
 }
 
 // waitForUserReply parks on the message queue until the user says something,
-// then formats it. THE reply path — send_message, send_verbal_reply and draw
-// all take it, so a reply to a drawing is an ordinary user message: it queues,
+// then formats it. THE reply path — send_message and send_verbal_reply both
+// take it, so every reply is an ordinary user message: it queues,
 // it carries attachments and the message-style template, it can be unsent, it
 // is redelivered if the call that was waiting for it died, and its bubble goes
 // through the same unread-until-proven states as any other.
@@ -369,7 +369,7 @@ func maxDailyIndex(dir, prefix string) int {
 func registerTools(server *mcp.Server, bus *EventBus) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "send_message",
-		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds; the user's reply is RETURNED by this call as `User responded: …` — that IS the message. This tool is TERMINAL: call it when the task is COMPLETE, when you need a decision only the user can make, or to confirm before a risky/destructive step. But if you have promised an artifact and can safely continue, you are NOT blocked — do not finalize and do not ask permission to keep going; keep the same turn alive, execute the work, and send non-blocking send_progress updates at least every 60 seconds. Ending your turn SUSPENDS execution — there is no background worker, so a premature send_message silently pauses unfinished work. Always end a *completed* task by calling send_message with the result and waiting; never end your turn silently. You do NOT need to poll for user messages — any barge-in the user sends while you are working will be appended to the next send_progress (or draw) return after a `---BARGE-IN---` sentinel.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
+		Description: "The ONLY channel the user sees in text mode. Use it for EVERY user-visible message: questions, status, final answers, errors, acknowledgments. Plain text in your response is invisible to the user — if you don't call send_message, the user sees nothing. Blocks until the user responds; the user's reply is RETURNED by this call as `User responded: …` — that IS the message. This tool is TERMINAL: call it when the task is COMPLETE, when you need a decision only the user can make, or to confirm before a risky/destructive step. But if you have promised an artifact and can safely continue, you are NOT blocked — do not finalize and do not ask permission to keep going; keep the same turn alive, execute the work, and send non-blocking send_progress updates at least every 60 seconds. Ending your turn SUSPENDS execution — there is no background worker, so a premature send_message silently pauses unfinished work. Always end a *completed* task by calling send_message with the result and waiting; never end your turn silently. You do NOT need to poll for user messages — any barge-in the user sends while you are working will be appended to the next send_progress return after a `---BARGE-IN---` sentinel.\n\n`first_quick_reply` is a SINGLE plain string — the primary suggested reply shown to the user (e.g. \"Yes, proceed\"). `more_quick_replies` is an array of additional option strings (e.g. [\"Wait\", \"Cancel\"]). Do NOT pass a JSON-encoded array as `first_quick_reply`; it must be a plain string.\n\nOptionally pass `image_urls` with an array of absolute paths to local image files (e.g., screenshots) to include them inline in the message.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *MessageParams) (*mcp.CallToolResult, any, error) {
 		// Tick the ordinal regardless of whether we actually publish a bubble:
 		// the corresponding tool_use entry IS written to the agent's .jsonl
@@ -522,111 +522,6 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if uiURL != "" {
-			text += "\nChat UI: " + uiURL
-		}
-
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{
-				&mcp.TextContent{Text: text},
-			},
-		}, nil, nil
-	})
-
-	// DrawParams are the parameters for the draw tool.
-	type DrawParams struct {
-		Text             string   `json:"text"`
-		Instructions     []any    `json:"instructions"`
-		QuickReply       string   `json:"first_quick_reply"`
-		MoreQuickReplies []string `json:"more_quick_replies,omitempty"`
-	}
-
-	mcp.AddTool(server, &mcp.Tool{
-		Name: "draw",
-		Description: `Draw a diagram as an inline canvas bubble in the chat and wait for viewer response.
-
-Each draw call creates a new canvas bubble in the chat history, rendered with a hand-drawn aesthetic.
-Use send_message for explanatory text before or after drawing.
-
-HOW IT WORKS:
-• Each draw call = one slide. Build complex diagrams across multiple slides (gradual reveal).
-• Viewer clicks Continue (or gives feedback like "Slower pace") before this tool returns.
-• The result tells you what the viewer said—adjust your next slide accordingly.
-
-INSTRUCTIONS FORMAT — JSON objects with "type" field:
-  [{"type":"drawRect","x":100,"y":100,"width":150,"height":60,"fill":"#E3F2FD"},
-   {"type":"writeText","text":"Client","x":130,"y":140,"fontSize":16},
-   {"type":"moveTo","x":250,"y":130},{"type":"lineTo","x":350,"y":130}]
-
-COMMON TYPES: moveTo, lineTo, drawRect, drawCircle, writeText, setColor
-
-Read whiteboard://instructions for all instruction types with parameters.
-Read whiteboard://diagramming-guide for layout rules and cognitive principles.
-
-` + "`first_quick_reply`" + ` is a SINGLE plain string — the primary reply option shown to the viewer. ` + "`more_quick_replies`" + ` is an array of additional option strings. Do NOT pass a JSON-encoded array as ` + "`first_quick_reply`" + `; it must be a plain string.`,
-	}, func(ctx context.Context, req *mcp.CallToolRequest, params *DrawParams) (*mcp.CallToolResult, any, error) {
-		// Kill any orphaned blocking wait, and ack limbo: a draw call means
-		// the agent is actively working, so the previous delivery arrived.
-		bus.ProveDelivery()
-		bus.CancelActiveWait()
-		bus.AckLimbo()
-
-		if err := ensureHTTPServer(); err != nil {
-			return nil, nil, fmt.Errorf("failed to start chat server: %w", err)
-		}
-
-		httpMu.Lock()
-		shouldOpen := uiURL != "" && !browserOpened
-		if shouldOpen {
-			openBrowser(uiURL)
-			browserOpened = true
-		}
-		httpMu.Unlock()
-
-		if err := bus.WaitForSubscriber(ctx); err != nil {
-			return nil, nil, fmt.Errorf("waiting for browser: %w", err)
-		}
-
-		// Publish text as a chat bubble before the canvas
-		bus.Publish(Event{Type: "agentMessage", Text: params.Text})
-
-		// If user already sent messages, show the draw without quick_replies
-		// and return immediately — the replies would be stale.
-		if bus.HasQueuedMessages() {
-			bus.Publish(Event{
-				Type:         "draw",
-				Instructions: params.Instructions,
-			})
-			text := appendBargeIn(bus, "Draw displayed.")
-			if uiURL != "" {
-				text += "\nChat UI: " + uiURL
-			}
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: text},
-				},
-			}, nil, nil
-		}
-
-		replies := append([]string{params.QuickReply}, params.MoreQuickReplies...)
-		bus.Publish(Event{
-			Type:         "draw",
-			Instructions: params.Instructions,
-			QuickReplies: replies,
-		})
-
-		waitCtx, endWait := bus.BeginBlockingWait(ctx)
-		defer endWait()
-		stopKeepalive := keepaliveForRequest(waitCtx, req, "waiting for viewer response")
-		defer stopKeepalive()
-
-		// The same wait send_message uses. A tap on one of these replies is an
-		// ordinary user message, not a private acknowledgement.
-		text, err := waitForUserReply(waitCtx, bus, "draw", 0)
-		if err != nil {
-			return nil, nil, err
-		}
-
 		if uiURL != "" {
 			text += "\nChat UI: " + uiURL
 		}
