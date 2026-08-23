@@ -185,6 +185,14 @@ var clearQuickReplies = ['Yes', 'No'];
 // afterwards, with the chat log as the only carrier between the two halves.
 // The order matters and is the whole point (see maybeHandleClearPrefix).
 var clearPrefix = '/clear';
+// `/compact <instruction>` is the same sequence with a summary instead of a
+// wipe: the agent keeps a condensed memory of the conversation, so no resume
+// line naming the chat log is needed — only the wake-up nudge.
+var compactPrefix = '/compact';
+// The line typed into the agent's terminal to wake it. It names the MCP server
+// because an agent handed several tool groups at once has more than one
+// plausible `send_message` to pick from.
+var chatNudgeText = 'agent-chat mcp: check_messages; report progress before you start processing';
 // How long to let the terminal settle after the wipe before posting the
 // instruction. The parent frame types Esc, then `/clear`, then Enter on its own
 // 300ms timers, so the wipe itself is not even keyed in until ~600ms; the rest
@@ -192,6 +200,12 @@ var clearPrefix = '/clear';
 // line lands in a screen that is still tearing down.
 var clearWipeSettleMs = 2000;
 var pendingClearResume = false; // awaiting messageQueued to type the resume line
+var pendingCompactResume = false; // awaiting messageQueued to nudge after a /compact
+// Summarising takes the agent CLI a while, and the nudge is typed through the
+// same channel as an interrupt — one Esc first — so a nudge sent too early
+// cancels the summary it was waiting for. This is the wait after the
+// instruction is recorded, on top of clearWipeSettleMs.
+var compactNudgeDelayMs = 20000;
 var warningShown = false; // show "type check_messages" warning only once
 var motdShown = false; // show MOTD tip only once per page load
 
@@ -1716,8 +1730,9 @@ function detectInterrupt(m) {
   return m;
 }
 
-/** `/clear …`, typed or implied by "conversation context only". Claims the
-    message: that route wipes, records and resumes on its own.
+/** `/clear …` or `/compact …`, the first also implied by "conversation context
+    only". Claims the message: that route resets, records and resumes on its
+    own.
 
     Attachments come along. An attachment is already uploaded by the time a
     message is sent, so what travels is its path — the same thing that rides an
@@ -1737,8 +1752,9 @@ function routeClearPrefix(m) {
   // Files with no words count: an attachment sent on its own is still a message
   // the server will echo, so it needs its bubble drawn now like any other.
   if (window.parent !== window && (clearInstruction(routed) || m.files.length > 0)) {
-    // What the server will send back is the instruction with the `/clear `
-    // gone, so that — not the routed text — is what the bubble must show.
+    // What the server will send back is the instruction with the `/clear ` or
+    // `/compact ` gone, so that — not the routed text — is what the bubble must
+    // show.
     m.displayText = stripVoiceMark(clearInstruction(routed));
     lockInput(m);
     drawUnsentBubble(m);
@@ -1978,10 +1994,29 @@ function isClearCommand(text) {
   return text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
 }
 
-/** What a `/clear …` hands the agent afterwards — '' for a bare `/clear`, which
-    records nothing and so produces no bubble to wait for. */
+function isCompactCommand(text) {
+  return text === compactPrefix || text.indexOf(compactPrefix + ' ') === 0;
+}
+
+/** Either reset command. Both are claimed by the same route, and neither may be
+    re-prefixed by the "conversation context only" tick. */
+function isResetCommand(text) {
+  return isClearCommand(text) || isCompactCommand(text);
+}
+
+/** Which of the two a message is, or '' when it is an ordinary message. */
+function resetCommandOf(text) {
+  if (isClearCommand(text)) return clearPrefix;
+  if (isCompactCommand(text)) return compactPrefix;
+  return '';
+}
+
+/** What a `/clear …` or `/compact …` hands the agent afterwards — '' for a bare
+    command, which records nothing and so produces no bubble to wait for. */
 function clearInstruction(text) {
-  return text === clearPrefix ? '' : text.slice(clearPrefix.length + 1).trim();
+  var cmd = resetCommandOf(text);
+  if (!cmd) return '';
+  return text === cmd ? '' : text.slice(cmd.length + 1).trim();
 }
 
 // The text maybeHandleClearPrefix acts on. Normally that is what the user sent.
@@ -2005,7 +2040,7 @@ function clearInstruction(text) {
 // work at all. A `/clear` typed by hand still says why it cannot: that is an
 // answer to something the user deliberately did.
 function clearRouteText(text, isInterrupt) {
-  if (!getCtxOnly() || isClearCommand(text) || pendingClear || isInterrupt) return text;
+  if (!getCtxOnly() || isResetCommand(text) || pendingClear || isInterrupt) return text;
   if (window.parent === window) return text;
   if (normalizePhrase(text) === clearContextPhrase) return text;
   return clearPrefix + ' ' + text;
@@ -2026,30 +2061,38 @@ function clearRouteText(text, isInterrupt) {
 // typeClearResumeLine for why exactly one of the two carriers may be the
 // instruction.
 function maybeHandleClearPrefix(rawText, files) {
-  if (!isClearCommand(rawText)) return false;
+  var cmd = resetCommandOf(rawText);
+  if (!cmd) return false;
+  var isCompact = cmd === compactPrefix;
   var instruction = clearInstruction(rawText);
   files = files || [];
   if (window.parent === window) {
     addBubble(instruction || rawText, 'user', null, voiceMode ? 'voice' : null);
-    addAgentMessage('Cannot clear context: parent frame not connected.', null, null, Date.now());
+    addAgentMessage('Cannot ' + (isCompact ? 'compact' : 'clear') + ' context: parent frame not connected.', null, null, Date.now());
     return true;
   }
   // The instruction, not the routed text: what the user chose is the chip whose
   // words these are, and a `/clear ` in front of them would match no chip and
   // freeze the chosen one along with the rest.
   freezeCurrentReplies(instruction || rawText);
-  window.parent.postMessage({ type: 'agent-chat-interrupt', text: '/clear' }, '*');
-  firstMessageSent = false;
-  writeFirstMessageSent(false);
-  pendingClearResume = true;
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: cmd }, '*');
+  // A wipe leaves a fresh agent that has to be bootstrapped again; a summary
+  // leaves the same one, so its bootstrap state stands.
+  if (!isCompact) {
+    firstMessageSent = false;
+    writeFirstMessageSent(false);
+  }
+  if (isCompact) pendingCompactResume = true;
+  else pendingClearResume = true;
   showLoading();
   setTimeout(function () {
     if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
       pendingClearResume = false;
+      pendingCompactResume = false;
       // The instruction never left the browser, so its bubble comes back down
       // and the words go back in the box for the user to send again.
       restoreLastUnsent();
-      addAgentMessage('Context cleared, but the chat connection dropped before the instruction was recorded — your message is back in the box. Type `check_messages` in the agent terminal to reconnect.', null, null, Date.now());
+      addAgentMessage('Context ' + (isCompact ? 'compacted' : 'cleared') + ', but the chat connection dropped before the instruction was recorded — your message is back in the box. Type `check_messages` in the agent terminal to reconnect.', null, null, Date.now());
       enableInput();
       return;
     }
@@ -2090,9 +2133,16 @@ function typeClearResumeLine() {
       }
       var text = path
         ? 'resume ' + path + ' - read the whole file for context, then check_messages for your instruction (if it returns nothing, the last USER entry in the file is your instruction)'
-        : 'agent-chat mcp: check_messages; report progress before you start processing';
+        : chatNudgeText;
       window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
     });
+}
+
+// Brings the agent back after a `/compact`. Unlike a wipe there is nothing to
+// re-read: the summary the agent kept is its context, and the instruction is
+// waiting on the queue, so the ordinary wake-up line is the whole of it.
+function typeCompactResumeLine() {
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: chatNudgeText }, '*');
 }
 
 function handleSend() {
@@ -2549,7 +2599,7 @@ chatInput.addEventListener('keydown', function (e) {
       // A bare `/clear` still has the `/` trigger live (it dies on the first
       // space), so the dropdown would otherwise eat the Enter that submits it —
       // silently, since a status-only dropdown has nothing to select either.
-      if (e.key === 'Enter' && isClearCommand(chatInput.value.trim())) {
+      if (e.key === 'Enter' && isResetCommand(chatInput.value.trim())) {
         acHide();
         handleSend();
         return;
@@ -3757,7 +3807,7 @@ function connect() {
     backoffDelay = BACKOFF_INITIAL;
     if (!motdShown && window.parent !== window) {
       motdShown = true;
-      addBubble('Tip: say **stop** to interrupt, or start a message with **`/clear `** to reset the agent context and hand it the rest as its next instruction.', 'system');
+      addBubble('Tip: say **stop** to interrupt, or start a message with **`/clear `** (wipe) or **`/compact `** (summarise) to reset the agent context and hand it the rest as its next instruction.', 'system');
     }
   };
 
@@ -3916,12 +3966,20 @@ function connect() {
           typeClearResumeLine();
           break;
         }
+        // A `/compact …` is mid-flight. The agent keeps its (summarised)
+        // memory, so there is no file to name — only the wake-up nudge, held
+        // back until the summary has had time to finish.
+        if (pendingCompactResume) {
+          pendingCompactResume = false;
+          setTimeout(typeCompactResumeLine, compactNudgeDelayMs);
+          break;
+        }
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
         if (pendingNotifyParent) {
           var nudgeText = pendingInterrupt
             ? 'check_messages; ask me how to proceed'
-            : 'agent-chat mcp: check_messages; report progress before you start processing';
+            : chatNudgeText;
           if (window.parent !== window) {
             if (pendingInterrupt) {
               // Voice interrupt: send Esc-Esc to abort current tool, then

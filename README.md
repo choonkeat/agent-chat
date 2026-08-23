@@ -63,6 +63,7 @@ nothing.
 |---------|--------|
 | `stop` (also `wait`, `cancel`, `hold on`, `abort`, `halt`, `pause`) | Interrupts the agent's current turn and nudges it to `check_messages`. |
 | `/clear <instruction>` | Resets the agent's context, then hands it `<instruction>` — the `/clear ` prefix is stripped, and the instruction is recorded in the chat and the streaming chat log. The agent comes back with a line naming that log file as its context, so the conversation survives the reset even though the agent's own memory does not; the instruction itself is collected from the message queue. The reset leaves no bubble and no mark in the log. A bare `/clear` resets with no follow-up instruction. Requires the streaming export (below); without it the reset still happens but the earlier conversation is gone. See `docs/adr/2026-08-02-clear-prefix-context-reset.md`. |
+| `/compact <instruction>` | Same sequence as `/clear`, but the agent summarises its context instead of losing it. The `/compact ` prefix is stripped, the instruction is recorded in the chat and on the queue, and the agent is woken with the ordinary nudge once the summary has had time to finish — there is no chat-log resume line, because the summary is the context. A bare `/compact` summarises with no follow-up instruction. |
 | `clear context` → `yes` | The older confirm-then-reset flow. Resets only; nothing is handed back. |
 
 ## Streaming chat-log export
