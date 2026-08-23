@@ -578,15 +578,15 @@ func regenerateIndexHTML(dir string) error {
 func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, now time.Time) (string, []string, error) {
 	date := now.Format("2006-01-02")
 	idx := fmt.Sprintf("%02d", nextDailyIndex(rootDir, date))
-	mdPath := chatMDPath(rootDir, date, idx, slug)
+	mdPath := exportMDPath(rootDir, date, idx, slug)
 
-	if err := os.MkdirAll(chatMonthDir(rootDir, date), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(mdPath), 0755); err != nil {
 		return "", nil, fmt.Errorf("mkdir %s: %w", rootDir, err)
 	}
 	if err := ensureViewerAssets(viewerAssetsDir(rootDir)); err != nil {
 		return "", nil, err
 	}
-	imageMap, warnings, err := writeImageAttachments(events, chatAssetsDir(rootDir, date), date, idx)
+	imageMap, warnings, err := writeImageAttachments(events, exportAssetsDir(mdPath), date, idx)
 	if err != nil {
 		return "", nil, err
 	}

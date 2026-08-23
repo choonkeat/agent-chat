@@ -112,8 +112,12 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 		slug = "untitled-" + suffix
 	}
 	idxNum := nextDailyIndex(dir, date)
-	if err := os.MkdirAll(chatMonthDir(dir, date), 0755); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", chatMonthDir(dir, date), err)
+	// The month directory only exists under layoutMonth; under layoutFlat this
+	// is the archive root, already created above.
+	if exportDir := filepath.Dir(exportMDPath(dir, date, "01", "x")); exportDir != dir {
+		if err := os.MkdirAll(exportDir, 0755); err != nil {
+			return nil, fmt.Errorf("mkdir %s: %w", exportDir, err)
+		}
 	}
 	var (
 		f      *os.File
@@ -122,7 +126,7 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 	)
 	for {
 		idx = fmt.Sprintf("%02d", idxNum)
-		mdPath = chatMDPath(dir, date, idx, slug)
+		mdPath = exportMDPath(dir, date, idx, slug)
 		var err error
 		f, err = os.OpenFile(mdPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0644)
 		if err == nil {

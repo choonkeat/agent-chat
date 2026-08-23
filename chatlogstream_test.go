@@ -80,8 +80,8 @@ func TestChatLogStreamAppends(t *testing.T) {
 		t.Fatalf("newChatLogStream: %v", err)
 	}
 
-	if base := filepath.Base(s.MDPath()); base != "18-01-untitled.md" {
-		t.Errorf("provisional filename = %s, want 18-01-untitled.md", base)
+	if base := filepath.Base(s.MDPath()); base != "2026-07-18-01-untitled.md" {
+		t.Errorf("provisional filename = %s, want 2026-07-18-01-untitled.md", base)
 	}
 
 	events := []Event{
@@ -112,7 +112,7 @@ func TestChatLogStreamAppends(t *testing.T) {
 		}
 		if i >= 2 {
 			// Attachment was copied the moment its event was handled.
-			asset := filepath.Join(dir, "2026-07", "assets", "2026-07-18-01-1-"+sha12+".png")
+			asset := filepath.Join(dir, "assets", "2026-07-18-01-1-"+sha12+".png")
 			if _, err := os.Stat(asset); err != nil {
 				t.Fatalf("event %d: asset not on disk immediately: %v", i, err)
 			}
@@ -177,7 +177,7 @@ func TestChatLogStreamRename(t *testing.T) {
 		t.Fatalf("SetTitle: %v", err)
 	}
 
-	wantPath := filepath.Join(dir, "2026-07", "18-01-auth-bug-fix.md")
+	wantPath := filepath.Join(dir, "2026-07-18-01-auth-bug-fix.md")
 	if got := s.MDPath(); got != wantPath {
 		t.Errorf("MDPath after rename = %s, want %s", got, wantPath)
 	}
@@ -283,7 +283,7 @@ func TestChatLogStreamResume(t *testing.T) {
 	if want := renderChatMarkdown(append(history, e3), meta, expectedMap); string(got) != want {
 		t.Errorf("resumed file != batch render (lastTs/assetN recovery broken)\n--- got:\n%s\n--- want:\n%s", got, want)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "2026-07", "assets", "2026-07-18-01-2-"+sha2hex+".png")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "assets", "2026-07-18-01-2-"+sha2hex+".png")); err != nil {
 		t.Errorf("post-resume asset missing: %v", err)
 	}
 
@@ -292,8 +292,8 @@ func TestChatLogStreamResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third stream: %v", err)
 	}
-	if base := filepath.Base(s3.MDPath()); base != "18-02-untitled.md" {
-		t.Errorf("different session got %s, want 18-02-untitled.md", base)
+	if base := filepath.Base(s3.MDPath()); base != "2026-07-18-02-untitled.md" {
+		t.Errorf("different session got %s, want 2026-07-18-02-untitled.md", base)
 	}
 }
 
@@ -453,7 +453,7 @@ func TestChatLogOptout(t *testing.T) {
 		s.HandleEvent(e)
 	}
 	mdPath := s.MDPath()
-	asset := filepath.Join(dir, "2026-07", "assets", "2026-07-18-01-1-"+sha12+".png")
+	asset := filepath.Join(dir, "assets", "2026-07-18-01-1-"+sha12+".png")
 	if _, err := os.Stat(asset); err != nil {
 		t.Fatalf("asset missing before optout: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestChatLogOptout(t *testing.T) {
 	if err := s.SetTitle("Back Again", history); err != nil {
 		t.Fatalf("SetTitle re-arm: %v", err)
 	}
-	rearmed := filepath.Join(dir, "2026-07", "18-01-back-again.md")
+	rearmed := filepath.Join(dir, "2026-07-18-01-back-again.md")
 	if got := s.MDPath(); got != rearmed {
 		t.Errorf("re-armed path = %s, want %s", got, rearmed)
 	}
@@ -525,8 +525,8 @@ func TestChatLogStreamSessionUUIDSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newChatLogStream: %v", err)
 	}
-	if base := filepath.Base(s.MDPath()); base != "18-01-untitled-b227-uuid.md" {
-		t.Errorf("provisional filename = %s, want 18-01-untitled-b227-uuid.md", base)
+	if base := filepath.Base(s.MDPath()); base != "2026-07-18-01-untitled-b227-uuid.md" {
+		t.Errorf("provisional filename = %s, want 2026-07-18-01-untitled-b227-uuid.md", base)
 	}
 	if s.meta.Title != "Untitled" {
 		t.Errorf("provisional title = %q, want Untitled", s.meta.Title)
@@ -534,8 +534,8 @@ func TestChatLogStreamSessionUUIDSuffix(t *testing.T) {
 	if err := s.SetTitle("Real Title", nil); err != nil {
 		t.Fatalf("SetTitle: %v", err)
 	}
-	if base := filepath.Base(s.MDPath()); base != "18-01-real-title.md" {
-		t.Errorf("titled filename = %s, want 18-01-real-title.md", base)
+	if base := filepath.Base(s.MDPath()); base != "2026-07-18-01-real-title.md" {
+		t.Errorf("titled filename = %s, want 2026-07-18-01-real-title.md", base)
 	}
 }
 
@@ -557,11 +557,10 @@ func TestChatLogStreamSetTitleFailureKeepsStream(t *testing.T) {
 	events := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
 	s.HandleEvent(events[0])
 
-	monthDir := filepath.Join(dir, "2026-07")
-	if err := os.Chmod(monthDir, 0555); err != nil {
+	if err := os.Chmod(dir, 0555); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(monthDir, 0755)
+	defer os.Chmod(dir, 0755)
 
 	if err := s.SetTitle("Doomed Title", events); err == nil {
 		t.Fatal("SetTitle in read-only dir succeeded, want error")
@@ -590,14 +589,14 @@ func TestChatLogStreamSetTitleFailureKeepsStream(t *testing.T) {
 
 	// Once the dir is writable again the same rename succeeds and the stream
 	// switches to the new filename.
-	if err := os.Chmod(monthDir, 0755); err != nil {
+	if err := os.Chmod(dir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	history := append(events, e2)
 	if err := s.SetTitle("Doomed Title", history); err != nil {
 		t.Fatalf("SetTitle retry after chmod: %v", err)
 	}
-	wantPath := filepath.Join(dir, "2026-07", "18-01-doomed-title.md")
+	wantPath := filepath.Join(dir, "2026-07-18-01-doomed-title.md")
 	if got := s.MDPath(); got != wantPath {
 		t.Errorf("MDPath after retry = %s, want %s", got, wantPath)
 	}
@@ -631,7 +630,7 @@ func TestChatLogStreamCloseOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CloseOut: %v", err)
 	}
-	wantMD := filepath.Join(dir, "2026-07", "18-01-close-flow.md")
+	wantMD := filepath.Join(dir, "2026-07-18-01-close-flow.md")
 	if s.MDPath() != wantMD {
 		t.Errorf("MDPath = %s, want %s", s.MDPath(), wantMD)
 	}
@@ -824,7 +823,7 @@ func TestHandleChatlogPath(t *testing.T) {
 	}
 	chatStream = s
 
-	want := filepath.Join("agent-chats", "2026-07", "18-01-untitled.md")
+	want := filepath.Join("agent-chats", "2026-07-18-01-untitled.md")
 	if got := chatlogPathJSON(t); got != want {
 		t.Errorf("path = %q, want %q (relative to cwd)", got, want)
 	}
@@ -832,7 +831,7 @@ func TestHandleChatlogPath(t *testing.T) {
 	if err := s.SetTitle("Context Reset", nil); err != nil {
 		t.Fatalf("SetTitle: %v", err)
 	}
-	want = filepath.Join("agent-chats", "2026-07", "18-01-context-reset.md")
+	want = filepath.Join("agent-chats", "2026-07-18-01-context-reset.md")
 	if got := chatlogPathJSON(t); got != want {
 		t.Errorf("path after rename = %q, want %q", got, want)
 	}

@@ -121,7 +121,7 @@ test.describe('/clear prefix', () => {
       //    file: naming both as the instruction made the agent answer twice.
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
       const [, resume] = await interrupts(page);
-      expect(resume).toMatch(/^resume agent-chats\/\d{4}-\d{2}\/[\d-]+-untitled.*\.md /);
+      expect(resume).toMatch(/^resume agent-chats\/(\d{4}-\d{2}\/)?[\d-]+-untitled.*\.md /);
       expect(resume).toContain('for context');
       expect(resume).toContain('check_messages');
       // An `@` would open the agent CLI's file picker and the trailing Enter

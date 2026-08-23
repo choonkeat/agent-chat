@@ -268,10 +268,17 @@ func main() {
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
+	chatlogLayoutFlag := flag.String("chatlog-layout", "", "where new chat-log exports are filed: \"flat\" (agent-chats/YYYY-MM-DD-NN-title.md, the default) or \"month\" (agent-chats/YYYY-MM/DD-NN-title.md). Both are always readable; this only picks where new files go. Falls back to AGENT_CHAT_CHATLOG_LAYOUT")
 	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; the opening position for this chat only, outranked by the box in Settings and by the browser's last choice")
 	flag.Parse()
 
 	conversationContextOnly = *ctxOnlyFlag
+
+	layout, err := parseChatLogLayout(*chatlogLayoutFlag, os.Getenv("AGENT_CHAT_CHATLOG_LAYOUT"))
+	if err != nil {
+		log.Fatalf("agent-chat: %v", err)
+	}
+	chatLogLayoutSetting = layout
 
 	welcomeReplies = parseWelcomeReplies(*welcomeRepliesFlag)
 	cwd, _ := os.Getwd()

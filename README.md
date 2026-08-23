@@ -50,7 +50,7 @@ Agent (Claude, etc.)
 | `set_chat_title` | Name the streaming chat-log export (see below): renames the auto-written `…-untitled.md` to `…-{slugified-title}.md` and rewrites its header. Call again anytime to rename; also re-enables the export after `chatlog_optout`. |
 | `chatlog_close` | Close out the streaming chat-log export for a clean git commit: freezes this session's `.md` (kept, unlike `chatlog_optout`), regenerates `index.html`, and returns the exact paths to `git add`. Requires a `title` while the file is still untitled; never renames an already-titled file. `set_chat_title` re-opens with a full-history backfill. |
 | `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
-| `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM/DD-NN-{title}.md`, copies attachments to `./agent-chats/YYYY-MM/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
+| `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies attachments to `./agent-chats/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
 
 ## Chat commands
 
@@ -72,29 +72,36 @@ Set `AGENT_CHAT_EXPORT_DIR` (e.g. `agent-chats`, resolved relative to the
 working directory — it cannot escape it) and the markdown archive writes
 itself, no `export_chat_md` call needed:
 
-- **Every chat bubble is appended to `{YYYY-MM}/{DD}-{NN}-untitled.md` the
-  moment it happens** (`…-untitled-{SESSION_UUID}.md` when a `SESSION_UUID`
+- **Every chat bubble is appended to `{date}-{NN}-untitled.md` the moment it
+  happens** (`{date}-{NN}-untitled-{SESSION_UUID}.md` when a `SESSION_UUID`
   env var identifies the host session), and its attachments are copied into
-  that month's `assets/` at that same moment (content-sha filenames), while
-  the upload files still exist.
-- **Chats are filed one directory per month** — a year of daily chats is 12
-  directories, not one flat pile of hundreds of files:
+  the `assets/` directory beside it at that same moment (content-sha
+  filenames), while the upload files still exist.
+- **Month directories are understood everywhere, and written only on request.**
+  A chat can live flat in the archive root, or one directory per month:
 
   ```
   agent-chats/
     index.html                     ← landing page, always at the root
     assets/viewer.css, viewer.js   ← one copy for the whole archive
-    2026-08/
-      15-01-some-title.md
-      assets/2026-08-15-01-1-{sha}.png
+    2026-08-15-01-some-title.md    ← flat (the default)
+    assets/2026-08-15-01-1-{sha}.png
+    2026-08/                       ← month layout
+      15-01-another-title.md
+      assets/2026-08-15-01-2-{sha}.png
   ```
 
-  Attachments keep their full-date basenames, so a chat's `./assets/…` links
-  resolve identically on GitHub and in the viewer. An archive still in the old
-  flat layout keeps working and stays listed; `agent-chat migrate-chatlogs`
-  prints the `git mv` lines to file it by month (`-apply` runs them and
-  regenerates `index.html`), and `chatlog_close` mentions it while any flat
-  chat remains.
+  Listing, session resume and daily `NN` numbering all read both shapes, so a
+  mixed archive is correct. New exports go flat unless you pass
+  `-chatlog-layout=month` (or set `AGENT_CHAT_CHATLOG_LAYOUT=month`) — the
+  default flips to `month` in a later release, once installed copies have
+  caught up: an older copy regenerating `index.html` drops every file it cannot
+  see, and it cannot see month directories.
+- **`agent-chat migrate-chatlogs`** files an existing flat archive by month —
+  it prints the `git mv` lines, and `-apply` runs them and regenerates
+  `index.html`. Attachments keep their full-date basenames and are routed by
+  what the markdown links to, so migrating rewrites no file content and a
+  chat's `./assets/…` links resolve identically on GitHub and in the viewer.
 - The agent names the file via `set_chat_title` (renames + header rewrite;
   callable again to rename). `chatlog_optout` stops the export for the session
   and deletes its `.md`.

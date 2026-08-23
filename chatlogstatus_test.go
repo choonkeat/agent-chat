@@ -37,7 +37,7 @@ func TestStatusReportsPathAndTitledState(t *testing.T) {
 	if _, err := os.Stat(st.Path); err != nil {
 		t.Errorf("reported path must exist on disk: %v", err)
 	}
-	if got := filepath.Base(st.Path); got != "21-01-untitled-host-uuid-1.md" {
+	if got := filepath.Base(st.Path); got != "2026-07-21-01-untitled-host-uuid-1.md" {
 		t.Errorf("path = %q, want the provisional untitled name carrying the host session uuid", got)
 	}
 
@@ -53,7 +53,7 @@ func TestStatusReportsPathAndTitledState(t *testing.T) {
 	if st.Slug != "auth-bug-fix" {
 		t.Errorf("slug = %q, want auth-bug-fix", st.Slug)
 	}
-	if got := filepath.Base(st.Path); got != "21-01-auth-bug-fix.md" {
+	if got := filepath.Base(st.Path); got != "2026-07-21-01-auth-bug-fix.md" {
 		t.Errorf("path = %q, want the renamed file", got)
 	}
 	if _, err := os.Stat(st.Path); err != nil {

@@ -41,6 +41,49 @@ var monthDirRE = regexp.MustCompile(`^\d{4}-\d{2}$`)
 // {DD}-{NN}-{slug}.md with NN 2 or 3 digits (matching nextDailyIndex).
 var mdMonthNameRE = regexp.MustCompile(`^(\d{2})-(\d{2,3})-(.+)\.md$`)
 
+// chatLogLayout selects where a NEW export is written. Reading is always
+// layout-blind — scanChatExports returns both shapes no matter what this is set
+// to — so an archive holding a mixture is listed, resumed and numbered
+// correctly either way.
+//
+// The default is deliberately layoutFlat, and the rollout is staged: a release
+// that only *understands* month directories goes out first, and the default
+// flips to layoutMonth only once installed copies have caught up. Until then a
+// version that wrote month directories would produce an archive that older
+// copies cannot see -- and an older copy regenerating index.html drops every
+// file it cannot see out of the listing.
+type chatLogLayout int
+
+const (
+	// layoutFlat writes agent-chats/{YYYY-MM-DD}-{NN}-{slug}.md.
+	layoutFlat chatLogLayout = iota
+	// layoutMonth writes agent-chats/{YYYY-MM}/{DD}-{NN}-{slug}.md.
+	layoutMonth
+)
+
+// chatLogLayoutSetting is resolved once at startup from -chatlog-layout /
+// AGENT_CHAT_CHATLOG_LAYOUT (see parseChatLogLayout).
+var chatLogLayoutSetting = layoutFlat
+
+// parseChatLogLayout resolves the layout from the flag value (empty when the
+// flag was not given) falling back to the env var, then to layoutFlat. An
+// unrecognised value is an error rather than a silent default: writing chats
+// somewhere other than intended is not something to discover months later.
+func parseChatLogLayout(flagVal, envVal string) (chatLogLayout, error) {
+	v := strings.TrimSpace(flagVal)
+	if v == "" {
+		v = strings.TrimSpace(envVal)
+	}
+	switch strings.ToLower(v) {
+	case "", "flat":
+		return layoutFlat, nil
+	case "month":
+		return layoutMonth, nil
+	default:
+		return layoutFlat, fmt.Errorf("unknown chat-log layout %q: want \"flat\" or \"month\"", v)
+	}
+}
+
 // monthOf returns the "YYYY-MM" part of a "YYYY-MM-DD" date, or "" if date is
 // not shaped like one. Callers treat "" as "keep it flat in the root", which
 // is what makes a malformed date degrade to the old layout instead of creating
@@ -117,9 +160,25 @@ func chatMDPath(root, date, idx, slug string) string {
 func renamedMDPath(oldPath, root, date, idx, slug string) string {
 	dir := filepath.Dir(oldPath)
 	if filepath.Clean(dir) == filepath.Clean(root) {
-		return filepath.Join(dir, fmt.Sprintf("%s-%s-%s.md", date, idx, slug))
+		return flatMDPath(dir, date, idx, slug)
 	}
 	return filepath.Join(dir, chatMDName(date, idx, slug))
+}
+
+// flatMDPath is the pre-month-layout location of an export:
+// root/{YYYY-MM-DD}-{NN}-{slug}.md.
+func flatMDPath(root, date, idx, slug string) string {
+	return filepath.Join(root, fmt.Sprintf("%s-%s-%s.md", date, idx, slug))
+}
+
+// exportMDPath is where a NEW export goes, honouring chatLogLayoutSetting.
+// Migration deliberately does not use it: migrateChatLogs always targets the
+// month layout, because moving files there is the whole point of running it.
+func exportMDPath(root, date, idx, slug string) string {
+	if chatLogLayoutSetting == layoutMonth {
+		return chatMDPath(root, date, idx, slug)
+	}
+	return flatMDPath(root, date, idx, slug)
 }
 
 // chatAssetPrefix is the shared basename prefix of every attachment belonging

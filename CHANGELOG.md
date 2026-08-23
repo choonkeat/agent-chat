@@ -5,11 +5,16 @@ All notable changes to agent-chat are documented in this file.
 ## [Unreleased]
 
 ### Features
-- **The chat archive is filed one directory per month.** A new export writes to
-  `agent-chats/{YYYY-MM}/{DD}-{NN}-{title}.md` with its attachments in that
-  month's `assets/`, so a year of daily chats is twelve directories instead of
-  one flat pile of hundreds of files. `index.html` and `assets/viewer.{css,js}`
-  stay at the archive root — the viewer's own files are rewritten on every
+- **The chat archive can be filed one directory per month —
+  understood everywhere now, written only on request.** With
+  `-chatlog-layout=month` (or `AGENT_CHAT_CHATLOG_LAYOUT=month`) a new export
+  writes to `agent-chats/{YYYY-MM}/{DD}-{NN}-{title}.md` with its attachments
+  in that month's `assets/`, so a year of daily chats is twelve directories
+  instead of one flat pile of hundreds of files. The default stays flat and
+  flips in a later release: reading ships first, writing follows once installed
+  copies have caught up, because an older copy regenerating `index.html` drops
+  every file it cannot see — and it cannot see month directories.
+  `index.html` and `assets/viewer.{css,js}` stay at the archive root — the viewer's own files are rewritten on every
   export, and per-month copies would mean twelve churning duplicates a year.
   Attachment basenames keep their full `{YYYY-MM-DD}-{NN}-…` form even inside a
   month directory, so every `./assets/…` link in already-committed markdown
@@ -33,8 +38,8 @@ All notable changes to agent-chat are documented in this file.
 - **The viewer resolves a chat's images against the chat, not against
   `index.html`.** Parsed markdown is injected into the landing page's document,
   so the browser was resolving `./assets/x.png` relative to `index.html` — the
-  same directory until exports moved into month subdirectories, one level off
-  after. Relative `src`/`href` are now rebased onto the `.md`'s own URL, which
+  same directory as the chat under the flat layout, one level off under the
+  month layout. Relative `src`/`href` are now rebased onto the `.md`'s own URL, which
   is also how GitHub renders the identical markdown.
 
 ## [0.11.0] — 2026-08-15

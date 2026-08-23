@@ -250,3 +250,124 @@ func TestPlanChatLogMigrationSharedAsset(t *testing.T) {
 		t.Errorf("want one warning naming shared.png, got %v", warnings)
 	}
 }
+
+// withLayout points new exports at the given layout for the duration of one
+// test. No test in this package runs in parallel, so a global is safe here.
+func withLayout(t *testing.T, l chatLogLayout) {
+	t.Helper()
+	prev := chatLogLayoutSetting
+	chatLogLayoutSetting = l
+	t.Cleanup(func() { chatLogLayoutSetting = prev })
+}
+
+// TestParseChatLogLayout: the flag wins over the env var, an absent setting
+// means flat, and a typo is an error rather than a silent fallback — writing
+// chats somewhere other than intended should not be discovered months later.
+func TestParseChatLogLayout(t *testing.T) {
+	cases := []struct {
+		flag, env string
+		want      chatLogLayout
+		wantErr   bool
+	}{
+		{"", "", layoutFlat, false},
+		{"", "month", layoutMonth, false},
+		{"", "flat", layoutFlat, false},
+		{"month", "", layoutMonth, false},
+		{"flat", "month", layoutFlat, false}, // flag outranks env
+		{"MONTH", "", layoutMonth, false},    // case-insensitive
+		{" month ", "", layoutMonth, false},  // trimmed
+		{"monthly", "", layoutFlat, true},
+		{"", "subdir", layoutFlat, true},
+	}
+	for _, c := range cases {
+		got, err := parseChatLogLayout(c.flag, c.env)
+		if (err != nil) != c.wantErr {
+			t.Errorf("parseChatLogLayout(%q, %q) err = %v, wantErr %v", c.flag, c.env, err, c.wantErr)
+		}
+		if got != c.want {
+			t.Errorf("parseChatLogLayout(%q, %q) = %v, want %v", c.flag, c.env, got, c.want)
+		}
+	}
+}
+
+// TestNewExportHonoursLayout: the default writes where every released version
+// can already see it, and only the month setting files into a subdirectory.
+// Attachments follow the .md either way, which is what keeps its ./assets/
+// links correct in both layouts.
+func TestNewExportHonoursLayout(t *testing.T) {
+	events := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+	now := mustParseTime(t, "2026-04-30T10:00:00Z")
+
+	t.Run("flat by default", func(t *testing.T) {
+		dir := t.TempDir()
+		mdPath, _, err := runChatMarkdownExport(dir, "flat-chat", events, "claude", "v1", now)
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		if got, want := rel(t, dir, mdPath), "2026-04-30-01-flat-chat.md"; got != want {
+			t.Errorf("md path = %q, want %q", got, want)
+		}
+		if got, want := rel(t, dir, exportAssetsDir(mdPath)), "assets"; got != want {
+			t.Errorf("assets dir = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("month when asked", func(t *testing.T) {
+		withLayout(t, layoutMonth)
+		dir := t.TempDir()
+		mdPath, _, err := runChatMarkdownExport(dir, "month-chat", events, "claude", "v1", now)
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		if got, want := rel(t, dir, mdPath), "2026-04/30-01-month-chat.md"; got != want {
+			t.Errorf("md path = %q, want %q", got, want)
+		}
+		if got, want := rel(t, dir, exportAssetsDir(mdPath)), "2026-04/assets"; got != want {
+			t.Errorf("assets dir = %q, want %q", got, want)
+		}
+	})
+}
+
+// TestStreamHonoursLayoutAndReadsBoth: the streaming exporter files a new chat
+// per the setting, and either way the index lists what is already on disk in
+// the other layout — that mixture is the whole point of shipping the reader
+// before the writer.
+func TestStreamHonoursLayoutAndReadsBoth(t *testing.T) {
+	dir := t.TempDir()
+	// An existing month-filed chat, as if written by a later version.
+	mustMkdir(t, filepath.Join(dir, "2026-07"))
+	writeMd(t, filepath.Join(dir, "2026-07"), "18-01-from-the-future.md",
+		"<!-- agent-chat export\ntitle: From The Future\ndate: 2026-07-18\nindex: 01\nslug: from-the-future\n-->\n\n# From The Future\n")
+
+	now := mustParseTime(t, "2026-07-18T10:00:00Z")
+	s, err := newChatLogStream(dir, "sess-mixed", "", "claude", "v1", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	defer s.Close()
+
+	// Flat by default — and numbered 02, because the month-filed chat already
+	// claimed 01 for that day.
+	if got, want := rel(t, dir, s.MDPath()), "2026-07-18-02-untitled.md"; got != want {
+		t.Errorf("stream md path = %q, want %q", got, want)
+	}
+
+	if err := s.SetTitle("Mixed Archive", nil); err != nil {
+		t.Fatalf("SetTitle: %v", err)
+	}
+	if _, err := s.CloseOut("", nil); err != nil {
+		t.Fatalf("CloseOut: %v", err)
+	}
+	html, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"'./2026-07-18-02-mixed-archive.md'",
+		"'./2026-07/18-01-from-the-future.md'",
+	} {
+		if !strings.Contains(string(html), want) {
+			t.Errorf("index.html missing %s\n---\n%s", want, html)
+		}
+	}
+}

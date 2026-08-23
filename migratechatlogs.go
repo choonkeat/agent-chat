@@ -149,13 +149,16 @@ func runMigrateChatLogs(argv []string) int {
 	fs := flag.NewFlagSet("migrate-chatlogs", flag.ExitOnError)
 	dir := fs.String("dir", "agent-chats", "chat archive directory to migrate")
 	apply := fs.Bool("apply", false, "perform the moves (default: print them and exit)")
+	indexOnly := fs.Bool("index-only", false, "move nothing; just regenerate index.html from the chats on disk")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: agent-chat migrate-chatlogs [-dir agent-chats] [-apply]\n\n"+
 			"Move a flat chat archive into per-month directories:\n"+
 			"  agent-chats/2026-08-15-01-title.md  →  agent-chats/2026-08/15-01-title.md\n"+
 			"  agent-chats/assets/2026-08-15-01-1-{sha}.png  →  agent-chats/2026-08/assets/…\n\n"+
 			"index.html and assets/viewer.{css,js} stay in the archive root.\n"+
-			"Without -apply nothing is touched; the git mv commands are printed.\n\n")
+			"Without -apply nothing is touched; the git mv commands are printed.\n"+
+			"-index-only moves nothing and rebuilds index.html from what is on disk,\n"+
+			"which also heals an index.html mangled by a merge conflict.\n\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(argv); err != nil {
@@ -170,6 +173,15 @@ func runMigrateChatLogs(argv []string) int {
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		fmt.Fprintf(os.Stderr, "agent-chat: %s is not a directory\n", root)
 		return 1
+	}
+
+	if *indexOnly {
+		if err := regenerateIndexHTML(root); err != nil {
+			fmt.Fprintf(os.Stderr, "agent-chat: regenerate index.html: %v\n", err)
+			return 1
+		}
+		fmt.Printf("%s/index.html regenerated from the chats on disk.\n", *dir)
+		return 0
 	}
 
 	moves, warnings := planChatLogMigration(root)
