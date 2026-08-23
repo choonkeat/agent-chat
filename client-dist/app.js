@@ -976,6 +976,14 @@ function appendFrozenReplies(replies) {
 function addStagedFiles(fileList) {
   for (var i = 0; i < fileList.length; i++) {
     var file = fileList[i];
+    // A 0-byte file is never what was meant: a dropped folder, an iOS
+    // share-sheet handoff and Windows Explorer all hand one over. The upload
+    // succeeds and the agent receives nothing, so the paste looks like it
+    // worked and silently carried no content. Show it as failed instead.
+    if (file.size === 0) {
+      addFailedPasteChip((file.name || 'clipboard-empty') + ' (empty)');
+      continue;
+    }
     var isImage = file.type && file.type.indexOf('image/') === 0;
     var entry = {
       file: file,
@@ -1194,9 +1202,12 @@ dropZone.addEventListener('dragleave', function(e) {
 dropZone.addEventListener('drop', function(e) {
   e.preventDefault();
   chatEl.classList.remove('drag-over');
-  if (e.dataTransfer.files.length > 0) {
-    addStagedFiles(e.dataTransfer.files);
-  }
+  if (chatInput.disabled) return; // composer locked while the agent works
+  // Same handler as paste: a drop gets the zero-byte guard, the failed chip
+  // when nothing readable came over, and dropped text lands in the composer.
+  // The browser never inserts dropped text for us here (the default is already
+  // prevented above), so this path always inserts by hand.
+  handleTransfer(e.dataTransfer, !chatInput.readOnly, false);
 });
 
 // Paste to upload — reuses the drag-drop path. The clipboard often carries
@@ -1227,59 +1238,118 @@ function insertAtCursor(text) {
   chatInput.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-chatInput.addEventListener('paste', function(e) {
-  var cd = e.clipboardData;
-  if (!cd) return;
+// Paste is bound to the document, not to chatInput: bound to the textarea it
+// only fires while the composer has focus, so a Cmd/Ctrl+V after clicking a
+// transcript bubble (or anywhere else on the page) did nothing at all — no
+// text, no chip, no error. Step aside only when the caret is genuinely inside
+// another text field, so that field's own paste keeps working.
+function pasteBelongsElsewhere() {
+  var el = document.activeElement;
+  if (!el || el === chatInput) return false;
+  if (el.isContentEditable) return true;
+  var tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+// Text pasted while the composer is unfocused has nowhere to land on its own —
+// the browser only auto-inserts into the focused field. Focus the composer and
+// insert it ourselves.
+function insertPastedText(text) {
+  chatInput.focus();
+  insertAtCursor(text);
+}
+
+// Files out of a clipboard or a drop. `.files` is the normal route; `.items`
+// is the fallback some sources take, handing over a file only via getAsFile().
+function transferFiles(dt) {
   var files = [];
-  if (cd.files && cd.files.length > 0) {
-    for (var i = 0; i < cd.files.length; i++) files.push(cd.files[i]);
-  } else if (cd.items) {
-    for (var j = 0; j < cd.items.length; j++) {
-      if (cd.items[j].kind === 'file') {
-        var f = cd.items[j].getAsFile();
+  if (dt.files && dt.files.length > 0) {
+    for (var i = 0; i < dt.files.length; i++) files.push(dt.files[i]);
+  } else if (dt.items) {
+    for (var j = 0; j < dt.items.length; j++) {
+      if (dt.items[j].kind === 'file') {
+        var f = dt.items[j].getAsFile();
         if (f) files.push(f);
       }
     }
   }
-  var text = cd.getData('text/plain') || '';
+  return files;
+}
+
+// The whole of paste and drop: pull out the files, see what text came with
+// them, and choose between staging an attachment, inserting the text, and
+// showing a failed chip. Shared so a drop cannot quietly miss a protection the
+// paste path has.
+//
+//   insertByHand — this code has to put the text in the composer itself. A
+//                  drop always does; a paste only when the composer is not the
+//                  focused field (otherwise the browser inserts it for us).
+//   isPaste      — clipboard, not drop. Two rules only make sense for one of
+//                  them; both are marked below.
+//
+// Returns true when the caller should preventDefault().
+function handleTransfer(dt, insertByHand, isPaste) {
+  var files = transferFiles(dt);
+  var text = dt.getData('text/plain') || '';
   if (files.length === 0) {
     // Nothing readable at all. Usually iOS handing over a file the page can't
     // open — surface it as a failed chip instead of doing nothing at all.
     if (text.length === 0) {
-      e.preventDefault();
-      addFailedPasteChip(pasteFailureName(cd));
-      return;
+      addFailedPasteChip(pasteFailureName(dt));
+      return true;
     }
-    // Long multi-line paste — stage it as a .txt attachment instead of
-    // flooding the composer. Named with its line count so the chip says what
-    // it swallowed.
+    // Long multi-line text — stage it as a .txt attachment instead of flooding
+    // the composer. Named with its line count so the chip says what it
+    // swallowed.
     var lineCount = countLines(text);
     if (lineCount >= PASTE_AS_FILE_MIN_LINES) {
-      e.preventDefault();
       addStagedFiles([new File([text], 'pasted-' + lineCount + '-lines.txt', { type: 'text/plain' })]);
-      return;
+      return true;
     }
-    // Plain text paste. iOS "smart paste" puts a space in front of a word it
-    // thinks is landing after other text — that space breaks an active
-    // autocomplete token ("@ docs/adr" instead of "@docs/adr"). When the
-    // dropdown is open and the cursor still sits inside the trigger token,
-    // take over the insertion entirely: strip any leading spaces/tabs that
-    // came along in the clipboard, and insert it ourselves so the editor
-    // never gets the chance to add one of its own.
-    if (acVisible || acTriggerPos >= 0) {
+    // Paste only. iOS "smart paste" puts a space in front of a word it thinks
+    // is landing after other text — that space breaks an active autocomplete
+    // token ("@ docs/adr" instead of "@docs/adr"). When the dropdown is open
+    // and the cursor still sits inside the trigger token, take over the
+    // insertion entirely: strip any leading spaces/tabs that came along in the
+    // clipboard, and insert it ourselves so the editor never gets the chance
+    // to add one of its own.
+    if (isPaste && (acVisible || acTriggerPos >= 0)) {
       var trimmed = text.replace(/^[ \t]+/, '');
       if (trimmed.length > 0 &&
           findTrigger(chatInput.value, chatInput.selectionStart)) {
-        e.preventDefault();
         insertAtCursor(trimmed);
+        return true;
       }
     }
-    return; // otherwise let the browser insert it
+    if (insertByHand) {
+      insertPastedText(text);
+      return true;
+    }
+    return false; // otherwise let the browser insert it
   }
-  if (text.trim().length > 0) return; // has real text — paste as text, drop the image snapshot
-  // Pure file/image paste — upload instead of inserting anything.
-  e.preventDefault();
+  // Paste only: rich text carries text/plain alongside an image/png snapshot
+  // (Excel, Word, Slack), and the text is what the user meant — so the
+  // snapshot is ignored. A drop is the opposite: the OS attaches the file's
+  // own path as text, and the file is what the user meant, so text never wins
+  // there.
+  if (isPaste && text.trim().length > 0) {
+    if (insertByHand) insertPastedText(text);
+    return insertByHand;
+  }
   addStagedFiles(files);
+  return true;
+}
+
+document.addEventListener('paste', function(e) {
+  var cd = e.clipboardData;
+  if (!cd) return;
+  if (chatInput.disabled) return;      // composer locked while the agent works
+  if (pasteBelongsElsewhere()) return; // another text field owns this paste
+  // Text only needs inserting by hand when the composer is not the focused
+  // field. While it is readOnly (mid-send, focus deliberately kept) nothing
+  // may be typed into it, so leave the text alone and let the file paths run.
+  var insertByHand = document.activeElement !== chatInput && !chatInput.readOnly;
+  if (handleTransfer(cd, insertByHand, true)) e.preventDefault();
 });
 
 function enableInput(replies, focusInput) {

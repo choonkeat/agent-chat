@@ -1,8 +1,13 @@
 # Clipboard / paste / drop edge cases — 13 filed findings
 
-Filed 2026-08-25. **Nothing implemented yet.** All 13 are audit findings from
-two research passes; every line reference below was re-verified against HEAD
-(`5d28938`) at filing time.
+Filed 2026-08-25. **P1, P2 and P4 implemented 2026-08-26; the rest still
+open.** All 13 are audit findings from two research passes; every line
+reference below was verified against HEAD (`5d28938`) at filing time.
+
+**Line numbers below are stale from P1/P2/P4 onward** — the paste body moved
+into `handleTransfer()` and the paste listener moved onto `document`. Search
+for `handleTransfer`, `addStagedFiles` and `PASTE_AS_FILE_MIN_LINES` rather
+than trusting a line number.
 
 Origin symptom: *"Sometimes I copy things and paste it is empty."*
 
@@ -24,7 +29,7 @@ Ordered by how likely each is to be the reported "pasted and it's empty",
 cheapest-first within a tier. **P1-P4 together are ~1h40m and cover the whole
 "empty" symptom.**
 
-### P1 — Paste only works while the textarea has focus *(~20 min)*
+### P1 — Paste only works while the textarea has focus — **DONE 2026-08-26**
 
 `client-dist/app.js:1230` binds `paste` to `chatInput` only. Click a transcript
 bubble (or anywhere outside the composer), then Cmd/Ctrl+V → nothing happens.
@@ -38,9 +43,25 @@ editable/input element", and route through the same handler. Keep
 **Watch out:** don't hijack paste when the user is in the file-rename input or
 any future text field; check `document.activeElement`.
 
+**Shipped as described.** The listener now sits on `document`
+(`client-dist/app.js`, `pasteBelongsElsewhere` / `insertPastedText`):
+
+- Steps aside when `document.activeElement` is another `INPUT` / `TEXTAREA` /
+  `SELECT` / contenteditable, so those fields keep their own paste.
+- Returns early while the composer is `disabled` — a disabled textarea never
+  received the event before, and staging while the agent works is not wanted.
+- When the composer is unfocused, text is inserted by hand (focus + the
+  existing `insertAtCursor`); the browser only auto-inserts into the focused
+  field. Skipped while the composer is `readOnly` (mid-send), where nothing may
+  be typed into it.
+
+Covered by three new cases in `e2e/paste-upload.spec.cjs`: text pasted
+unfocused lands in the composer, an image pasted unfocused still stages, and a
+paste into another text field is left alone.
+
 ---
 
-### P2 — Drop has none of the paste protections *(~30 min)*
+### P2 — Drop has none of the paste protections — **DONE 2026-08-26**
 
 `client-dist/app.js:1194` reads only `e.dataTransfer.files` and calls
 `addStagedFiles`. Everything the paste path learned is missing here:
@@ -53,6 +74,23 @@ any future text field; check `document.activeElement`.
 **Fix:** extract the paste body into a shared `handleTransfer(dataTransfer)`
 and call it from both listeners. Drop then inherits the failed chip, the
 zero-byte guard, and the text handling for free.
+
+**Shipped as described.** `handleTransfer(dt, insertByHand, isPaste)` in
+`client-dist/app.js` now carries the whole of both paths, with `transferFiles`
+pulling files out of `.files` or `.items`. Drop inherits the failed chip, the
+zero-byte guard (P4), the 30-line `.txt` staging, and text insertion.
+
+Two rules stayed path-specific and are commented as such:
+
+- The iOS smart-paste / autocomplete-token fix is clipboard-only.
+- Rich text beating an image snapshot is clipboard-only. On a drop the OS
+  attaches the file's own path as `text/plain`, so text winning there would
+  type the path into the composer and throw the file away.
+
+Covered by five new cases in `e2e/paste-upload.spec.cjs`: a dropped file wins
+over an attached path, a dropped folder fails visibly, dropped text lands in
+the composer, an empty drop shows the failed chip, and a long dropped text
+becomes a `.txt` attachment.
 
 ---
 
@@ -70,7 +108,7 @@ failed chip.
 
 ---
 
-### P4 — Zero-byte files upload silently *(~15 min)*
+### P4 — Zero-byte files upload silently — **DONE 2026-08-26**
 
 No `f.size === 0` guard anywhere in the staging path (`app.js:976`). The chip
 renders normal, the upload succeeds, and the agent receives 0 bytes. This is
@@ -80,6 +118,11 @@ share-sheet handoffs, Windows Explorer, and dropped folders (P2).
 **Fix:** in `addStagedFiles`, when `file.size === 0`, stage a failed chip
 (`addFailedPasteChip`, `app.js:1000`) instead of starting an upload. Name it so
 the reason is visible, e.g. `photo.heic (empty)`.
+
+**Shipped as described.** `addStagedFiles` skips any `file.size === 0` and
+calls `addFailedPasteChip(name + ' (empty)')` instead, so both paste and drop
+are covered. Two new e2e cases: a zero-byte paste shows `photo.heic (empty)`,
+a dropped folder shows `my-folder (empty)`.
 
 ---
 
@@ -188,9 +231,9 @@ all).
 
 ## Suggested order for a fresh agent
 
-1. **P1** alone — highest hit rate, one listener move, ~20 min.
-2. **P2 + P4** — extract the shared handler, add the zero-byte guard. Drop and
-   paste converge here; do them in one pass.
+1. ~~**P1** alone~~ — done 2026-08-26.
+2. ~~**P2 + P4**~~ — done 2026-08-26; `handleTransfer` is the shared handler
+   the remaining items should build on.
 3. **P3 + P9** — both are edits to the same 5-line guard block.
 4. **P5 + P7** — both restructure the `files.length` / text branch at
    `app.js:1257-1284`; doing them separately means touching it twice.

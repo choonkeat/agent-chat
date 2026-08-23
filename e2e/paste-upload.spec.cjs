@@ -127,6 +127,84 @@ async function pasteNothing(page, entries) {
   }, entries || []);
 }
 
+/**
+ * Dispatch a paste on the document with focus deliberately outside the
+ * composer — the everyday case of clicking a transcript bubble and then
+ * hitting Cmd/Ctrl+V. The handler is bound to `document`, so this must be
+ * handled exactly as a paste made with the composer focused.
+ */
+async function pasteWhileUnfocused(page, entries, withFile) {
+  return page.evaluate(({ seed, file }) => {
+    document.getElementById('chat-input').blur();
+    const dt = new DataTransfer();
+    if (file) {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]); // "\x89PNG"
+      dt.items.add(new File([bytes], 'shot.png', { type: 'image/png' }));
+    }
+    for (const [type, value] of seed) dt.setData(type, value);
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    document.body.dispatchEvent(evt);
+    return evt.defaultPrevented;
+  }, { seed: entries || [], file: !!withFile });
+}
+
+/**
+ * Paste into a different text field on the page. The composer must keep its
+ * hands off, or the style-name box (and any future input) loses its own paste.
+ */
+async function pasteIntoOtherInput(page, text) {
+  return page.evaluate((payload) => {
+    const probe = document.createElement('input');
+    probe.type = 'text';
+    document.body.appendChild(probe);
+    probe.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', payload);
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    probe.dispatchEvent(evt);
+    const prevented = evt.defaultPrevented;
+    probe.remove();
+    return prevented;
+  }, text);
+}
+
+/**
+ * Dispatch a synthetic drop on the drop zone (document.body). `files` is a
+ * list of [name, type, bytes] triples — bytes 0 makes a zero-byte file.
+ * `entries` seeds text flavours the OS would attach alongside.
+ */
+async function dropOnPage(page, files, entries) {
+  return page.evaluate(({ specs, seed }) => {
+    const dt = new DataTransfer();
+    for (const [name, type, size] of specs) {
+      dt.items.add(new File([new Uint8Array(size)], name, { type }));
+    }
+    for (const [type, value] of seed) dt.setData(type, value);
+    const evt = new DragEvent('drop', {
+      dataTransfer: dt, bubbles: true, cancelable: true,
+    });
+    document.body.dispatchEvent(evt);
+    return evt.defaultPrevented;
+  }, { specs: files || [], seed: entries || [] });
+}
+
+/** Paste a file of an exact byte length (0 = the empty-file case). */
+async function pasteSizedFile(page, name, type, size) {
+  return page.evaluate(({ n, t, sz }) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(sz)], n, { type: t }));
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    document.getElementById('chat-input').dispatchEvent(evt);
+    return evt.defaultPrevented;
+  }, { n: name, t: type, sz: size });
+}
+
 /** n lines of filler text, joined by newlines. */
 function lines(n) {
   return Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
@@ -242,6 +320,109 @@ test.describe('Paste to upload', () => {
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
       await page.locator('#file-staging .file-remove').click();
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('text pasted with focus outside the composer still lands in it', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pasteWhileUnfocused(page, [['text/plain', 'from a bubble']], false);
+      expect(prevented).toBe(true); // nothing else would have inserted it
+      await expect(textarea).toHaveValue('from a bubble', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('image pasted with focus outside the composer is still staged', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteWhileUnfocused(page, [], true);
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a paste into another text field is left alone', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      // 40 lines: if the composer had grabbed it, it would stage a .txt chip.
+      const prevented = await pasteIntoOtherInput(page, lines(40));
+      expect(prevented).toBe(false);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a zero-byte paste is shown as failed, not uploaded', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteSizedFile(page, 'photo.heic', 'image/heic', 0);
+      expect(prevented).toBe(true);
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await expect(chip).toHaveClass(/paste-failed/);
+      await expect(page.locator('#file-staging .file-name')).toHaveText('photo.heic (empty)');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a dropped file is staged even when the OS attaches its path as text', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await dropOnPage(
+        page,
+        [['shot.png', 'image/png', 4]],
+        [['text/plain', '/home/me/shot.png']],
+      );
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+      await expect(textarea).toHaveValue(''); // the path is not typed into the composer
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a dropped folder (zero bytes) is shown as failed, not uploaded', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await dropOnPage(page, [['my-folder', '', 0]], []);
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await expect(chip).toHaveClass(/paste-failed/);
+      await expect(page.locator('#file-staging .file-name')).toHaveText('my-folder (empty)');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('dropped text lands in the composer instead of doing nothing', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await dropOnPage(page, [], [['text/plain', 'dragged words']]);
+      expect(prevented).toBe(true);
+      await expect(textarea).toHaveValue('dragged words', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a drop carrying nothing readable shows the failed chip', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await dropOnPage(page, [], []);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('clipboard-empty', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a long dropped text becomes a .txt attachment, same as paste', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await dropOnPage(page, [], [['text/plain', lines(30)]]);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('pasted-30-lines.txt', { timeout: 3000 });
+      await expect(textarea).toHaveValue('');
     } finally { await context.close().catch(() => {}); }
   });
 
