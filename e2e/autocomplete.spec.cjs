@@ -2,6 +2,7 @@
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
+const { serverPort } = require('./server-port.cjs');
 const { spawn } = require('child_process');
 const http = require('http');
 const fs = require('fs');
@@ -40,7 +41,7 @@ function startServer(extraFlags = []) {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    cleanEnv.AGENT_CHAT_PORT = '0';
+    cleanEnv.AGENT_CHAT_PORT = serverPort();
 
     const proc = spawn(bin, ['-no-stdio-mcp', ...extraFlags], {
       cwd: dir,

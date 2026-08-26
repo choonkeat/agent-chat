@@ -14,6 +14,7 @@
 const { test, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
+const { serverPort } = require('./server-port.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -32,13 +33,7 @@ function startServer(extraFlags = []) {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    // Port 0 (a fresh ephemeral port per test) is the default, but the CDP
-    // browser reaches this container through a tunnel that only reliably
-    // forwards the preview range (SWE_PREVIEW_PORTS, typically 3000-3019).
-    // When it is refusing ephemeral ports, every test fails at page.goto with
-    // ERR_CONNECTION_RESET before it reaches the app — pin the server with
-    // E2E_SERVER_PORT=3003 (any free port in that range) to run the suite.
-    cleanEnv.AGENT_CHAT_PORT = process.env.E2E_SERVER_PORT || '0';
+    cleanEnv.AGENT_CHAT_PORT = serverPort();
     const proc = spawn(bin, ['-no-stdio-mcp', ...extraFlags], {
       cwd: dir, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });

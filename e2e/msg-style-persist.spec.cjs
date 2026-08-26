@@ -8,6 +8,7 @@
 const { test, expect } = require('@playwright/test');
 const { chromium } = require('playwright');
 const { gotoRetry } = require('./goto-retry.cjs');
+const { serverPort, isPinned } = require('./server-port.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -16,6 +17,8 @@ const path = require('path');
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT
   || (process.env.BROWSER_CDP_PORT ? `http://localhost:${process.env.BROWSER_CDP_PORT}` : 'http://chrome:9223');
 const SLOW_MO = Number(process.env.SLOW_MO || 0);
+// One forwarded port means one server at a time; see the beforeEach below.
+const SHARED_PORT = isPinned();
 
 /** Start agent-chat in a temp dir on a random port. Caller kills proc. */
 function startServer() {
@@ -25,7 +28,7 @@ function startServer() {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    cleanEnv.AGENT_CHAT_PORT = '0';
+    cleanEnv.AGENT_CHAT_PORT = serverPort();
     const proc = spawn(bin, ['-no-stdio-mcp'], {
       cwd: dir, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -88,16 +91,29 @@ test.describe('message style persistence', () => {
   let a; let b; let context;
 
   test.beforeEach(async () => {
-    [a, b] = await Promise.all([startServer(), startServer()]);
+    // Two servers on two ports when the browser can reach any port. When only
+    // one port is forwarded (see server-port.cjs) two servers cannot both be
+    // up, so the "second session" is a second page on the one server — and the
+    // init script below empties localStorage at every document start, which is
+    // the same storage boundary a different port would draw. The cookie jar
+    // stays shared, so the thing under test still has to be the cookie.
+    [a, b] = SHARED_PORT
+      ? await startServer().then((s) => [s, s])
+      : await Promise.all([startServer(), startServer()]);
     const browser = await chromium.connectOverCDP(CDP_ENDPOINT, {
       ...(SLOW_MO > 0 && { slowMo: SLOW_MO }),
     });
     context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    if (SHARED_PORT) {
+      await context.addInitScript(() => {
+        try { localStorage.clear(); } catch (e) { /* storage disabled */ }
+      });
+    }
   });
 
   test.afterEach(async () => {
     if (context) await context.close();
-    for (const s of [a, b]) {
+    for (const s of new Set([a, b])) {
       if (s) { s.proc.kill(); fs.rmSync(s.dir, { recursive: true, force: true }); }
     }
   });
@@ -123,7 +139,9 @@ test.describe('message style persistence', () => {
   });
 
   test('a preset chosen on one session applies to the next session (different port)', async () => {
-    expect(new URL(a.url).port).not.toBe(new URL(b.url).port);
+    // Only assertable when the browser can reach two ports at once; on a
+    // shared port the empty-localStorage init script stands in for it.
+    if (!SHARED_PORT) expect(new URL(a.url).port).not.toBe(new URL(b.url).port);
 
     const first = await context.newPage();
     await openSettings(first, a.url);

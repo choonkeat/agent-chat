@@ -14,6 +14,7 @@
 const { test: base, expect } = require('@playwright/test');
 const { chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
+const { serverPort, isPinned } = require('./server-port.cjs');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
@@ -32,7 +33,7 @@ function startServer(extraArgs = []) {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    cleanEnv.AGENT_CHAT_PORT = '0';
+    cleanEnv.AGENT_CHAT_PORT = serverPort();
     cleanEnv.AGENT_CHAT_EXPORT_DIR = 'agent-chats';
 
     const proc = spawn(bin, ['-no-stdio-mcp', ...extraArgs], {
@@ -369,6 +370,11 @@ test.describe('/clear prefix', () => {
   // answered opens with the browser's last choice, and a chat already running
   // keeps its own regardless of what happens elsewhere.
   test('the tick seeds the next chat and leaves running chats alone', async ({ page }) => {
+    // Two chats means two servers on two ports, both reachable from the
+    // browser at once. Where the tunnel forwards a single port (see
+    // server-port.cjs) that cannot be staged at all — the second server has
+    // nowhere to bind, and one origin cannot tell two chats apart.
+    test.skip(isPinned(), 'needs two browser-reachable ports; this tunnel forwards one');
     const first = await startServer();
     const second = await startServer();
     try {

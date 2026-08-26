@@ -14,6 +14,7 @@
 // so the full export pipeline (MCP → bus → disk) is exercised against the
 // shipped binary, not a Go unit harness.
 const { test, expect } = require('@playwright/test');
+const { serverPort } = require('./server-port.cjs');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -29,7 +30,7 @@ function startServer() {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    cleanEnv.AGENT_CHAT_PORT = '0';
+    cleanEnv.AGENT_CHAT_PORT = serverPort();
 
     // -no-stdio-mcp leaves HTTP MCP (POST /mcp) available, which is all we need.
     const proc = spawn(bin, ['-no-stdio-mcp'], {

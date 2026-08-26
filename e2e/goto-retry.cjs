@@ -14,7 +14,11 @@
 // Retry rather than sleep: on a warm port the first attempt succeeds and costs
 // nothing.
 
-const DEADLINE_MS = 20000;
+// 30s, up from 20s: since every server binds the same forwarded port
+// (server-port.cjs), a navigation issued just after the previous test's server
+// was killed and a new one bound can hang rather than refuse — four 5s
+// attempts were not always enough. Fits inside the 60s per-test budget.
+const DEADLINE_MS = 30000;
 const ATTEMPT_TIMEOUT_MS = 5000;
 const RETRY_DELAY_MS = 500;
 
@@ -28,7 +32,12 @@ async function gotoRetry(page, url, options) {
   const deadline = Date.now() + DEADLINE_MS;
   for (;;) {
     try {
-      return await page.goto(url, { timeout: ATTEMPT_TIMEOUT_MS, ...options });
+      // domcontentloaded, not the 'load' default: the app is usable once the
+      // document is parsed (specs then wait on #chat-input), and waiting for
+      // every subresource is what hangs when the tunnel is mid-hiccup.
+      return await page.goto(url, {
+        timeout: ATTEMPT_TIMEOUT_MS, waitUntil: 'domcontentloaded', ...options,
+      });
     } catch (err) {
       // Only connection-level failures are worth retrying; a bad selector or a
       // real server error should fail loudly and immediately.

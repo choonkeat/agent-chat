@@ -13,6 +13,8 @@
 // then the legacy chrome:9223 default.
 
 const http = require('http');
+const net = require('net');
+const { serverPort, isPinned } = require('./server-port.cjs');
 
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT
   || (process.env.BROWSER_CDP_PORT ? `http://localhost:${process.env.BROWSER_CDP_PORT}` : 'http://chrome:9223');
@@ -32,7 +34,35 @@ function probe(url) {
   });
 }
 
+/** Resolve true when nothing else holds the port the test servers need. */
+function portIsFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => srv.close(() => resolve(true)));
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
 module.exports = async () => {
+  // Every spec's server binds one shared port (see server-port.cjs). If
+  // something already holds it, all 23 specs fail with the same unhelpful
+  // "Server exited with code 1" — say it once instead. `make e2e-report`
+  // serves on $PORT too, so a report server left running is the usual cause.
+  if (isPinned()) {
+    const port = serverPort();
+    if (!(await portIsFree(Number(port)))) {
+      throw new Error(
+        `\n\n[e2e] Port ${port} is busy, and that is where every test server must bind.\n` +
+        `\nThe CDP browser reaches this container on that one port only, so the specs\n` +
+        `cannot fall back to another. Free it and re-run:\n` +
+        `\n  lsof -ti tcp:${port}\n` +
+        `\nA leftover \`make e2e-report\` server is the usual holder (it serves on $PORT).\n` +
+        `Pin elsewhere with E2E_SERVER_PORT=<n>, or E2E_SERVER_PORT=0 for ephemeral ports.\n`
+      );
+    }
+  }
+
   // A few quick retries to absorb a Chrome that is still booting after a warm.
   const ATTEMPTS = 5;
   for (let i = 0; i < ATTEMPTS; i++) {
