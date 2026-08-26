@@ -32,7 +32,13 @@ function startServer(extraFlags = []) {
     const cleanEnv = Object.fromEntries(
       Object.entries(process.env).filter(([k]) => !k.startsWith('AGENT_CHAT_'))
     );
-    cleanEnv.AGENT_CHAT_PORT = '0';
+    // Port 0 (a fresh ephemeral port per test) is the default, but the CDP
+    // browser reaches this container through a tunnel that only reliably
+    // forwards the preview range (SWE_PREVIEW_PORTS, typically 3000-3019).
+    // When it is refusing ephemeral ports, every test fails at page.goto with
+    // ERR_CONNECTION_RESET before it reaches the app — pin the server with
+    // E2E_SERVER_PORT=3003 (any free port in that range) to run the suite.
+    cleanEnv.AGENT_CHAT_PORT = process.env.E2E_SERVER_PORT || '0';
     const proc = spawn(bin, ['-no-stdio-mcp', ...extraFlags], {
       cwd: dir, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -422,6 +428,93 @@ test.describe('Paste to upload', () => {
       await dropOnPage(page, [], [['text/plain', lines(30)]]);
       await expect(page.locator('#file-staging .file-name'))
         .toHaveText('pasted-30-lines.txt', { timeout: 3000 });
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // P3 — the clipboard offers the same content in several flavours and some
+  // sources skip text/plain entirely. Reading only text/plain made those look
+  // like an empty clipboard.
+  test('a paste carrying only text/html recovers its visible text', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pasteNothing(page, [
+        ['text/html', '<style>p{color:red}</style><p>first line</p><p>second &amp; last</p>'],
+      ]);
+      expect(prevented).toBe(true); // ours to insert: the browser would paste nothing
+      await expect(textarea).toHaveValue('first line\nsecond & last\n', { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a paste carrying only a web URL inserts the URL', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteNothing(page, [['text/uri-list', '# comment\nhttps://example.com/a?b=1']]);
+      await expect(textarea).toHaveValue('https://example.com/a?b=1', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a paste carrying only text/rtf recovers its words', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const rtf = '{\\rtf1\\ansi{\\fonttbl{\\f0 Helvetica;}}{\\*\\generator Word}'
+        + '\\f0\\fs24 hello\\tab there\\par bye\\par}';
+      await pasteNothing(page, [['text/rtf', rtf]]);
+      await expect(textarea).toHaveValue('hello\tthere\nbye\n', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('text/plain wins when it has content of its own', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pasteNothing(page, [
+        ['text/plain', 'the plain one'],
+        ['text/html', '<p>the html one</p>'],
+      ]);
+      expect(prevented).toBe(false); // unchanged: the browser inserts it as usual
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // P9 — copying blank Excel cells gives "\t\t\r\n", which used to insert
+  // something invisible instead of saying the clipboard was empty.
+  test('a whitespace-only paste shows the failed chip', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pasteNothing(page, [['text/plain', '\t\t\r\n']]);
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('clipboard-empty', { timeout: 3000 });
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('whitespace text/plain does not block a real text/html reading', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteNothing(page, [
+        ['text/plain', '   \n'],
+        ['text/html', '<table><tr><td>Q3</td><td>41</td></tr></table>'],
+      ]);
+      await expect(textarea).toHaveValue('Q341\n', { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a whitespace-only drop shows the failed chip too', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await dropOnPage(page, [], [['text/plain', '  \t ']]);
+      await expect(page.locator('#file-staging .file-name'))
+        .toHaveText('clipboard-empty', { timeout: 3000 });
       await expect(textarea).toHaveValue('');
     } finally { await context.close().catch(() => {}); }
   });

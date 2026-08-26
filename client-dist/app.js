@@ -1276,6 +1276,96 @@ function transferFiles(dt) {
   return files;
 }
 
+// A clipboard or drop advertises the same content in several flavours, and
+// some sources skip the plain one entirely: a URL dragged out of the address
+// bar can be text/uri-list only, and a few editors and webviews offer only
+// text/html or text/rtf. Reading text/plain alone made all of those look like
+// an empty clipboard. Fall back through the other flavours, most faithful
+// first, and treat whitespace-only as nothing so blank Excel cells ("\t\t\r\n")
+// don't count as recovered text.
+function readTransferData(dt, type) {
+  try { return dt.getData(type) || ''; } catch (e) { return ''; }
+}
+
+// text/uri-list is one URL per line; lines starting with '#' are comments.
+// A file: URL is skipped on purpose: it means the source handed over a local
+// file the page could not read (iOS "Share > Copy"), and the failed chip named
+// after that file says far more than its path typed into the composer.
+function firstUri(list) {
+  var lines = list.split(/\r?\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line || line.charAt(0) === '#') continue;
+    if (/^file:/i.test(line)) continue;
+    return line;
+  }
+  return '';
+}
+
+// Visible text out of an HTML flavour. DOMParser builds an inert document —
+// no scripts run and no resources load — so this is safe on clipboard HTML.
+// Block boundaries become newlines; cell structure is deliberately not
+// preserved (that is its own, much bigger job).
+function htmlToText(html) {
+  if (!html) return '';
+  var doc;
+  try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return ''; }
+  if (!doc || !doc.body) return '';
+  var drop = doc.body.querySelectorAll('script,style');
+  for (var i = 0; i < drop.length; i++) {
+    if (drop[i].parentNode) drop[i].parentNode.removeChild(drop[i]);
+  }
+  var breaks = doc.body.querySelectorAll('br');
+  for (var j = 0; j < breaks.length; j++) {
+    if (breaks[j].parentNode) breaks[j].parentNode.replaceChild(doc.createTextNode('\n'), breaks[j]);
+  }
+  var blocks = doc.body.querySelectorAll('p,div,li,tr,h1,h2,h3,h4,h5,h6,blockquote,pre');
+  for (var k = 0; k < blocks.length; k++) blocks[k].appendChild(doc.createTextNode('\n'));
+  return (doc.body.textContent || '').replace(/\n{3,}/g, '\n\n');
+}
+
+// Last resort: some older Mac apps put only text/rtf on the clipboard. This is
+// not an RTF parser — it drops the header tables and the other definition
+// groups, turns the paragraph and tab control words into their characters, and
+// unescapes what is left. Enough to recover the words that were copied.
+function rtfToText(rtf) {
+  if (!rtf || rtf.indexOf('\\rtf') < 0) return '';
+  var junk = /\{\\(?:\*|fonttbl|colortbl|stylesheet|listtable|info|pict|generator)[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+  for (var i = 0; i < 4; i++) {
+    var next = rtf.replace(junk, '');
+    if (next === rtf) break;
+    rtf = next;
+  }
+  return rtf
+    .replace(/\\'([0-9a-fA-F]{2})/g, function(_, hex) { return String.fromCharCode(parseInt(hex, 16)); })
+    .replace(/\\u(-?\d+)\s?\??/g, function(_, num) {
+      var code = parseInt(num, 10);
+      return String.fromCharCode(code < 0 ? code + 65536 : code);
+    })
+    .replace(/\\(?:par|line)\b ?/g, '\n')
+    .replace(/\\tab\b ?/g, '\t')
+    .replace(/\\[a-zA-Z]+-?\d* ?/g, '')
+    .replace(/\\([\\{}])/g, '$1')
+    .replace(/[{}]/g, '');
+}
+
+// The text a transfer carries, whatever flavour it arrived in. Returns the
+// plain-text reading when nothing else has content, so the caller's
+// empty-clipboard guard still sees what the source actually offered.
+function transferText(dt) {
+  var plain = readTransferData(dt, 'text/plain');
+  if (plain.trim().length > 0) return plain;
+  var fallbacks = [
+    firstUri(readTransferData(dt, 'text/uri-list')),
+    htmlToText(readTransferData(dt, 'text/html')),
+    rtfToText(readTransferData(dt, 'text/rtf'))
+  ];
+  for (var i = 0; i < fallbacks.length; i++) {
+    if (fallbacks[i].trim().length > 0) return fallbacks[i];
+  }
+  return plain;
+}
+
 // The whole of paste and drop: pull out the files, see what text came with
 // them, and choose between staging an attachment, inserting the text, and
 // showing a failed chip. Shared so a drop cannot quietly miss a protection the
@@ -1290,11 +1380,19 @@ function transferFiles(dt) {
 // Returns true when the caller should preventDefault().
 function handleTransfer(dt, insertByHand, isPaste) {
   var files = transferFiles(dt);
-  var text = dt.getData('text/plain') || '';
+  var text = transferText(dt);
+  // Text recovered from another flavour is ours to insert: left to the browser,
+  // a textarea gets the text/plain reading — the empty one that made this look
+  // like an empty clipboard — and the words we found are lost. Not while the
+  // composer is readOnly (mid-send), where nothing may be typed into it.
+  if (text !== readTransferData(dt, 'text/plain') && !chatInput.readOnly) insertByHand = true;
   if (files.length === 0) {
     // Nothing readable at all. Usually iOS handing over a file the page can't
     // open — surface it as a failed chip instead of doing nothing at all.
-    if (text.length === 0) {
+    // Whitespace-only counts as nothing: copying blank Excel cells gives
+    // "\t\t\r\n", which used to insert something invisible instead of
+    // saying the clipboard had nothing in it.
+    if (text.trim().length === 0) {
       addFailedPasteChip(pasteFailureName(dt));
       return true;
     }

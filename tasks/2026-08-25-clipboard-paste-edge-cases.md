@@ -1,7 +1,7 @@
 # Clipboard / paste / drop edge cases — 13 filed findings
 
-Filed 2026-08-25. **P1, P2 and P4 implemented 2026-08-26; the rest still
-open.** All 13 are audit findings from two research passes; every line
+Filed 2026-08-25. **P1, P2, P3, P4 and P9 implemented 2026-08-26; the rest
+still open.** All 13 are audit findings from two research passes; every line
 reference below was verified against HEAD (`5d28938`) at filing time.
 
 **Line numbers below are stale from P1/P2/P4 onward** — the paste body moved
@@ -94,7 +94,7 @@ becomes a `.txt` attachment.
 
 ---
 
-### P3 — We only read `text/plain` *(~15 min)*
+### P3 — We only read `text/plain` — **DONE 2026-08-26**
 
 `client-dist/app.js:1244` — `cd.getData('text/plain') || ''`. There is no
 fallback to `text/html`, `text/rtf`, or `text/uri-list`. An app that offers
@@ -105,6 +105,28 @@ falls into the `files.length === 0 && text.length === 0` branch at
 **Fix:** fall back in order `text/plain` → `text/uri-list` → strip-tags of
 `text/html` → `text/rtf`. Insert the recovered text rather than showing the
 failed chip.
+
+**Shipped as described, with one deliberate exception.** `transferText()` reads
+`text/plain` first and falls back through the other flavours when it is empty
+or whitespace-only; `handleTransfer` uses it in place of the bare `getData`.
+
+- `firstUri()` takes the first non-comment line of `text/uri-list` but **skips
+  `file:` URLs**: a file URL means the source handed over a local file the page
+  could not read (iOS "Share > Copy"), and the failed chip named after that
+  file (P-era behaviour, still covered by its own test) says more than the path
+  typed into the composer.
+- `htmlToText()` uses `DOMParser` — an inert document, so no scripts run and no
+  resources load — drops `script`/`style`, turns `br` and block boundaries into
+  newlines, and leaves cell structure alone (that is P13).
+- `rtfToText()` is not an RTF parser: it drops the header/definition groups,
+  turns `\par`/`\line`/`\tab` into their characters, decodes `\'hh` and
+  `\uN`, and unescapes the rest. Last resort only.
+- Text recovered from a fallback flavour is always inserted by hand — left to
+  the browser, a textarea receives the empty `text/plain` reading and the
+  recovered words are lost. Skipped while the composer is `readOnly`.
+
+Four new e2e cases: html-only, web-URL-only, rtf-only, and `text/plain` still
+winning when it has content of its own.
 
 ---
 
@@ -184,7 +206,7 @@ before counting.
 
 ---
 
-### P9 — Whitespace-only paste is invisible *(~10 min)*
+### P9 — Whitespace-only paste is invisible — **DONE 2026-08-26**
 
 Copy blank Excel cells and the clipboard is `"\t\t\r\n"`. The empty-paste guard
 at `app.js:1248` only fires on `text.length === 0`, so whitespace passes
@@ -193,6 +215,14 @@ straight through and inserts something you cannot see. (Note the `files.length
 
 **Fix:** use `text.trim().length === 0` in the guard at `app.js:1248` and show
 the failed chip named "clipboard-empty" as it does today.
+
+**Shipped as described.** The no-files guard in `handleTransfer` now tests
+`text.trim().length === 0`, so whitespace-only shows the same failed chip an
+empty clipboard does — on drop as well as paste, since both share the handler.
+`transferText` applies the same rule when choosing a flavour, so a whitespace
+`text/plain` no longer blocks a real `text/html` reading. Three new e2e cases:
+whitespace-only paste, whitespace-only drop, and whitespace plain alongside
+real html.
 
 ---
 
@@ -234,7 +264,8 @@ all).
 1. ~~**P1** alone~~ — done 2026-08-26.
 2. ~~**P2 + P4**~~ — done 2026-08-26; `handleTransfer` is the shared handler
    the remaining items should build on.
-3. **P3 + P9** — both are edits to the same 5-line guard block.
+3. ~~**P3 + P9**~~ — done 2026-08-26; the flavour fallback lives in
+   `transferText()`, which the remaining text items should read from.
 4. **P5 + P7** — both restructure the `files.length` / text branch at
    `app.js:1257-1284`; doing them separately means touching it twice.
 5. **P6**, then **P8**.
