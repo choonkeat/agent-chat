@@ -33,6 +33,15 @@ All notable changes to agent-chat are documented in this file.
   A `/` anywhere else means whatever the provider says, or nothing. Matched on
   the command name only, so `/run` does not surface `clear-and-then` by way of
   the words in its hint.
+- **The ding sounds for any finish while the page is hidden.** The 20-second
+  rule exists because a short answer arrives in front of someone who is
+  looking; with the tab in the background, the window minimised or the phone
+  on another app, nobody is, so every finish sounds however short the run.
+  On screen, the rule is unchanged. "Hidden" is the browser's own
+  `visibilityState`, not window focus: inside swe-swe this page is an iframe,
+  and focus resting in the terminal pane beside it would otherwise make every
+  one-liner sound at someone looking straight at the chat. The Settings switch
+  still silences all of it.
 - **agent-chat owns the wake-up line.** The sentence typed into an agent's
   terminal to make it check the queue lived in two code bases that had to
   agree. It is now one constant on the server, inlined into the page for the

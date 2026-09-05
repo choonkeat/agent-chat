@@ -1522,9 +1522,15 @@ var loaderTimer = null;
 // glance back at the tab. A short tone at that moment is the whole feature.
 //
 // Three things keep it from becoming noise:
-//   1. Only long runs. Under DING_MIN_MS the answer arrived while you were
-//      still looking at the screen, and a ding for every one-liner would be
-//      trained away within a day.
+//   1. Only long runs — while the page is on screen. Under DING_MIN_MS the
+//      answer arrived while you were still looking at the screen, and a ding
+//      for every one-liner would be trained away within a day. When the page
+//      is hidden (tab in the background, window minimised, phone on another
+//      app) nobody is looking, so every finish sounds, however short the run.
+//      Hidden is document.visibilityState, not document.hasFocus(): inside an
+//      embedder this page is an iframe, and focus resting in the terminal
+//      pane beside it would make every one-liner sound at someone looking
+//      straight at the chat.
 //   2. Only live runs. History streams through the same showLoading /
 //      removeLoading path on connect, so a reconnect would replay every finish
 //      the chat ever had.
@@ -1554,12 +1560,13 @@ function setDing(on) {
 
 function dingIfLongRun(elapsedMs) {
   if (historyStreaming) return;
-  if (elapsedMs < DING_MIN_MS) return;
+  var hidden = document.visibilityState === 'hidden';
+  if (elapsedMs < DING_MIN_MS && !hidden) return;
   if (!getDing()) return;
   // Logged because "I heard nothing" has two very different causes — the
   // decision never happened, or it happened and the audio was refused — and
   // only the console can tell them apart after the fact.
-  console.log('[' + ts() + '] Ding: run took ' + elapsedMs + 'ms, audio ' + (dingCtx ? dingCtx.state : 'not yet opened'));
+  console.log('[' + ts() + '] Ding: run took ' + elapsedMs + 'ms' + (hidden ? ', page hidden' : '') + ', audio ' + (dingCtx ? dingCtx.state : 'not yet opened'));
   playDing();
 }
 

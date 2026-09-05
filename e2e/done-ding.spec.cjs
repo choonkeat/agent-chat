@@ -136,6 +136,40 @@ test.describe('Done-ding on long runs', () => {
     expect(await dings(page)).toBe(0);
   });
 
+  test('a run under the threshold dings anyway when the page is hidden', async ({ page }) => {
+    await setupPage(page, server.url, 5000);
+    // The browser owns visibilityState, so the page's view of it is replaced
+    // for the test — the same property the ding reads.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    });
+
+    await page.evaluate(() => window.showLoading());
+    await page.waitForTimeout(100);
+    await page.evaluate(() => window.removeLoading());
+    expect(await dings(page)).toBe(1);
+
+    // Back on screen, the threshold applies again.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+    await page.evaluate(() => window.showLoading());
+    await page.waitForTimeout(100);
+    await page.evaluate(() => window.removeLoading());
+    expect(await dings(page)).toBe(1);
+  });
+
+  test('hidden or not, history streaming in never dings', async ({ page }) => {
+    await setupPage(page, server.url, 5000);
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+      window.historyStreaming = true;
+      window.showLoading();
+      window.removeLoading();
+    });
+    expect(await dings(page)).toBe(0);
+  });
+
   test('progress updates mid-run do not restart the clock', async ({ page }) => {
     await setupPage(page, server.url, 300);
 
