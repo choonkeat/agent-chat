@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.12.0] — 2026-09-05
 
 ### Breaking
 - **The `draw` tool and its inline canvas are gone.** Its name collided with
