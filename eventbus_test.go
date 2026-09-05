@@ -643,3 +643,38 @@ func TestEndBlockingWaitClearsOnlyItself(t *testing.T) {
 	default:
 	}
 }
+
+// A reset command is on the record but not in the agent's hands: the broadcast
+// (bubble, chat log) reads "/clear-and-then fix it", the queue reads "fix it".
+func TestReceiveUserCommandShowsCommandQueuesInstruction(t *testing.T) {
+	bus := NewEventBus()
+	defer bus.Close()
+	id := bus.ReceiveUserCommand("/clear-and-then", "fix it", nil, "tpl")
+	events := bus.EventsSince(0)
+	if len(events) != 1 || events[0].Type != "userMessage" {
+		t.Fatalf("want one userMessage event, got %+v", events)
+	}
+	if events[0].Text != "/clear-and-then fix it" || events[0].ID != id {
+		t.Errorf("broadcast = %q (id %q), want the command and the words", events[0].Text, events[0].ID)
+	}
+	queued := bus.DrainMessages()
+	if len(queued) != 1 || queued[0].Text != "fix it" || queued[0].Template != "tpl" || queued[0].ID != id {
+		t.Errorf("queued = %+v, want the bare instruction with its template", queued)
+	}
+
+	// Files with no words: the broadcast is the command alone.
+	bus2 := NewEventBus()
+	defer bus2.Close()
+	bus2.ReceiveUserCommand("/compact-and-then", "", []FileRef{{Name: "a.png"}}, "")
+	if got := bus2.EventsSince(0)[0].Text; got != "/compact-and-then" {
+		t.Errorf("files-only broadcast = %q, want the command alone", got)
+	}
+
+	// No command: exactly an ordinary message.
+	bus3 := NewEventBus()
+	defer bus3.Close()
+	bus3.ReceiveUserCommand("", "plain", nil, "")
+	if got := bus3.EventsSince(0)[0].Text; got != "plain" {
+		t.Errorf("no-command broadcast = %q, want %q", got, "plain")
+	}
+}

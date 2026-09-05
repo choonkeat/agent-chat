@@ -4,6 +4,15 @@
 **Status:** Accepted
 **Builds on:** `docs/adr/2026-08-01-unread-until-proven-read.md`
 
+> **Amended 2026-09-05 (agent-chat 0.12.0).** The prefix is now spelled
+> `/clear-and-then <instruction>` (and `/compact-and-then` for the summarising
+> variant) so the name says the order; bare `/clear` and `/compact` remain the
+> reset alone. And the command is no longer stripped from the record: the
+> bubble wears it as a badge and the chat log keeps `/clear-and-then …` verbatim,
+> so a log read months later shows where the agent was reset and how. Only the
+> queued copy the agent collects is the bare instruction. The mechanism below is
+> otherwise unchanged; read `/clear` as `/clear-and-then` throughout.
+
 ## Context
 
 A long session fills the agent's context with tool output the user never sees —

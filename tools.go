@@ -804,6 +804,24 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 // registerOrchestratorTools registers tools on a separate MCP server for
 // external orchestrators (e.g. swe-swe server) to interact with the chat.
+// chatNudgeText is the line typed into an agent's terminal to make it notice a
+// queued chat message. agent-chat owns the wording: the browser reads it from
+// the page config (CHAT_NUDGE_TEXT) and an embedder that nudges headlessly reads
+// it from agent_waiting's "nudge" field, so a change here reaches both without
+// either having to be told. It names the MCP server because an agent handed
+// several tool groups at once has more than one plausible send_message to pick
+// from.
+const chatNudgeText = "agent-chat mcp: check_messages; report progress before you start processing"
+
+// agentWaitingJSON is agent_waiting's reply: whether a pushed message would be
+// read now, and the exact line to type if it would not.
+func agentWaitingJSON(bus *EventBus) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"waiting": bus.HasActiveWait(),
+		"nudge":   chatNudgeText,
+	})
+}
+
 func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 	type PushMessageParams struct {
 		Text string `json:"text" jsonschema:"Message text to inject into the chat"`
@@ -837,7 +855,7 @@ func registerOrchestratorTools(server *mcp.Server, bus *EventBus) {
 		Name:        "agent_waiting",
 		Description: "Report whether an agent is currently parked in a blocking send_message, i.e. whether a message pushed now would be delivered to it rather than left unread in the queue. Poll this after send_chat_message to decide whether the agent needs to be woken.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *struct{}) (*mcp.CallToolResult, any, error) {
-		data, err := json.Marshal(map[string]bool{"waiting": bus.HasActiveWait()})
+		data, err := agentWaitingJSON(bus)
 		if err != nil {
 			return nil, nil, fmt.Errorf("marshal agent_waiting: %w", err)
 		}

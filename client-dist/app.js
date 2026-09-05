@@ -181,18 +181,22 @@ var clearContextPhrase = 'clear context';
 var clearConfirmPhrase = 'yes';
 var clearCancelPhrase = 'no';
 var clearQuickReplies = ['Yes', 'No'];
-// `/clear <instruction>` wipes the agent's memory and hands it the instruction
-// afterwards, with the chat log as the only carrier between the two halves.
-// The order matters and is the whole point (see maybeHandleClearPrefix).
-var clearPrefix = '/clear';
-// `/compact <instruction>` is the same sequence with a summary instead of a
-// wipe: the agent keeps a condensed memory of the conversation, so no resume
-// line naming the chat log is needed — only the wake-up nudge.
-var compactPrefix = '/compact';
-// The line typed into the agent's terminal to wake it. It names the MCP server
-// because an agent handed several tool groups at once has more than one
-// plausible `send_message` to pick from.
-var chatNudgeText = 'agent-chat mcp: check_messages; report progress before you start processing';
+// `/clear-and-then <instruction>` wipes the agent's memory and hands it the
+// instruction afterwards, with the chat log as the only carrier between the two
+// halves. The order matters and is the whole point (see maybeHandleClearPrefix).
+// The name says the order: `/clear` alone is the wipe with nothing after it.
+var clearPrefix = '/clear-and-then';
+var clearBare = '/clear';
+// `/compact-and-then <instruction>` is the same sequence with a summary instead
+// of a wipe: the agent keeps a condensed memory of the conversation, so no
+// resume line naming the chat log is needed — only the wake-up nudge.
+var compactPrefix = '/compact-and-then';
+var compactBare = '/compact';
+// The line typed into the agent's terminal to wake it. The server owns the
+// wording (chatNudgeText in tools.go, inlined as CHAT_NUDGE_TEXT) so that this
+// page and a headless embedder reading agent_waiting type the same sentence.
+// The fallback is only for a page served without its config script.
+var chatNudgeText = (typeof CHAT_NUDGE_TEXT === 'string' && CHAT_NUDGE_TEXT) ? CHAT_NUDGE_TEXT : 'check_messages';
 // How long to let the terminal settle after the wipe before posting the
 // instruction. The parent frame types Esc, then `/clear`, then Enter on its own
 // 300ms timers, so the wipe itself is not even keyed in until ~600ms; the rest
@@ -848,7 +852,16 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
   var div = document.createElement('div');
   div.className = 'bubble ' + role + (extraClass ? ' ' + extraClass : '');
   if (text) {
-    div.innerHTML = renderMarkdown(text, filePaths);
+    // A reset command at the front of a user message is shown as a badge, not
+    // as prose: it is what happened to the agent, not what was said to it.
+    var resetCmd = role === 'user' ? resetCommandOf(text) : '';
+    if (resetCmd) {
+      var restText = clearInstruction(text);
+      div.innerHTML = '<span class="reset-cmd">' + escapeHTML(resetCmd) + '</span>' +
+        (restText ? renderMarkdown(restText, filePaths) : '');
+    } else {
+      div.innerHTML = renderMarkdown(text, filePaths);
+    }
   }
   var attachments = renderFileAttachments(files);
   if (attachments) {
@@ -1919,11 +1932,11 @@ function routeClearPrefix(m) {
   // an ordinary send.
   // Files with no words count: an attachment sent on its own is still a message
   // the server will echo, so it needs its bubble drawn now like any other.
-  if (window.parent !== window && (clearInstruction(routed) || m.files.length > 0)) {
-    // What the server will send back is the instruction with the `/clear ` or
-    // `/compact ` gone, so that — not the routed text — is what the bubble must
-    // show.
-    m.displayText = stripVoiceMark(clearInstruction(routed));
+  if (window.parent !== window) {
+    // The server echoes the command and the instruction together (a bare
+    // command on its own), so the bubble drawn now must read the same way for
+    // the echo to take it over.
+    m.displayText = userMessageView(routed).display;
     lockInput(m);
     drawUnsentBubble(m);
   }
@@ -2159,11 +2172,11 @@ function maybeHandleClearContext(rawText, echoUserBubble) {
 }
 
 function isClearCommand(text) {
-  return text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
+  return text === clearBare || text === clearPrefix || text.indexOf(clearPrefix + ' ') === 0;
 }
 
 function isCompactCommand(text) {
-  return text === compactPrefix || text.indexOf(compactPrefix + ' ') === 0;
+  return text === compactBare || text === compactPrefix || text.indexOf(compactPrefix + ' ') === 0;
 }
 
 /** Either reset command. Both are claimed by the same route, and neither may be
@@ -2172,11 +2185,30 @@ function isResetCommand(text) {
   return isClearCommand(text) || isCompactCommand(text);
 }
 
-/** Which of the two a message is, or '' when it is an ordinary message. */
+/** The reset command a message starts with, as typed (`/clear`,
+    `/clear-and-then`, `/compact`, `/compact-and-then`), or '' for an ordinary
+    message. */
 function resetCommandOf(text) {
+  if (text === clearBare) return clearBare;
+  if (text === compactBare) return compactBare;
   if (isClearCommand(text)) return clearPrefix;
   if (isCompactCommand(text)) return compactPrefix;
   return '';
+}
+
+/** What a reset message looks like on screen and in the log: the command as
+    typed, then the words without their mic marker. The command stays — a log
+    read months later should show that the agent was reset here, and with which
+    of the two. Also the shape every user message is taken apart into for
+    display, so a message with no command is just `rest`. */
+function userMessageView(text) {
+  text = text || '';
+  var cmd = resetCommandOf(text);
+  var rest = cmd ? clearInstruction(text) : text;
+  var voice = rest.indexOf(VOICE_MARK) === 0;
+  if (voice) rest = rest.slice(VOICE_MARK.length);
+  var display = cmd ? (rest ? cmd + ' ' + rest : cmd) : rest;
+  return { cmd: cmd, rest: rest, voice: voice, display: display };
 }
 
 /** What a `/clear …` or `/compact …` hands the agent afterwards — '' for a bare
@@ -2231,19 +2263,21 @@ function clearRouteText(text, isInterrupt) {
 function maybeHandleClearPrefix(rawText, files) {
   var cmd = resetCommandOf(rawText);
   if (!cmd) return false;
-  var isCompact = cmd === compactPrefix;
+  var isCompact = isCompactCommand(rawText);
   var instruction = clearInstruction(rawText);
   files = files || [];
   if (window.parent === window) {
-    addBubble(instruction || rawText, 'user', null, voiceMode ? 'voice' : null);
+    addBubble(rawText, 'user', null, voiceMode ? 'voice' : null);
     addAgentMessage('Cannot ' + (isCompact ? 'compact' : 'clear') + ' context: parent frame not connected.', null, null, Date.now());
     return true;
   }
   // The instruction, not the routed text: what the user chose is the chip whose
-  // words these are, and a `/clear ` in front of them would match no chip and
-  // freeze the chosen one along with the rest.
+  // words these are, and a `/clear-and-then ` in front of them would match no
+  // chip and freeze the chosen one along with the rest.
   freezeCurrentReplies(instruction || rawText);
-  window.parent.postMessage({ type: 'agent-chat-interrupt', text: cmd }, '*');
+  // What the terminal gets is the agent CLI's own command; the `-and-then`
+  // half is ours.
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: isCompact ? compactBare : clearBare }, '*');
   // A wipe leaves a fresh agent that has to be bootstrapped again; a summary
   // leaves the same one, so its bootstrap state stands.
   if (!isCompact) {
@@ -2264,7 +2298,10 @@ function maybeHandleClearPrefix(rawText, files) {
       enableInput();
       return;
     }
-    var msg = { type: 'clear', text: instruction };
+    // The command rides along so the server can put it on the record — the
+    // bubble and the chat log show what was typed — while the agent is handed
+    // the instruction alone.
+    var msg = { type: 'clear', text: instruction, command: cmd };
     if (files.length > 0) msg.files = files;
     var tpl = getMsgStyle();
     if (tpl) msg.template = tpl;
@@ -2358,6 +2395,34 @@ var acTriggersArr = (typeof AUTOCOMPLETE_TRIGGERS !== 'undefined') ? AUTOCOMPLET
 // Build a Set for O(1) lookup.
 var acTriggers = {};
 for (var _i = 0; _i < acTriggersArr.length; _i++) { acTriggers[acTriggersArr[_i]] = true; }
+// The reset commands are agent-chat's own, so a `/` at the very start of the
+// box always offers them — ahead of the embedder's slash commands when it
+// provides some, alone when it does not. A `/` anywhere else means whatever
+// the embedder says it means, or nothing.
+var acServerSlash = acTriggers['/'] === true;
+acTriggers['/'] = true;
+var acBuiltinSlash = [
+  { v: 'clear-and-then', h: 'wipe the agent context, then hand it the rest as its instruction' },
+  { v: 'compact-and-then', h: 'summarise the agent context, then hand it the rest as its instruction' },
+  { v: 'clear', h: 'wipe the agent context' },
+  { v: 'compact', h: 'summarise the agent context' }
+];
+function acBuiltinsFor(trigger, query) {
+  if (trigger !== '/' || acTriggerPos !== 0) return [];
+  // Matched on the name only: a command is picked by what it is called, and
+  // the hints are sentences that would fuzzy-match almost anything and then
+  // sit above the provider's ranked results.
+  var q = (query || '').toLowerCase();
+  return acBuiltinSlash.filter(function (o) { return acIsSubsequence(o.v, q); });
+}
+// Does the cache answer this query? The cached set was built for one trigger
+// position class — start of box (built-ins included) or not — and a `/` typed
+// elsewhere must not inherit the built-ins.
+function acCacheCovers(trigger, query) {
+  return acCache && acCache.query !== '' && acCache.trigger === trigger &&
+    acCache.atStart === (acTriggerPos === 0) &&
+    acCache.results.length > 0 && !acCache.hasMore && query.indexOf(acCache.query) === 0;
+}
 var acDebounceTimer = null;
 var acActiveIndex = -1;   // currently highlighted option in dropdown
 var acTriggerPos = -1;    // position of the trigger character in the textarea
@@ -2645,7 +2710,7 @@ function acFetch(trigger, query) {
   // non-empty queries), so filtering it client-side would preserve that
   // unranked order. Forcing a real fetch on the first keystroke after the
   // trigger seeds the cache with a properly-ranked result set.
-  if (acCache && acCache.query !== '' && acCache.trigger === trigger && acCache.results.length > 0 && !acCache.hasMore && query.indexOf(acCache.query) === 0) {
+  if (acCacheCovers(trigger, query)) {
     var filtered = acCache.results.filter(function(opt) {
       return acFuzzyMatch(opt, query);
     });
@@ -2665,6 +2730,14 @@ function acFetch(trigger, query) {
     }
   }
 
+  var builtins = acBuiltinsFor(trigger, query);
+  if (trigger === '/' && !acServerSlash) {
+    // Nobody to ask: the built-ins are the whole list.
+    acCache = { trigger: trigger, query: query, results: builtins, hasMore: false, replaceTrigger: false, atStart: acTriggerPos === 0 };
+    if (acVisible || acTriggerPos >= 0) acShow(builtins, query);
+    return;
+  }
+
   acShowStatus('Loading\u2026');
 
   fetch('autocomplete', {
@@ -2678,12 +2751,12 @@ function acFetch(trigger, query) {
     .then(function(data) {
       // Support structured {results, info} or plain array.
       var raw = Array.isArray(data) ? data : (data.results || []);
-      var options = acNormalizeAll(raw);
+      var options = builtins.concat(acNormalizeAll(raw));
       var info = (!Array.isArray(data) && data.info) ? data.info : '';
       var hasMore = (!Array.isArray(data) && data.has_more) ? true : false;
       var replaceTrigger = (!Array.isArray(data) && data.replace_trigger) ? true : false;
       // Cache the full result set for client-side filtering.
-      acCache = { trigger: trigger, query: query, results: options, hasMore: hasMore, replaceTrigger: replaceTrigger };
+      acCache = { trigger: trigger, query: query, results: options, hasMore: hasMore, replaceTrigger: replaceTrigger, atStart: acTriggerPos === 0 };
       // Only show if we're still in the same trigger context
       if (acVisible || acTriggerPos >= 0) {
         if (options.length === 0 && info) {
@@ -2695,7 +2768,9 @@ function acFetch(trigger, query) {
     })
     .catch(function(err) {
       if (acVisible || acTriggerPos >= 0) {
-        acShowStatus('Error: ' + (err.message || 'failed to load'));
+        // The built-ins need no provider, so a failing one still leaves them.
+        if (builtins.length > 0) acShow(builtins, query);
+        else acShowStatus('Error: ' + (err.message || 'failed to load'));
       }
     });
 }
@@ -2708,7 +2783,7 @@ chatInput.addEventListener('input', function (e) {
   var text = chatInput.value;
   var trigger = findTrigger(text, cursorPos);
 
-  if (!trigger) {
+  if (!trigger || (trigger.char === '/' && !acServerSlash && trigger.pos !== 0)) {
     acHide();
     return;
   }
@@ -2716,11 +2791,10 @@ chatInput.addEventListener('input', function (e) {
   acTriggerPos = trigger.pos;
   acTriggerChar = trigger.char;
 
-  // No debounce needed for cache hits (client-side filtering is instant).
-  // Must mirror the guard in acFetch — specifically, an empty cached query
-  // is not a cache hit, because the empty-query response is unranked.
+  // No debounce needed for cache hits (client-side filtering is instant), nor
+  // for the built-ins when there is no provider to wait on.
   var triggerCh = trigger.char;
-  if (acCache && acCache.query !== '' && acCache.trigger === triggerCh && acCache.results.length > 0 && !acCache.hasMore && trigger.query.indexOf(acCache.query) === 0) {
+  if (acCacheCovers(triggerCh, trigger.query) || (triggerCh === '/' && !acServerSlash)) {
     acFetch(triggerCh, trigger.query);
     return;
   }
@@ -3904,8 +3978,9 @@ function replayHistory(history) {
           pendingReplies = null;
         }
         if (event.text || (event.files && event.files.length > 0)) {
-          var isVoiceMsg = event.text && event.text.indexOf('\ud83c\udfa4') === 0;
-          var displayText = isVoiceMsg ? event.text.replace('\ud83c\udfa4 ', '') : event.text;
+          var view = userMessageView(event.text);
+          var isVoiceMsg = view.voice;
+          var displayText = view.display;
           // Only pass the ID while the message is still unread \u2014 that's what
           // gives the bubble its pending styling and its "\u22ef" menu. A
           // proven-read message renders as a plain bubble, matching what every
@@ -3975,7 +4050,7 @@ function connect() {
     backoffDelay = BACKOFF_INITIAL;
     if (!motdShown && window.parent !== window) {
       motdShown = true;
-      addBubble('Tip: say **stop** to interrupt, or start a message with **`/clear `** (wipe) or **`/compact `** (summarise) to reset the agent context and hand it the rest as its next instruction.', 'system');
+      addBubble('Tip: say **stop** to interrupt, or start a message with **`/clear-and-then `** (wipe) or **`/compact-and-then `** (summarise) to reset the agent context and hand it the rest as its next instruction.', 'system');
     }
   };
 
@@ -4064,12 +4139,15 @@ function connect() {
       case 'userMessage':
         // Server broadcast of a user message — display the bubble now.
         // Freeze any active quick replies (unchosen ones stay in log).
-        freezeCurrentReplies(data.text);
+        // The chip's words are the instruction; a reset command in front of
+        // them is not part of what was chosen.
+        var liveView = userMessageView(data.text);
+        freezeCurrentReplies(liveView.cmd ? clearInstruction(data.text) : data.text);
         // Reset scroll flag before addBubble so scrollToBottom succeeds.
         isUserScrolledUp = false;
         if (data.text || (data.files && data.files.length > 0)) {
-          var isVoiceMsg = data.text && data.text.indexOf('\ud83c\udfa4') === 0;
-          var displayText = isVoiceMsg ? data.text.replace('\ud83c\udfa4 ', '') : data.text;
+          var isVoiceMsg = liveView.voice;
+          var displayText = liveView.display;
           // This browser may have drawn the message already, on its way out \u2014
           // then the server's copy only brings the id, and there is nothing to
           // draw. Pass the id otherwise, so addBubble marks the bubble pending

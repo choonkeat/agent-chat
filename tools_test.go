@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1041,4 +1042,30 @@ func toolNameOf(call *ast.CallExpr) string {
 		}
 	}
 	return "<unknown tool>"
+}
+
+// agent_waiting carries the wake-up line alongside the answer, so an embedder
+// that has to type it headlessly types agent-chat's wording, not its own copy.
+func TestAgentWaitingCarriesTheNudgeText(t *testing.T) {
+	bus := NewEventBus()
+	data, err := agentWaitingJSON(bus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Waiting bool   `json:"waiting"`
+		Nudge   string `json:"nudge"`
+	}
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("agent_waiting is not JSON: %v\n%s", err, data)
+	}
+	if got.Waiting {
+		t.Errorf("no agent is parked, want waiting=false: %s", data)
+	}
+	if got.Nudge != chatNudgeText {
+		t.Errorf("nudge = %q, want %q", got.Nudge, chatNudgeText)
+	}
+	if !strings.HasPrefix(chatNudgeText, "agent-chat mcp: check_messages") {
+		t.Errorf("nudge must name the server and check_messages: %q", chatNudgeText)
+	}
 }

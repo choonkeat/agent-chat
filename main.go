@@ -451,8 +451,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// this chat is actually running with.
 	indexBefore, indexAfter, _ := strings.Cut(string(indexHTML), "<!--CONFIG-->")
 	renderIndex := func() string {
-		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q;</script>",
-			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined())
+		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q,CHAT_NUDGE_TEXT=%q;</script>",
+			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined(), chatNudgeText)
 		return indexBefore + configScript + indexAfter
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -784,6 +784,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Files    []FileRef `json:"files"`
 			ID       string    `json:"id"`
 			Template string    `json:"template"`
+			Command  string    `json:"command"` // clear: the reset command as typed
 		}
 		if json.Unmarshal(msg, &m) != nil {
 			continue
@@ -822,8 +823,15 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			// that comes back drains the instruction as a fresh message rather
 			// than as a limbo redelivery wrapped in "you may have seen this".
 			bus.CancelActiveWait()
-			if m.Text != "" || len(m.Files) > 0 {
-				bus.ReceiveUserMessage(m.Text, m.Files, m.Template)
+			switch {
+			case m.Text != "" || len(m.Files) > 0:
+				// The command stays on the record — bubble and chat log show
+				// what was typed — while the agent is handed only the words.
+				bus.ReceiveUserCommand(m.Command, m.Text, m.Files, m.Template)
+			case m.Command != "":
+				// A bare reset: nothing for the agent to collect, but the reset
+				// itself is worth its line in the log.
+				bus.PublishConsumedUserMessage(m.Command, nil)
 			}
 			// messageQueued is sent either way: the browser waits for it before
 			// typing the resume line, and a bare `/clear` with no instruction

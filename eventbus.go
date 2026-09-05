@@ -336,6 +336,27 @@ func (eb *EventBus) ReceiveUserMessage(text string, files []FileRef, template st
 	return id
 }
 
+// ReceiveUserCommand is ReceiveUserMessage for a `/clear-and-then …` or
+// `/compact-and-then …`. The broadcast — and so the bubble and the chat log —
+// carries the command as typed, the evidence a log read months later needs to
+// show that the agent was reset here and how; the queued copy is the
+// instruction alone, because an agent handed "/clear-and-then fix it" would
+// wonder what to do with the first word. An empty command is an ordinary
+// message.
+func (eb *EventBus) ReceiveUserCommand(command, text string, files []FileRef, template string) string {
+	if command == "" {
+		return eb.ReceiveUserMessage(text, files, template)
+	}
+	shown := command
+	if text != "" {
+		shown += " " + text
+	}
+	id := uuid.New().String()
+	eb.Publish(Event{Type: "userMessage", ID: id, Text: shown, Files: files})
+	eb.pushUserMessage(UserMessage{ID: id, Text: text, Files: files, Template: template})
+	return id
+}
+
 // PublishConsumedUserMessage is for paths where the server itself consumes a
 // message without ever putting it in the agent queue (the permission-prompt
 // interceptor and the ack-reply path). It broadcasts the userMessage event,

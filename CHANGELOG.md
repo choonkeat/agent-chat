@@ -4,7 +4,45 @@ All notable changes to agent-chat are documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+- **The `draw` tool and its inline canvas are gone.** Its name collided with
+  the whiteboard MCP's own `draw`, and the canvas bubbles it produced were no
+  longer wanted. Removed end to end: the tool, the three `whiteboard://`
+  resources, the canvas rendering and its bundle. Nine agent-facing tools
+  remain. An agent prompt, skill or allowlist that still names agent-chat's
+  `draw` gets "unknown tool" — point it at the whiteboard MCP instead.
+- **`/clear <instruction>` is now spelled `/clear-and-then <instruction>`**, and
+  `/compact <instruction>` is `/compact-and-then <instruction>`, so the name
+  says the order. Bare `/clear` and `/compact` are unchanged: the reset alone.
+  The old spelling with an instruction is no longer intercepted and reaches the
+  agent as an ordinary message.
+
 ### Features
+- **A reset stays on the record.** The command used to be stripped from the
+  bubble and the chat log, so a log read later showed no sign the agent had
+  been wiped or summarised there — and, with "conversation context only"
+  ticked, no sign it happened before every message. The bubble now wears the
+  command as a small badge above the words, and the chat log keeps the line
+  verbatim (`> /clear-and-then now fix the logout bug`). A bare `/clear` or
+  `/compact` gets its line too. Only the copy the agent collects from the queue
+  is the bare instruction: an agent handed "/clear-and-then fix it" would
+  wonder what to do with the first word.
+- **A `/` at the start of the box offers the four reset commands.** They are
+  agent-chat's own, so they are listed whether or not an embedder provides a
+  `/` autocomplete — ahead of its results when it does, alone when it does not.
+  A `/` anywhere else means whatever the provider says, or nothing. Matched on
+  the command name only, so `/run` does not surface `clear-and-then` by way of
+  the words in its hint.
+- **agent-chat owns the wake-up line.** The sentence typed into an agent's
+  terminal to make it check the queue lived in two code bases that had to
+  agree. It is now one constant on the server, inlined into the page for the
+  browser's own nudges and returned by the `agent_waiting` orchestrator tool as
+  `nudge`, so an embedder that has to type it headlessly types the same words
+  and never needs telling when they change. Current wording:
+  `agent-chat mcp: check_messages; report progress before you start processing`
+  — it names the server because an agent handed several tool groups at once
+  has more than one plausible `send_message` to pick from. An embedder that
+  ignores the field keeps working with its own text.
 - **The chat archive can be filed one directory per month —
   understood everywhere now, written only on request.** With
   `-chatlog-layout=month` (or `AGENT_CHAT_CHATLOG_LAYOUT=month`) a new export
@@ -35,6 +73,15 @@ All notable changes to agent-chat are documented in this file.
   place and never relocates it; only the migration moves anything.
 
 ### Fixes
+- **Paste works wherever you are on the page.** The paste listener sat on the
+  composer, so Cmd/Ctrl+V after clicking a transcript bubble did nothing at
+  all. It now listens on the document and steps aside only when the caret is
+  in another text field. Dropping onto the page runs through the same path as
+  pasting, so a dropped folder or link no longer uploads 0 bytes under a
+  normal-looking chip: empty files stage a failed "(empty)" chip, and
+  clipboard text that is only whitespace (a blank spreadsheet cell) raises the
+  same "nothing arrived" chip as an empty clipboard. When there is no plain
+  text, the text is recovered from HTML, a URL list or RTF, in that order.
 - **The viewer resolves a chat's images against the chat, not against
   `index.html`.** Parsed markdown is injected into the landing page's document,
   so the browser was resolving `./assets/x.png` relative to `index.html` — the

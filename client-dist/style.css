@@ -450,6 +450,18 @@ body {
   border-bottom-right-radius: 3px;
 }
 
+/* The reset command a message began with, worn as a badge above the words. */
+.bubble.user .reset-cmd {
+  display: inline-block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.75em;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.22);
+  margin-bottom: 4px;
+}
+
 .bubble.user.voice {
   background: #7c3aed;
 }

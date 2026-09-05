@@ -99,12 +99,12 @@ const interrupts = (page) =>
   page.evaluate(() => window.__msgs.filter((m) => m.type === 'agent-chat-interrupt').map((m) => m.text));
 
 test.describe('/compact prefix', () => {
-  test('summarises first, records the stripped instruction, then wakes the agent', async ({ page }) => {
+  test('summarises first, records the command and instruction, then wakes the agent', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
 
-      await frame.locator('#chat-input').fill('/compact now fix the logout bug');
+      await frame.locator('#chat-input').fill('/compact-and-then now fix the logout bug');
       await frame.locator('#chat-input').press('Enter');
 
       // 1. The summary goes out immediately — before anything is recorded, so a
@@ -115,7 +115,8 @@ test.describe('/compact prefix', () => {
       //    unread: it is waiting in the queue for the agent the nudge wakes.
       const userBubble = frame.locator('.bubble.user', { hasText: 'now fix the logout bug' });
       await expect(userBubble).toBeVisible({ timeout: 10000 });
-      await expect(userBubble).not.toContainText('/compact');
+      await expect(userBubble.locator('.reset-cmd')).toHaveText('/compact-and-then');
+      await expect(userBubble).toContainText('now fix the logout bug');
       await expect(userBubble).toHaveClass(/pending-agent/);
 
       // 3. Only then the wake-up line — and it is the ordinary nudge, not a
@@ -131,7 +132,7 @@ test.describe('/compact prefix', () => {
     }
   });
 
-  test('bare /compact summarises and wakes with no instruction', async ({ page }) => {
+  test('bare /compact summarises and wakes with no instruction, and is on the record', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
@@ -139,10 +140,13 @@ test.describe('/compact prefix', () => {
       await frame.locator('#chat-input').fill('/compact');
       await frame.locator('#chat-input').press('Enter');
 
-      // Nothing to record and no bubble of any kind, but the wake-up line must
-      // still be typed — otherwise the agent sits there and the chat looks dead.
+      // Nothing for the agent, but the wake-up line must still be typed —
+      // otherwise the agent sits there and the chat looks dead. The reset itself
+      // is a line in the log and a bubble on screen.
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
-      await expect(frame.locator('.bubble.user')).toHaveCount(0);
+      const bare = frame.locator('.bubble.user');
+      await expect(bare).toHaveCount(1, { timeout: 10000 });
+      await expect(bare.locator('.reset-cmd')).toHaveText('/compact');
       const [summarise, wake] = await interrupts(page);
       expect(summarise).toBe('/compact');
       expect(wake).toBe(NUDGE);
@@ -156,7 +160,7 @@ test.describe('/compact prefix', () => {
   // A `/compact …` is already a reset the user asked for by name, so prefixing
   // it would bury `/compact` inside the instruction and wipe what the user
   // asked to keep.
-  test('conversation-context-only leaves a /compact alone', async ({ page }) => {
+  test('conversation-context-only leaves a /compact-and-then alone', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
@@ -165,12 +169,12 @@ test.describe('/compact prefix', () => {
       await frame.locator('#btn-settings-done').click();
 
       const routed = await innerFrame(page, server.url).evaluate(() => ({
-        compact: clearRouteText('/compact fix the logout bug', false),
+        compact: clearRouteText('/compact-and-then fix the logout bug', false),
         ordinary: clearRouteText('fix the logout bug', false),
       }));
 
-      expect(routed.compact).toBe('/compact fix the logout bug');
-      expect(routed.ordinary).toBe('/clear fix the logout bug');
+      expect(routed.compact).toBe('/compact-and-then fix the logout bug');
+      expect(routed.ordinary).toBe('/clear-and-then fix the logout bug');
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });

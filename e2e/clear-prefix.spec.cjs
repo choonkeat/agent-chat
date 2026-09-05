@@ -1,5 +1,5 @@
 // @ts-check
-// Pins the `/clear <instruction>` sequence.
+// Pins the `/clear-and-then <instruction>` sequence.
 //
 // Motivation: wiping the agent's memory and handing it a new instruction are
 // two halves of one action, and each half is a separate message to the parent
@@ -92,13 +92,13 @@ async function embed(page, url) {
 const interrupts = (page) =>
   page.evaluate(() => window.__msgs.filter((m) => m.type === 'agent-chat-interrupt').map((m) => m.text));
 
-test.describe('/clear prefix', () => {
-  test('wipes first, records the stripped instruction, then names the log file', async ({ page }) => {
+test.describe('/clear-and-then prefix', () => {
+  test('wipes first, records the command and instruction, then names the log file', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
 
-      await frame.locator('#chat-input').fill('/clear now fix the logout bug');
+      await frame.locator('#chat-input').fill('/clear-and-then now fix the logout bug');
       await frame.locator('#chat-input').press('Enter');
 
       // 1. The wipe goes out immediately — before anything is recorded, so a
@@ -110,7 +110,9 @@ test.describe('/clear prefix', () => {
       //    wipe leaves no bubble of its own — no marker, no status line.
       const userBubble = frame.locator('.bubble.user', { hasText: 'now fix the logout bug' });
       await expect(userBubble).toBeVisible({ timeout: 10000 });
-      await expect(userBubble).not.toContainText('/clear');
+      // The command stays on the record, worn as a badge above the words.
+      await expect(userBubble.locator('.reset-cmd')).toHaveText('/clear-and-then');
+      await expect(userBubble).toContainText('now fix the logout bug');
       await expect(frame.locator('.bubble', { hasText: /context cleared/i })).toHaveCount(0);
       // Still unread: the instruction is sitting in the queue waiting for the
       // agent that comes back, which is what the resume line sends it to
@@ -132,7 +134,7 @@ test.describe('/clear prefix', () => {
       // The file the resume line names must exist and hold the instruction.
       const named = resume.slice('resume '.length).split(' ')[0];
       const md = fs.readFileSync(path.join(server.dir, named), 'utf8');
-      expect(md).toContain('now fix the logout bug');
+      expect(md).toContain('> /clear-and-then now fix the logout bug');
       expect(md).not.toContain('context cleared');
     } finally {
       server.proc.kill('SIGTERM');
@@ -140,7 +142,7 @@ test.describe('/clear prefix', () => {
     }
   });
 
-  test('bare /clear wipes and resumes with no instruction', async ({ page }) => {
+  test('bare /clear wipes and resumes with no instruction, and is on the record', async ({ page }) => {
     const server = await startServer();
     try {
       const frame = await embed(page, server.url);
@@ -148,11 +150,15 @@ test.describe('/clear prefix', () => {
       await frame.locator('#chat-input').fill('/clear');
       await frame.locator('#chat-input').press('Enter');
 
-      // No instruction to record and no bubble of any kind, but the resume line
-      // must still be typed — otherwise the wiped agent sits there and the chat
-      // looks dead.
+      // No instruction for the agent, but the resume line must still be typed —
+      // otherwise the wiped agent sits there and the chat looks dead. The reset
+      // itself is a line in the log and a bubble on screen, one never handed to
+      // the agent and so read the moment it lands.
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
-      await expect(frame.locator('.bubble.user')).toHaveCount(0);
+      const bare = frame.locator('.bubble.user');
+      await expect(bare).toHaveCount(1, { timeout: 10000 });
+      await expect(bare.locator('.reset-cmd')).toHaveText('/clear');
+      await expect(bare).not.toHaveClass(/pending-agent/);
       await expect(frame.locator('.bubble', { hasText: /context cleared/i })).toHaveCount(0);
       const [wipe, resume] = await interrupts(page);
       expect(wipe).toBe('/clear');
@@ -186,7 +192,7 @@ test.describe('/clear prefix', () => {
       // for must not leak into what was said.
       const userBubble = frame.locator('.bubble.user', { hasText: 'now fix the logout bug' });
       await expect(userBubble).toBeVisible({ timeout: 10000 });
-      await expect(userBubble).not.toContainText('/clear');
+      await expect(userBubble.locator('.reset-cmd')).toHaveText('/clear-and-then');
 
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
       const [, resume] = await interrupts(page);
@@ -226,7 +232,7 @@ test.describe('/clear prefix', () => {
       await expect.poll(() => interrupts(page), { timeout: 5000 }).toEqual(['/clear']);
       const userBubble = frame.locator('.bubble.user', { hasText: 'what does this say' });
       await expect(userBubble).toBeVisible({ timeout: 10000 });
-      await expect(userBubble).not.toContainText('/clear');
+      await expect(userBubble.locator('.reset-cmd')).toHaveText('/clear-and-then');
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
       const [, resume] = await interrupts(page);
       expect(resume).toMatch(/^resume agent-chats\//);
@@ -479,9 +485,9 @@ test.describe('/clear prefix', () => {
         typedRunOn: clearRouteText('stop the retry loop', isInterruptPhrase('stop the retry loop', false)),
       }));
 
-      expect(routed.spoken).toBe('/clear 🎤 fix the logout bug');
+      expect(routed.spoken).toBe('/clear-and-then 🎤 fix the logout bug');
       expect(routed.runOn).toBe('🎤 stop, wrong file'); // untouched: an interrupt
-      expect(routed.typedRunOn).toBe('/clear stop the retry loop'); // typed: work, not a stop
+      expect(routed.typedRunOn).toBe('/clear-and-then stop the retry loop'); // typed: work, not a stop
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });
@@ -535,6 +541,78 @@ test.describe('/clear prefix', () => {
       await frame.locator('#chat-input').press('Enter');
       await expect.poll(() => interrupts(page), { timeout: 10000 }).toHaveLength(2);
       expect(await frame.locator('#chat-input').inputValue()).toBe('');
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// The reset commands are agent-chat's own, so they must be offered where a
+// slash command is typed — but only at the very start of the box, where a
+// reset command can actually be one, and ahead of whatever the embedder's
+// provider says.
+test.describe('built-in slash commands', () => {
+  test('a leading / offers the reset commands with no provider configured', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+      const input = frame.locator('#chat-input');
+      const dropdown = frame.locator('#autocomplete-dropdown');
+
+      await input.pressSequentially('/cl', { delay: 30 });
+      await expect(dropdown).toHaveClass(/visible/, { timeout: 5000 });
+      // Both clear commands, neither compact one. Ranking puts the shorter
+      // `clear` first, so the order is not pinned here.
+      await expect(dropdown.locator('.ac-option')).toHaveCount(2);
+      const texts = await dropdown.locator('.ac-option').allTextContents();
+      expect(texts.join('\n')).toContain('clear-and-then');
+      expect(texts.join('\n')).not.toContain('compact');
+
+      await input.pressSequentially('ear-a', { delay: 30 });
+      await expect(dropdown.locator('.ac-option')).toHaveCount(1, { timeout: 5000 });
+      await input.press('Enter');
+      await expect(input).toHaveValue('/clear-and-then');
+      // Nothing was sent: selecting is not submitting.
+      expect(await interrupts(page)).toHaveLength(0);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a / after other words offers nothing without a provider', async ({ page }) => {
+    const server = await startServer();
+    try {
+      const frame = await embed(page, server.url);
+      const input = frame.locator('#chat-input');
+      const dropdown = frame.locator('#autocomplete-dropdown');
+
+      await input.pressSequentially('see /cl', { delay: 30 });
+      await page.waitForTimeout(600);
+      await expect(dropdown).not.toHaveClass(/visible/);
+    } finally {
+      server.proc.kill('SIGTERM');
+      fs.rmSync(server.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('with a provider, a leading / lists the reset commands first and a later / does not', async ({ page }) => {
+    const server = await startServer(['-autocomplete-triggers', '/=builtin:filepath']);
+    try {
+      const frame = await embed(page, server.url);
+      const input = frame.locator('#chat-input');
+      const dropdown = frame.locator('#autocomplete-dropdown');
+
+      await input.pressSequentially('/', { delay: 30 });
+      await expect(dropdown).toHaveClass(/visible/, { timeout: 5000 });
+      await expect(dropdown.locator('.ac-option').first()).toContainText('clear-and-then', { timeout: 5000 });
+
+      await input.fill('');
+      await input.pressSequentially('look in /', { delay: 30 });
+      await expect(dropdown).toHaveClass(/visible/, { timeout: 5000 });
+      await expect.poll(async () => (await dropdown.locator('.ac-option').allTextContents()).join('\n'), { timeout: 5000 })
+        .not.toContain('clear-and-then');
     } finally {
       server.proc.kill('SIGTERM');
       fs.rmSync(server.dir, { recursive: true, force: true });
