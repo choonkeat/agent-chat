@@ -12,6 +12,16 @@ All notable changes to agent-chat are documented in this file.
   One indentation-aware parser now handles both kinds and any depth, so
   sub-items nest, mixed kinds nest, and a list that switches kind at the same
   level closes and reopens instead of merging.
+- **Quoted content is now rendered, not flattened.** A list, heading or rule
+  written inside a `>` blockquote came out as plain text with `<br>`s: block
+  rules ran before the quote rule and never looked past the `&gt;` prefix, and
+  the quote rule only recursed into itself. The block rules now run again over
+  the inside of every quote, so a nested list inside a quote nests.
+- **A lone `>` no longer splits a blockquote in two.** The quote rule required
+  text after the marker, so the empty line between two quoted paragraphs
+  matched nothing and rendered as a literal `>` between two separate quotes.
+  A bare `>` is now a blank line inside one quote, and `>text` with no space
+  after the marker quotes as CommonMark specifies.
 
 ## [0.12.0] — 2026-09-05
 

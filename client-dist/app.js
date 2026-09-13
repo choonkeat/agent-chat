@@ -495,6 +495,36 @@ function buildList(items, start, indent) {
   return { html: html, next: i };
 }
 
+// Block-level rules, run over the whole message and again over the inside of
+// every blockquote. Quoted content used to get none of them: lists were parsed
+// before quotes and never looked past the "&gt;" prefix, and the quote rule only
+// recursed into itself — so a quoted list rendered as plain text with <br>s.
+function parseBlocks(text) {
+  // Headings (# through ######)
+  text = text.replace(/^(#{1,6}) (.+)$/gm, function(_, hashes, body) {
+    var level = hashes.length;
+    return '<h' + level + '>' + body + '</h' + level + '>';
+  });
+  // Horizontal rules (---, ***, ___ on their own line)
+  text = text.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
+  // Lists — ordered and unordered, nested by leading indentation. One parser for
+  // both: two independent regex passes can only ever produce two flat lists,
+  // which is why indented items used to fall through as plain text.
+  text = parseLists(text);
+  return parseBlockquotes(text);
+}
+
+// Blockquotes: every run of lines starting with ">" becomes one quote. The
+// marker takes the rest of the line whatever it is, so a lone ">" is a blank
+// line *inside* the quote rather than a literal ">" that splits it in two, and
+// ">text" with no space quotes like CommonMark says it should. Nesting (">>")
+// falls out of running the block rules over the stripped content.
+function parseBlockquotes(text) {
+  return text.replace(/(^&gt;.*(?:\n&gt;.*)*)/gm, function(block) {
+    return '<blockquote>' + parseBlocks(block.replace(/^&gt; ?/gm, '')) + '</blockquote>';
+  });
+}
+
 function renderMarkdown(text, filePaths) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -554,26 +584,8 @@ function renderMarkdown(text, filePaths) {
     out += '</tbody></table>';
     return out;
   });
-  // Headings (# through ######)
-  html = html.replace(/^(#{1,6}) (.+)$/gm, function(_, hashes, text) {
-    var level = hashes.length;
-    return '<h' + level + '>' + text + '</h' + level + '>';
-  });
-  // Horizontal rules (---, ***, ___ on their own line)
-  html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
-  // Lists — ordered and unordered, nested by leading indentation. One parser for
-  // both: two independent regex passes can only ever produce two flat lists,
-  // which is why indented items used to fall through as plain text.
-  html = parseLists(html);
-  // Blockquotes (consecutive lines starting with > , supports nesting with >> )
-  function parseBlockquotes(text) {
-    return text.replace(/(^&gt;[ &].+(?:\n&gt;[ &].+)*)/gm, function(block) {
-      var inner = block.replace(/^&gt; ?/gm, '');
-      inner = parseBlockquotes(inner);
-      return '<blockquote>' + inner + '</blockquote>';
-    });
-  }
-  html = parseBlockquotes(html);
+  // Headings, rules, lists and blockquotes — see parseBlocks.
+  html = parseBlocks(html);
   // Bold (**text** or __text__)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
