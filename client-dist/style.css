@@ -714,6 +714,12 @@ body {
   margin: 0.1rem 0;
 }
 
+/* A nested list is part of its parent item, so it gets no extra gap above or
+   below — only the indentation from padding-left. */
+.bubble li > ul, .bubble li > ol {
+  margin: 0;
+}
+
 .bubble blockquote {
   border-left: 3px solid var(--border-secondary);
   margin: 0.3rem 0;

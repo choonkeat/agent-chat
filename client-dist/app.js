@@ -413,6 +413,88 @@ function filePathEntryFor(content, filePaths) {
   return null;
 }
 
+// A list item line: optional indentation, a bullet (- or *) or a number followed
+// by a dot, then at least one space. The indentation is what nesting is built
+// from, so it is captured, not skipped.
+var LIST_ITEM_RE = /^([ \t]*)(?:[-*]|\d+\.)[ \t]+(.*)$/;
+
+// Width of a line's leading whitespace, tabs counted as 4 columns so a
+// tab-indented sub-item nests under a space-indented parent.
+function listIndentWidth(prefix) {
+  var width = 0;
+  for (var i = 0; i < prefix.length; i++) {
+    width += prefix.charAt(i) === '\t' ? 4 : 1;
+  }
+  return width;
+}
+
+// Turn every run of list lines into nested <ul>/<ol> markup, leaving all other
+// lines untouched. A single blank line between items keeps the list going (the
+// old flat rules allowed that too); anything else ends the block.
+function parseLists(text) {
+  var lines = text.split('\n');
+  var out = [];
+  var i = 0;
+  while (i < lines.length) {
+    if (!LIST_ITEM_RE.test(lines[i])) {
+      out.push(lines[i]);
+      i++;
+      continue;
+    }
+    var items = [];
+    while (i < lines.length) {
+      var m = lines[i].match(LIST_ITEM_RE);
+      if (m) {
+        items.push({
+          indent: listIndentWidth(m[1]),
+          ordered: /^[ \t]*\d/.test(lines[i]),
+          text: m[2],
+        });
+        i++;
+        continue;
+      }
+      // A lone blank line only survives if a list item follows it.
+      if (lines[i].trim() === '' && i + 1 < lines.length && LIST_ITEM_RE.test(lines[i + 1])) {
+        i++;
+        continue;
+      }
+      break;
+    }
+    out.push(buildList(items, 0, items[0].indent).html);
+  }
+  return out.join('\n');
+}
+
+// Emit one list starting at items[start], consuming every following item that
+// is indented at least as far. A deeper item becomes a nested list inside the
+// item above it; a same-level item of the other kind closes this list and opens
+// the other one. Returns the markup plus the index of the first item left over.
+function buildList(items, start, indent) {
+  var ordered = items[start].ordered;
+  var tag = ordered ? 'ol' : 'ul';
+  var html = '<' + tag + '>';
+  var i = start;
+  while (i < items.length && items[i].indent >= indent) {
+    if (items[i].ordered !== ordered) break;
+    var body = items[i].text;
+    var next = i + 1;
+    if (next < items.length && items[next].indent > items[i].indent) {
+      var child = buildList(items, next, items[next].indent);
+      body += child.html;
+      next = child.next;
+    }
+    html += '<li>' + body + '</li>';
+    i = next;
+  }
+  html += '</' + tag + '>';
+  // Same indentation, different kind: a sibling list rather than a nested one.
+  if (i < items.length && items[i].indent >= indent) {
+    var sibling = buildList(items, i, indent);
+    return { html: html + sibling.html, next: sibling.next };
+  }
+  return { html: html, next: i };
+}
+
 function renderMarkdown(text, filePaths) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -479,20 +561,10 @@ function renderMarkdown(text, filePaths) {
   });
   // Horizontal rules (---, ***, ___ on their own line)
   html = html.replace(/^(---|\*\*\*|___)$/gm, '<hr>');
-  // Unordered lists (consecutive lines starting with - or * , allowing blank lines between items)
-  html = html.replace(/(^[-*] .+(?:\n\n?[-*] .+)*)/gm, function(block) {
-    var items = block.split(/\n\n?(?=[-*] )/).map(function(line) {
-      return '<li>' + line.replace(/^[-*] /, '') + '</li>';
-    }).join('');
-    return '<ul>' + items + '</ul>';
-  });
-  // Ordered lists (consecutive lines starting with 1. 2. etc., allowing blank lines between items)
-  html = html.replace(/(^\d+\. .+(?:\n\n?\d+\. .+)*)/gm, function(block) {
-    var items = block.split(/\n\n?(?=\d+\. )/).map(function(line) {
-      return '<li>' + line.replace(/^\d+\. /, '') + '</li>';
-    }).join('');
-    return '<ol>' + items + '</ol>';
-  });
+  // Lists — ordered and unordered, nested by leading indentation. One parser for
+  // both: two independent regex passes can only ever produce two flat lists,
+  // which is why indented items used to fall through as plain text.
+  html = parseLists(html);
   // Blockquotes (consecutive lines starting with > , supports nesting with >> )
   function parseBlockquotes(text) {
     return text.replace(/(^&gt;[ &].+(?:\n&gt;[ &].+)*)/gm, function(block) {

@@ -2,6 +2,17 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Fixes
+- **Nested bullets render as nested lists.** A sub-item written under a list
+  item (`1.` under `1.`, or `-` under `1.`) used to fall out of the list
+  entirely and show up as plain indented text, because ordered and unordered
+  lists were matched by two separate flat regexes that ignored indentation.
+  One indentation-aware parser now handles both kinds and any depth, so
+  sub-items nest, mixed kinds nest, and a list that switches kind at the same
+  level closes and reopens instead of merging.
+
 ## [0.12.0] — 2026-09-05
 
 ### Breaking
