@@ -428,9 +428,63 @@ function listIndentWidth(prefix) {
   return width;
 }
 
+// Strip `width` columns of leading whitespace, tabs counted as 4 like above.
+function dedentBy(line, width) {
+  var i = 0;
+  var used = 0;
+  while (i < line.length && used < width) {
+    var ch = line.charAt(i);
+    if (ch === ' ') used += 1;
+    else if (ch === '\t') used += 4;
+    else break;
+    i++;
+  }
+  return line.slice(i);
+}
+
+// A non-item line indented past its item's marker belongs to that item — it is
+// a continuation block (a quote, a paragraph, a code block) rather than the end
+// of the list. Two columns past the marker's own indentation is where content
+// starts for "- " and "1. " alike.
+function isItemContinuation(line, item) {
+  if (!item || line.trim() === '') return false;
+  return listIndentWidth(line.match(/^([ \t]*)/)[1]) >= item.indent + 2;
+}
+
+// The number an ordered item was typed with: "6." opens the list at 6. Without
+// this every interrupted list restarts at 1, however the source was numbered.
+function orderedStart(line) {
+  var m = line.match(/^[ \t]*(\d+)\./);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+// Render the block(s) indented under one item: drop the blank lines that only
+// marked the gap, strip the common indentation, then run the same block rules
+// over what is left — so a quote is a quote and a list is a list, not the
+// literal "&gt;" lines this used to leave behind.
+function renderItemContinuation(item) {
+  var lines = item.cont.slice();
+  while (lines.length && lines[0].trim() === '') lines.shift();
+  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
+  if (!lines.length) return '';
+  var strip = Infinity;
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].trim() === '') continue;
+    strip = Math.min(strip, listIndentWidth(lines[i].match(/^([ \t]*)/)[1]));
+  }
+  var dedented = lines.map(function (line) {
+    return line.trim() === '' ? '' : dedentBy(line, strip);
+  });
+  var out = parseBlocks(dedented.join('\n'));
+  // A block of its own sits straight against the item's text; loose prose needs
+  // the line break the blank line stood for.
+  return /^\s*</.test(out) ? out : '<br>' + out;
+}
+
 // Turn every run of list lines into nested <ul>/<ol> markup, leaving all other
 // lines untouched. A single blank line between items keeps the list going (the
-// old flat rules allowed that too); anything else ends the block.
+// old flat rules allowed that too), and so does a block indented under the item
+// we are inside; anything else ends the block.
 function parseLists(text) {
   var lines = text.split('\n');
   var out = [];
@@ -448,15 +502,32 @@ function parseLists(text) {
         items.push({
           indent: listIndentWidth(m[1]),
           ordered: /^[ \t]*\d/.test(lines[i]),
+          start: orderedStart(lines[i]),
           text: m[2],
+          cont: [],
         });
         i++;
         continue;
       }
-      // A lone blank line only survives if a list item follows it.
-      if (lines[i].trim() === '' && i + 1 < lines.length && LIST_ITEM_RE.test(lines[i + 1])) {
+      var last = items[items.length - 1];
+      // An indented block under the last item is part of that item.
+      if (isItemContinuation(lines[i], last)) {
+        last.cont.push(lines[i]);
         i++;
         continue;
+      }
+      // A lone blank line only survives if the list goes on after it: another
+      // item, or a block indented under the item we are inside.
+      if (lines[i].trim() === '' && i + 1 < lines.length) {
+        if (LIST_ITEM_RE.test(lines[i + 1])) {
+          i++;
+          continue;
+        }
+        if (isItemContinuation(lines[i + 1], last)) {
+          last.cont.push('');
+          i++;
+          continue;
+        }
       }
       break;
     }
@@ -472,7 +543,9 @@ function parseLists(text) {
 function buildList(items, start, indent) {
   var ordered = items[start].ordered;
   var tag = ordered ? 'ol' : 'ul';
-  var html = '<' + tag + '>';
+  // "6." opens at 6; only 1 is left implicit, as CommonMark has it.
+  var from = ordered && items[start].start !== 1 ? ' start="' + items[start].start + '"' : '';
+  var html = '<' + tag + from + '>';
   var i = start;
   while (i < items.length && items[i].indent >= indent) {
     if (items[i].ordered !== ordered) break;
@@ -483,7 +556,7 @@ function buildList(items, start, indent) {
       body += child.html;
       next = child.next;
     }
-    html += '<li>' + body + '</li>';
+    html += '<li>' + body + renderItemContinuation(items[i]) + '</li>';
     i = next;
   }
   html += '</' + tag + '>';
