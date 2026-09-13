@@ -204,7 +204,7 @@ test.describe('Unsend pending user message', () => {
     await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(1);
   });
 
-  test('a read bubble does not expose the ⋯ menu', async ({ page }) => {
+  test('a read bubble keeps the ⋯ menu but drops the queue actions', async ({ page }) => {
     const textarea = await setupPage(page, server.url);
     const sendBtn = page.locator('#btn-send');
 
@@ -220,8 +220,12 @@ test.describe('Unsend pending user message', () => {
     const read = page.locator('.bubble.user', { hasText: 'already seen' });
     await expect(read).toHaveCount(1);
     await expect(read).not.toHaveClass(/pending-agent/);
-    // The ⋯ control must NOT be present on read bubbles — the agent has
-    // already processed the text, so Delete/interrupt would be misleading.
-    await expect(read.locator('.bubble-pending-menu')).toHaveCount(0);
+    // The ⋯ control stays — Copy as markdown outlives the pending state —
+    // but Delete/interrupt would be misleading once the agent has the text.
+    await expect(read.locator('.bubble-pending-menu')).toHaveCount(1);
+    await read.locator('.bubble-pending-menu').click({ force: true });
+    await expect(page.locator('.bubble-menu button[data-action="copy"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu button[data-action="delete"]')).toHaveCount(0);
+    await expect(page.locator('.bubble-menu button[data-action="interrupt"]')).toHaveCount(0);
   });
 });

@@ -140,35 +140,46 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     await expect(page.locator('.bubble.agent .bubble-fork-btn')).toHaveCount(0);
   });
 
-  test('no fork_session: agent bubble keeps the plain play button, no menu', async ({ page }) => {
+  test('no fork_session: agent bubble still has a ⋯ menu, without the fork row', async ({ page }) => {
     await gotoRetry(page, server.url);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addAgentMessage('hello', null, null, Date.now(), 5, true));
-    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
-    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(1);
+    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(0);
+
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu [data-action="copy"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="speak"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="fork"]')).toHaveCount(0);
   });
 
-  test('agent bubble without a seq: no menu, falls back to plain play button', async ({ page }) => {
+  test('agent bubble without a seq: ⋯ menu without the fork row', async ({ page }) => {
     await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // Locally-generated agent notices (e.g. "Clearing context...") carry no seq.
     await page.evaluate(() => window.addAgentMessage('local note', null, null, Date.now()));
-    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
-    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(1);
+
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu [data-action="copy"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="fork"]')).toHaveCount(0);
   });
 
-  test('non-forkable progress bubble: no ⋯ menu, falls back to plain play button', async ({ page }) => {
+  test('non-forkable progress bubble: ⋯ menu without the fork row', async ({ page }) => {
     await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     // A send_progress bubble has a seq (server-stamped) but is NOT forkable —
-    // forking it would cut the conversation mid-turn. It must show the plain
-    // play button, never the ⋯ menu that offers "Fork from here".
+    // forking it would cut the conversation mid-turn. Its menu must never offer
+    // "Fork from here".
     await page.evaluate(() => window.addAgentMessage('working on it…', null, null, Date.now(), 6, false));
-    await expect(page.locator('.bubble.agent .bubble-tts-btn')).toHaveCount(1);
-    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(0);
+    await expect(page.locator('.bubble.agent .bubble-menu-btn')).toHaveCount(1);
+
+    await page.locator('.bubble.agent .bubble-menu-btn').click();
+    await expect(page.locator('.bubble-menu [data-action="copy"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="fork"]')).toHaveCount(0);
   });
 
   test('isForkableTool: only reply tools are forkable', async ({ page }) => {
@@ -191,17 +202,24 @@ test.describe('fork — overflow menu (Phase 3)', () => {
     });
   });
 
-  test('user bubble never shows a menu or play button', async ({ page }) => {
+  test('user bubble shows a ⋯ menu, never the agent-side controls', async ({ page }) => {
     await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
     await page.evaluate(() => window.addUserMessage('hi from user', null, null, Date.now()));
     await expect(page.locator('.bubble.user')).toHaveCount(1);
+    await expect(page.locator('.bubble.user .bubble-pending-menu')).toHaveCount(1);
     await expect(page.locator('.bubble.user .bubble-menu-btn')).toHaveCount(0);
     await expect(page.locator('.bubble.user .bubble-tts-btn')).toHaveCount(0);
+
+    // Not pending (no server id), so Copy is the only row on offer.
+    await page.locator('.bubble.user .bubble-pending-menu').click({ force: true });
+    await expect(page.locator('.bubble-menu [data-action="copy"]')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="delete"]')).toHaveCount(0);
+    await expect(page.locator('.bubble-menu [data-action="interrupt"]')).toHaveCount(0);
   });
 
-  test('clicking ⋯ opens a menu with speak + fork rows', async ({ page }) => {
+  test('clicking ⋯ opens a menu with copy + speak + fork rows', async ({ page }) => {
     await gotoRetry(page, server.url + '/?fork_session=' + encodeURIComponent('sess-1'));
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
 
@@ -210,6 +228,7 @@ test.describe('fork — overflow menu (Phase 3)', () => {
 
     await page.locator('.bubble.agent .bubble-menu-btn').click();
     await expect(page.locator('.bubble-menu')).toHaveCount(1);
+    await expect(page.locator('.bubble-menu [data-action="copy"]')).toHaveCount(1);
     await expect(page.locator('.bubble-menu [data-action="speak"]')).toHaveCount(1);
     await expect(page.locator('.bubble-menu [data-action="fork"]')).toHaveCount(1);
   });

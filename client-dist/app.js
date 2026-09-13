@@ -669,35 +669,21 @@ function renderFileAttachments(files) {
   return container;
 }
 
-function createTtsButton(bubble) {
-  var btn = document.createElement('button');
-  btn.className = 'bubble-tts-btn';
-  btn.title = 'Speak aloud';
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
-  btn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    if (btn.classList.contains('playing')) return;
-    btn.classList.add('playing');
-    // This speak is inside a user gesture — unlocks iOS TTS
-    speakText(bubble.innerText, function() {
-      btn.classList.remove('playing');
-      ttsUnlocked = true;
-    });
-  });
-  return btn;
-}
-
 // --- Per-bubble overflow ("⋯") menu ---
-// When forkSession is set, an agent bubble's actions (Speak aloud + Fork from
-// here) live behind a single "⋯" button instead of stacked round buttons. This
-// keeps short (1–2 line) bubbles tidy (a stacked button would float above them)
-// and turns the actions into large, clearly-labeled tap targets — the menu
-// selection itself is the deliberate gate, so fork needs no extra confirm.
+// Every bubble's actions live behind a single "⋯" button instead of stacked
+// round buttons. This keeps short (1–2 line) bubbles tidy (a stacked button
+// would float above them) and turns the actions into large, clearly-labeled tap
+// targets — the menu selection itself is the deliberate gate, so fork needs no
+// extra confirm. Copy as markdown is the item every bubble has; Speak aloud is
+// agent-only, Fork from here needs a forkable seq, and the queue actions
+// (Delete, Send as interrupting) are user-side and pending-only.
 
 var ICON_SPEAK = '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>';
 var ICON_FORK = '<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M6 8.4v3.6a3 3 0 0 0 3 3h6M18 8.4v3.6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
 var ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M9 6V4h6v2M7 6l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13M10 10v6M14 10v6"/></svg>';
 var ICON_INTERRUPT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="13,3 4,14 11,14 10,21 20,9 13,9 13,3"/></svg>';
+var ICON_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M6 15H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v1"/></svg>';
+var ICON_DOTS = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
 
 var openBubbleMenu = null; // the currently-open menu element (carries .ownerBtn)
 
@@ -716,34 +702,143 @@ function makeMenuItem(action, label, icon) {
   return b;
 }
 
-function openBubbleMenuFor(btn, bubble, seq) {
+// --- Clipboard ---
+// Two routes, because neither covers every place this UI runs:
+//
+//   1. navigator.clipboard.writeText — only exists in a secure context (https
+//      or localhost), and inside a cross-origin iframe it additionally needs
+//      the host page to grant `clipboard-write` via Permissions Policy. The
+//      swe-swe chat iframe does NOT grant it today, so writeText() rejects
+//      there with NotAllowedError.
+//   2. document.execCommand('copy') on an off-screen textarea — deprecated but
+//      universally implemented, works on plain http, and is NOT gated by
+//      Permissions Policy. It only needs the call to sit inside a user gesture,
+//      which a menu click is.
+//
+// We cannot usefully feature-detect (1): its *presence* says nothing about
+// whether the embedding page permits it, and only Chrome answers a
+// permissions query for it. So we always offer the action and let the attempt
+// decide — (1) first for correctness, (2) on any rejection.
+function copyTextToClipboard(text, onResult) {
+  function fallback() {
+    var ok = false;
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    // Off-screen but focusable — display:none or visibility:hidden would make
+    // the selection (and therefore the copy) a no-op.
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    try {
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      ok = document.execCommand('copy');
+    } catch (e) {
+      ok = false;
+    }
+    ta.remove();
+    if (onResult) onResult(ok);
+  }
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () {
+      if (onResult) onResult(true);
+    }, fallback);
+    return;
+  }
+  fallback();
+}
+
+// Brief centred confirmation — the menu closes on click, so the item itself
+// cannot report back.
+function showCopyToast(ok) {
+  var t = document.getElementById('copy-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'copy-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = ok ? 'Copied as markdown' : 'Copy failed';
+  t.classList.toggle('failed', !ok);
+  t.classList.add('show');
+  clearTimeout(t.hideTimer);
+  t.hideTimer = setTimeout(function () { t.classList.remove('show'); }, 1600);
+}
+
+// The raw markdown a bubble was built from, stashed on the element at render
+// time (the DOM only keeps the rendered HTML). Falls back to the visible text
+// for bubbles with no source — e.g. locally-generated notices.
+function bubbleMarkdown(bubble) {
+  return (bubble && bubble.dataset.md) || (bubble ? bubble.innerText : '');
+}
+
+// The rows a bubble offers, built fresh each time the menu opens: what is on
+// offer changes as the bubble does (a pending message loses Delete once the
+// agent has it). Rows are markup only — the single delegated listener below
+// dispatches on data-action, so a transcript of a thousand bubbles still costs
+// exactly one click listener rather than one per row.
+function bubbleMenuItems(bubble) {
+  var items = [];
+  items.push(makeMenuItem('copy', 'Copy as markdown', ICON_COPY));
+
+  if (bubble.classList.contains('agent')) {
+    items.push(makeMenuItem('speak', 'Speak aloud', ICON_SPEAK));
+    // data-seq is set only on bubbles that are actually forkable — forking is
+    // enabled, the bubble came from a reply tool, and it has a server seq.
+    if (bubble.dataset.seq) items.push(makeMenuItem('fork', 'Fork from here', ICON_FORK));
+  }
+
+  if (bubble.classList.contains('pending-agent')) {
+    // Delete is an unsend against the agent's queue. Once handed over the
+    // message has already left that queue, so the server would reject it (see
+    // the unsendFailed branch) — don't offer an action that cannot work.
+    if (!bubble.dataset.handedOver) items.push(makeMenuItem('delete', 'Delete', ICON_TRASH));
+    // Interrupting drains the entire queue, so only offer it on the bottom-most
+    // pending bubble. It carries no per-message text (file-only messages
+    // included), so there's no text-presence guard.
+    if (isLastPendingBubble(bubble)) {
+      items.push(makeMenuItem('interrupt', 'Send as interrupting', ICON_INTERRUPT));
+    }
+  }
+  return items;
+}
+
+function openBubbleMenuFor(btn) {
+  var bubble = btn.closest('.bubble');
+  if (!bubble) return;
+
   var menu = document.createElement('div');
   menu.className = 'bubble-menu';
   menu.ownerBtn = btn;
-  // Clicks inside the menu must not bubble to the document-level dismiss handler.
-  menu.addEventListener('click', function (e) { e.stopPropagation(); });
 
-  var speak = makeMenuItem('speak', 'Speak aloud', ICON_SPEAK);
-  speak.addEventListener('click', function () {
-    closeBubbleMenu();
-    // This click is a user gesture — unlocks iOS TTS, same as the play button.
-    ttsUnlocked = true;
-    speakText(bubble.innerText, function () {});
-  });
+  var items = bubbleMenuItems(bubble);
+  for (var i = 0; i < items.length; i++) menu.appendChild(items[i]);
 
-  var fork = makeMenuItem('fork', 'Fork from here', ICON_FORK);
-  fork.addEventListener('click', function () {
-    closeBubbleMenu();
-    // New tab keeps the live session alive; any server-side fork error lands in
-    // a throwaway tab (see task notes).
-    window.open(forkUrl(seq), '_blank');
-  });
-
-  menu.appendChild(speak);
-  menu.appendChild(fork);
   document.body.appendChild(menu);
   positionMenuBelow(menu, btn);
   openBubbleMenu = menu;
+}
+
+// Carry out a chosen row against the bubble its menu belongs to. Everything a
+// row needs is read off the bubble, so no state has to be captured per row.
+function runBubbleAction(action, bubble) {
+  if (action === 'copy') {
+    copyTextToClipboard(bubbleMarkdown(bubble), showCopyToast);
+  } else if (action === 'speak') {
+    // This click is a user gesture — it unlocks iOS TTS.
+    ttsUnlocked = true;
+    speakText(bubble.innerText, function () {});
+  } else if (action === 'fork') {
+    // New tab keeps the live session alive; any server-side fork error lands in
+    // a throwaway tab (see task notes).
+    window.open(forkUrl(bubble.dataset.seq), '_blank');
+  } else if (action === 'delete') {
+    sendUnsend(bubble.dataset.msgId);
+  } else if (action === 'interrupt') {
+    interruptWithPendingMessage();
+  }
 }
 
 // Position a floating menu fixed, just below its owner button, clamped to the
@@ -785,62 +880,23 @@ function isLastPendingBubble(bubble) {
   return pending.length > 0 && pending[pending.length - 1] === bubble;
 }
 
-function openPendingMenuFor(btn, messageId, text) {
-  var menu = document.createElement('div');
-  menu.className = 'bubble-menu';
-  menu.ownerBtn = btn;
-  menu.addEventListener('click', function (e) { e.stopPropagation(); });
-
-  var bubble = btn.closest('.bubble');
-
-  // Delete is an unsend against the agent's queue. Once handed over the message
-  // has already left that queue, so the server would reject it (see the
-  // unsendFailed branch) — don't offer an action that cannot work.
-  if (bubble && !bubble.dataset.handedOver) {
-    var del = makeMenuItem('delete', 'Delete', ICON_TRASH);
-    del.addEventListener('click', function () {
-      closeBubbleMenu();
-      sendUnsend(messageId);
-    });
-    menu.appendChild(del);
-  }
-
-  // Interrupting drains the entire queue, so only offer it on the bottom-most
-  // pending bubble. It carries no per-message text (file-only messages
-  // included), so there's no text-presence guard.
-  if (bubble && isLastPendingBubble(bubble)) {
-    var interrupt = makeMenuItem('interrupt', 'Send as interrupting', ICON_INTERRUPT);
-    interrupt.addEventListener('click', function () {
-      closeBubbleMenu();
-      interruptWithPendingMessage();
-    });
-    menu.appendChild(interrupt);
-  }
-
-  document.body.appendChild(menu);
-  positionMenuBelow(menu, btn);
-  openBubbleMenu = menu;
-}
-
-// The "⋯" button for a pending user bubble — same corner footprint as the old
-// × unsend control, hover-revealed, but opens the action menu.
-function createPendingMenuButton(bubble, messageId, text) {
+// The "⋯" overflow button. Markup only — no listener of its own; the
+// delegated handler below picks it up by class. Agent bubbles carry
+// .bubble-menu-btn in the right-hand gutter; user bubbles carry
+// .bubble-pending-menu, mirrored to the left where the old × unsend control
+// sat. Every bubble has one, because Copy as markdown is always on offer; what
+// the menu contains is decided at open time by bubbleMenuItems.
+function makeOverflowButton(className) {
   var btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'bubble-pending-menu';
+  btn.className = className;
   btn.title = 'More actions';
   btn.setAttribute('aria-haspopup', 'true');
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
-  btn.addEventListener('click', function (e) {
-    e.stopPropagation();
-    var wasOpenForThis = openBubbleMenu && openBubbleMenu.ownerBtn === btn;
-    closeBubbleMenu();
-    if (!wasOpenForThis) openPendingMenuFor(btn, messageId, text);
-  });
+  btn.innerHTML = ICON_DOTS;
   return btn;
 }
 
-// Remove a pending bubble's "⋯" button, closing its menu first if open.
+// Remove a user bubble's "⋯" button, closing its menu first if open.
 function removePendingMenuBtn(bubble) {
   var b = bubble.querySelector('.bubble-pending-menu');
   if (!b) return;
@@ -864,25 +920,37 @@ function interruptWithPendingMessage() {
   window.parent.postMessage({ type: 'agent-chat-interrupt', text: 'check_messages' }, '*');
 }
 
-// "⋯" overflow button. Toggles the bubble's action menu.
-function createMenuButton(bubble, seq) {
-  var btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'bubble-menu-btn';
-  btn.title = 'More actions';
-  btn.setAttribute('aria-haspopup', 'true');
-  btn.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>';
-  btn.addEventListener('click', function (e) {
-    e.stopPropagation();
+// ONE click listener for every bubble menu in the transcript. It handles all
+// three cases in priority order: a chosen row, a "⋯" button (toggle), or a
+// click anywhere else (dismiss). Nothing here scales with the number of
+// bubbles.
+document.addEventListener('click', function (e) {
+  var t = e.target;
+  if (!t || !t.closest) { closeBubbleMenu(); return; }
+
+  var row = t.closest('.bubble-menu button[data-action]');
+  if (row) {
+    var owner = openBubbleMenu && openBubbleMenu.ownerBtn;
+    var bubble = owner && owner.closest('.bubble');
+    closeBubbleMenu();
+    if (bubble) runBubbleAction(row.dataset.action, bubble);
+    return;
+  }
+  // A click on the menu's own chrome (padding, a gap between rows) should
+  // neither act nor dismiss.
+  if (t.closest('.bubble-menu')) return;
+
+  var btn = t.closest('.bubble-menu-btn, .bubble-pending-menu');
+  if (btn) {
     var wasOpenForThis = openBubbleMenu && openBubbleMenu.ownerBtn === btn;
     closeBubbleMenu();
-    if (!wasOpenForThis) openBubbleMenuFor(btn, bubble, seq);
-  });
-  return btn;
-}
+    if (!wasOpenForThis) openBubbleMenuFor(btn);
+    return;
+  }
 
-// Dismiss any open bubble menu on outside click or Escape.
-document.addEventListener('click', closeBubbleMenu);
+  closeBubbleMenu();
+});
+
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') closeBubbleMenu();
 });
@@ -935,6 +1003,9 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
 
   var div = document.createElement('div');
   div.className = 'bubble ' + role + (extraClass ? ' ' + extraClass : '');
+  // Keep the markdown source beside the rendered HTML — "Copy as markdown"
+  // hands back what was actually sent, not a reconstruction of the styling.
+  if (text) div.dataset.md = text;
   if (text) {
     // A reset command at the front of a user message is shown as a badge, not
     // as prose: it is what happened to the agent, not what was said to it.
@@ -951,18 +1022,15 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
   if (attachments) {
     div.appendChild(attachments);
   }
-  // Agent bubbles get actions on the right. When forking is enabled and this
-  // bubble is a forkable reply with a server event seq, the actions live behind
-  // a "⋯" menu (Speak aloud + Fork from here). Otherwise — standalone
-  // agent-chat, seq-less local notices, or non-forkable progress bubbles — keep
-  // the plain play button. The ⋯ menu therefore appears ONLY when a fork is
-  // actually on offer, so the menu never renders with just a lone Speak item.
+  // Every bubble carries a "⋯" menu, because Copy as markdown is always on
+  // offer. Agent bubbles put it on the right (Copy, Speak aloud, and Fork from
+  // here when forking is on and the bubble has a forkable server seq); user
+  // bubbles put it on the left, where the old × unsend control sat. The
+  // standalone play button is gone from the live UI — Speak aloud lives in the
+  // menu now — but the HTML export still renders one per agent bubble.
   if (role === 'agent') {
-    if (forkSession && seq && forkable) {
-      div.appendChild(createMenuButton(div, seq));
-    } else {
-      div.appendChild(createTtsButton(div));
-    }
+    if (forkSession && forkable && seq) div.dataset.seq = seq;
+    div.appendChild(makeOverflowButton('bubble-menu-btn'));
   }
   // User bubbles arriving with a server-assigned ID start "pending" — dimmed
   // and rendered after the loader so they're visually disconnected from the
@@ -973,9 +1041,10 @@ function addBubble(text, role, files, extraClass, timestamp, messageId, seq, for
     div.dataset.msgId = messageId;
     div.classList.add('pending-agent');
     div.title = "Agent hasn't seen this yet";
-    div.appendChild(createPendingMenuButton(div, messageId, text));
+    div.appendChild(makeOverflowButton('bubble-pending-menu'));
     appendAfterLoader(div);
   } else {
+    if (role === 'user') div.appendChild(makeOverflowButton('bubble-pending-menu'));
     appendMessage(div);
   }
   scrollToBottom(false);
@@ -1931,7 +2000,10 @@ function markMessagesRead(ids) {
     bubble.classList.remove('pending-agent');
     delete bubble.dataset.handedOver;
     bubble.removeAttribute('title');
-    removePendingMenuBtn(bubble);
+    // The "⋯" button stays — Copy as markdown outlives the pending state. Only
+    // close a menu currently open on it, so it rebuilds without Delete/Send as
+    // interrupting next time it opens.
+    if (openBubbleMenu && bubble.contains(openBubbleMenu.ownerBtn)) closeBubbleMenu();
     if (loader && bubble.compareDocumentPosition(loader) & Node.DOCUMENT_POSITION_PRECEDING) {
       // bubble currently sits after the loader; move it above.
       messages.insertBefore(bubble, loader);
@@ -2111,7 +2183,10 @@ function adoptUnsentBubble(displayText, data) {
   // Now it has an id, so it can be unsent, and it re-anchors below the loader
   // the same way a server-drawn bubble does.
   div.dataset.msgId = data.id;
-  div.appendChild(createPendingMenuButton(div, data.id, displayText));
+  // The optimistic bubble already drew one when it was added.
+  if (!div.querySelector('.bubble-pending-menu')) {
+    div.appendChild(makeOverflowButton('bubble-pending-menu'));
+  }
   appendAfterLoader(div);
   scrollToBottom(false);
   return true;
@@ -2693,6 +2768,12 @@ function escapeHTML(s) {
   var div = document.createElement('div');
   div.textContent = s;
   return div.innerHTML;
+}
+
+// escapeHTML is enough for text nodes; an attribute value also has to survive
+// the quotes that delimit it.
+function escapeAttr(s) {
+  return escapeHTML(s).replace(/"/g, '&quot;');
 }
 
 // Normalize an autocomplete result to {v, h} format.
@@ -3675,9 +3756,9 @@ function pulseLastTtsButton(onDone) {
   var bubbles = messages.querySelectorAll('.bubble.agent');
   if (bubbles.length === 0) { if (onDone) onDone(); return; }
   var last = bubbles[bubbles.length - 1];
-  // When forking is enabled the play action lives in the "⋯" menu, so fall back
-  // to pulsing that button to draw the user's tap (which unlocks iOS TTS).
-  var btn = last.querySelector('.bubble-tts-btn') || last.querySelector('.bubble-menu-btn');
+  // The play action lives in the "⋯" menu, so pulse that button to draw the
+  // user's tap (which unlocks iOS TTS).
+  var btn = last.querySelector('.bubble-menu-btn');
   if (!btn) { if (onDone) onDone(); return; }
   // Temporarily boost opacity to draw attention
   btn.style.opacity = '1';
@@ -4432,6 +4513,12 @@ function dehrefFileLinks(root) {
   }
 }
 
+// Strip the interactive controls a static export can't drive.
+function stripLiveControls(root) {
+  var btns = root.querySelectorAll('.bubble-menu-btn, .bubble-pending-menu');
+  for (var i = 0; i < btns.length; i++) btns[i].remove();
+}
+
 // Walk the live messages DOM and produce a self-contained HTML export. All
 // non-data: <img> srcs are fetched and inlined as base64. Returns the full
 // HTML string. opts.imageMode = "fullsize" (default) | "thumbnail".
@@ -4463,9 +4550,21 @@ async function buildExportHtml(opts) {
     // Clone before inlining so we don't bloat the live DOM with multi-MB
     // data URIs.
     var bubbleClone = b.cloneNode(true);
+    // The live "⋯" is bound to handlers that don't exist in a static export —
+    // drop it and emit a fresh one the export's own inline script drives
+    // (Copy as markdown everywhere, plus Speak aloud on agent bubbles).
+    stripLiveControls(bubbleClone);
+    bubbleClone.insertAdjacentHTML('beforeend',
+      '<button class="bubble-menu-btn" title="More actions">' + ICON_DOTS + '</button>');
     dehrefFileLinks(bubbleClone);
     await inlineImagesIn(bubbleClone, imageMode);
-    items.push('<div class="bubble ' + role + voice + '">' + bubbleClone.innerHTML + '</div>');
+    // The markdown source travels with the bubble so Copy hands back what was
+    // sent rather than the rendered text. innerHTML alone would drop the
+    // clone's dataset, so it is re-emitted as an attribute here.
+    var md = b.dataset.md || '';
+    items.push('<div class="bubble ' + role + voice + '"'
+      + (md ? ' data-md="' + escapeAttr(md) + '"' : '') + '>'
+      + bubbleClone.innerHTML + '</div>');
   }
 
   var html = '<!DOCTYPE html>\n<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Chat Export</title><style>'
@@ -4473,10 +4572,10 @@ async function buildExportHtml(opts) {
     + '.chat{max-width:800px;width:100%;display:flex;flex-direction:column;gap:0.4rem;}'
     + '.bubble{max-width:80%;padding:0.5rem 0.75rem;border-radius:12px;font-size:0.9rem;line-height:1.45;word-wrap:break-word;}'
     + '.bubble.agent{align-self:flex-start;background:#16213e;color:#e0e0e0;border-bottom-left-radius:3px;position:relative;}'
-    + '.bubble.user{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px;}'
+    + '.bubble.user{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px;position:relative;}'
     + '.bubble.user.voice{background:#7c3aed;}'
     + '.bubble.agent.voice{background:#1e293b;border-left:3px solid #7c3aed;}'
-    + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;}'
+    + '.bubble.system{align-self:center;color:#666;font-size:0.75rem;position:relative;}'
     + '.system-collapse-counter{align-self:center;color:#666;font-size:0.65rem;padding:0.15rem 0.5rem;opacity:0.5;}'
     + '.bubble code{background:rgba(255,255,255,0.1);padding:0.1rem 0.3rem;border-radius:3px;font-size:0.85em;}'
     + '.bubble pre{background:rgba(0,0,0,0.3);padding:0.5rem;border-radius:6px;overflow-x:auto;margin:0.3rem 0;}'
@@ -4496,11 +4595,20 @@ async function buildExportHtml(opts) {
     + '.hl-k{color:#c792ea;}.hl-s{color:#c3e88d;}.hl-c{color:#6a737d;font-style:italic;}.hl-n{color:#f78c6c;}'
     + '.frozen-replies{display:flex;flex-direction:row;justify-content:flex-end;gap:0.5rem;padding:0.2rem 0;flex-wrap:wrap;}'
     + '.frozen-replies .chip{padding:0.35rem 0.9rem;font-size:0.8rem;font-weight:500;border:1px solid rgba(255,255,255,0.15);border-radius:16px;background:transparent;color:#999;cursor:default;}'
-    + '.bubble-tts-btn{position:absolute;right:-32px;bottom:4px;width:24px;height:24px;border:1.5px solid #666;border-radius:50%;background:transparent;color:#666;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;opacity:0.4;transition:opacity 0.15s,color 0.15s,border-color 0.15s;}'
-    + '.bubble-tts-btn:hover{opacity:1;color:#999;border-color:#999;}'
-    + '.bubble-tts-btn.playing{opacity:1;color:#7c3aed;border-color:#7c3aed;animation:ttsPulse 1s ease-in-out infinite;}'
+    + '.bubble-menu-btn{position:absolute;right:-32px;bottom:4px;width:24px;height:24px;border:1.5px solid #666;border-radius:50%;background:transparent;color:#666;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;opacity:0.4;transition:opacity 0.15s,color 0.15s,border-color 0.15s;}'
+    + '.bubble.user .bubble-menu-btn{right:auto;left:-32px;}'
+    + '.bubble-menu-btn:hover{opacity:1;color:#999;border-color:#999;}'
+    + '.bubble-menu-btn.playing{opacity:1;color:#7c3aed;border-color:#7c3aed;animation:ttsPulse 1s ease-in-out infinite;}'
     + '@keyframes ttsPulse{0%,100%{opacity:0.7;}50%{opacity:1;}}'
-    + '.bubble-tts-btn svg{width:14px;height:14px;fill:currentColor;}'
+    + '.bubble-menu-btn svg{width:14px;height:14px;fill:currentColor;}'
+    + '.bubble-menu{position:fixed;min-width:190px;background:#16213e;border:1px solid rgba(255,255,255,0.12);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;z-index:1000;}'
+    + '.bubble-menu button{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:0 16px;background:transparent;border:none;color:#e0e0e0;font-size:0.9rem;cursor:pointer;text-align:left;}'
+    + '.bubble-menu button:hover{background:rgba(255,255,255,0.08);}'
+    + '.bubble-menu-ic{display:inline-flex;width:18px;justify-content:center;opacity:0.85;}'
+    + '.bubble-menu-ic svg{width:15px;height:15px;}'
+    + '#copy-toast{position:fixed;left:50%;bottom:32px;transform:translate(-50%,8px);padding:0.45rem 0.9rem;border-radius:16px;background:#16213e;border:1px solid rgba(255,255,255,0.12);color:#e0e0e0;font-size:0.8rem;box-shadow:0 8px 24px rgba(0,0,0,0.5);opacity:0;pointer-events:none;transition:opacity 0.15s,transform 0.15s;z-index:1100;}'
+    + '#copy-toast.show{opacity:1;transform:translate(-50%,0);}'
+    + '#copy-toast.failed{color:#fca5a5;border-color:#fca5a5;}'
     + '</style></head><body><div class="chat">'
     + items.join('\n')
     + '</div><script>'
@@ -4514,15 +4622,49 @@ async function buildExportHtml(opts) {
     + 'function next(i){if(d||i>=chunks.length){fin();return;}var u=new SpeechSynthesisUtterance(chunks[i]);u.rate=1;u.onend=function(){next(i+1);};u.onerror=function(){fin();};speechSynthesis.speak(u);}'
     + 'setTimeout(function(){next(0);},100);'
     + '}'
-    + 'var btns=document.querySelectorAll(".bubble-tts-btn");'
-    + 'for(var i=0;i<btns.length;i++){(function(btn){'
-    + 'btn.addEventListener("click",function(e){'
-    + 'e.stopPropagation();'
-    + 'if(btn.classList.contains("playing"))return;'
-    + 'btn.classList.add("playing");'
-    + 'speak(btn.parentElement.innerText,function(){btn.classList.remove("playing");});'
-    + '});'
-    + '})(btns[i]);}'
+    // Every bubble's "⋯" menu, driven by ONE delegated listener rather than a
+    // handler per bubble. Copy as markdown hands back the source stashed in
+    // data-md; Speak aloud (agent bubbles only) keeps the pulsing "playing"
+    // state the standalone play button used to carry.
+    + 'var ICON_COPY=' + JSON.stringify(ICON_COPY) + ',ICON_SPEAK=' + JSON.stringify(ICON_SPEAK) + ';'
+    + 'var openMenu=null;'
+    + 'function closeMenu(){if(openMenu){openMenu.remove();openMenu=null;}}'
+    + 'function mkRow(a,l,ic){var b=document.createElement("button");b.type="button";b.setAttribute("data-action",a);'
+    + "b.innerHTML='<span class=\"bubble-menu-ic\">'+ic+'</span><span>'+l+'</span>';return b;}"
+    + 'function openMenuFor(btn){var bubble=btn.closest(".bubble");if(!bubble)return;'
+    + 'var m=document.createElement("div");m.className="bubble-menu";m.ownerBtn=btn;'
+    + 'm.appendChild(mkRow("copy","Copy as markdown",ICON_COPY));'
+    + 'if(bubble.classList.contains("agent"))m.appendChild(mkRow("speak","Speak aloud",ICON_SPEAK));'
+    + 'document.body.appendChild(m);'
+    + 'var r=btn.getBoundingClientRect(),mr=m.getBoundingClientRect(),top=r.bottom+6,left=r.left;'
+    + 'if(left+mr.width>window.innerWidth-8)left=window.innerWidth-8-mr.width;if(left<8)left=8;'
+    + 'if(top+mr.height>window.innerHeight-8)top=r.top-6-mr.height;if(top<8)top=8;'
+    + 'm.style.top=top+"px";m.style.left=left+"px";openMenu=m;}'
+    // Same two clipboard routes as the live UI: the modern API first, an
+    // off-screen textarea + execCommand when a host page's Permissions Policy
+    // or a plain-http origin rules it out.
+    + 'function copyText(t,cb){function fb(){var ok=false;var ta=document.createElement("textarea");ta.value=t;'
+    + 'ta.setAttribute("readonly","");ta.style.position="fixed";ta.style.top="-1000px";ta.style.opacity="0";'
+    + 'document.body.appendChild(ta);try{ta.select();ta.setSelectionRange(0,ta.value.length);ok=document.execCommand("copy");}'
+    + 'catch(e){ok=false;}ta.remove();cb(ok);}'
+    + 'if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(function(){cb(true);},fb);return;}fb();}'
+    + 'function toast(ok){var t=document.getElementById("copy-toast");'
+    + 'if(!t){t=document.createElement("div");t.id="copy-toast";document.body.appendChild(t);}'
+    + 't.textContent=ok?"Copied as markdown":"Copy failed";t.classList.toggle("failed",!ok);t.classList.add("show");'
+    + 'clearTimeout(t.hideTimer);t.hideTimer=setTimeout(function(){t.classList.remove("show");},1600);}'
+    + 'document.addEventListener("click",function(e){var t=e.target;if(!t||!t.closest){closeMenu();return;}'
+    + 'var row=t.closest(".bubble-menu button[data-action]");'
+    + 'if(row){var owner=openMenu&&openMenu.ownerBtn,bubble=owner&&owner.closest(".bubble");closeMenu();if(!bubble)return;'
+    + 'var a=row.getAttribute("data-action");'
+    + 'if(a==="copy"){copyText(bubble.dataset.md||bubble.innerText,toast);}'
+    + 'else if(a==="speak"){if(owner.classList.contains("playing"))return;owner.classList.add("playing");'
+    + 'speak(bubble.innerText,function(){owner.classList.remove("playing");});}'
+    + 'return;}'
+    + 'if(t.closest(".bubble-menu"))return;'
+    + 'var btn=t.closest(".bubble-menu-btn");'
+    + 'if(btn){var was=openMenu&&openMenu.ownerBtn===btn;closeMenu();if(!was)openMenuFor(btn);return;}'
+    + 'closeMenu();});'
+    + 'document.addEventListener("keydown",function(e){if(e.key==="Escape")closeMenu();});'
     // Click any image thumbnail to view it full-size in an in-page lightbox
     // overlay. We can't use `window.open(dataURI)` here: modern browsers block
     // top-frame navigation to data: URLs as an XSS/origin-spoof mitigation, so

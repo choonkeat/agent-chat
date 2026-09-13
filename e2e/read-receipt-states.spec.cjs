@@ -147,10 +147,11 @@ test.describe('Unread until proven read', () => {
 
     const bubble = page.locator('.bubble.user', { hasText: 'receipt states' });
 
-    // Queued: dim, below the loader, both menu rows on offer.
+    // Queued: dim, below the loader, both queue rows on offer (under the
+    // Copy row every bubble carries).
     await expect(bubble).toHaveClass(/pending-agent/);
     await expect(bubble).toHaveAttribute('title', /agent/i);
-    expect(await menuActionsFor(page, bubble)).toEqual(['delete', 'interrupt']);
+    expect(await menuActionsFor(page, bubble)).toEqual(['copy', 'delete', 'interrupt']);
     const belowLoader = await page.evaluate(() => {
       const loader = document.getElementById('loading-bubble');
       const bubbles = Array.from(document.querySelectorAll('.bubble.user'));
@@ -168,7 +169,10 @@ test.describe('Unread until proven read', () => {
 
     await expect(bubble).not.toHaveClass(/pending-agent/);
     await expect(bubble).not.toHaveAttribute('title', /.*/);
-    await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(0);
+    // The "⋯" itself stays — every bubble offers Copy as markdown — but the
+    // queue rows are gone now that the message has been read.
+    await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(1);
+    expect(await menuActionsFor(page, bubble)).toEqual(['copy']);
     await page.screenshot({ path: 'test-results/screenshots/22-receipt-read.png', fullPage: true });
   });
 
@@ -196,7 +200,7 @@ test.describe('Unread until proven read', () => {
     await expect(bubble).toHaveClass(/pending-agent/);
     await expect(bubble).toHaveAttribute('data-handed-over', '1');
     await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(1);
-    expect(await menuActionsFor(page, bubble)).toEqual(['interrupt']);
+    expect(await menuActionsFor(page, bubble)).toEqual(['copy', 'interrupt']);
     const stillBelow = await page.evaluate(() => {
       const loader = document.getElementById('loading-bubble');
       const bubbles = Array.from(document.querySelectorAll('.bubble.user'));
@@ -212,7 +216,8 @@ test.describe('Unread until proven read', () => {
     await page.waitForTimeout(SETTLE_MS);
 
     await expect(bubble).not.toHaveClass(/pending-agent/);
-    await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(0);
+    await expect(bubble.locator('.bubble-pending-menu')).toHaveCount(1);
+    expect(await menuActionsFor(page, bubble)).toEqual(['copy']);
     await parked;
   });
 
@@ -244,7 +249,7 @@ test.describe('Unread until proven read', () => {
     await expect(replayed).toHaveClass(/pending-agent/);
     await expect(replayed).toHaveAttribute('data-handed-over', '1');
     await expect(replayed.locator('.bubble-pending-menu')).toHaveCount(1);
-    expect(await menuActionsFor(page, replayed)).toEqual(['interrupt']);
+    expect(await menuActionsFor(page, replayed)).toEqual(['copy', 'interrupt']);
     await page.screenshot({ path: 'test-results/screenshots/23-receipt-unread-after-reload.png', fullPage: true });
   });
 });

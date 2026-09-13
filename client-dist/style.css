@@ -448,6 +448,8 @@ body {
   background: #2563eb;
   color: #fff;
   border-bottom-right-radius: 3px;
+  /* Anchors the "⋯" button, which every user bubble carries. */
+  position: relative;
 }
 
 /* The reset command a message began with, worn as a badge above the words. */
@@ -537,47 +539,10 @@ body {
   opacity: 0.6;
 }
 
-.bubble-tts-btn {
-  position: absolute;
-  right: -32px;
-  bottom: 4px;
-  width: 24px;
-  height: 24px;
-  border: 1.5px solid var(--text-muted);
-  border-radius: 50%;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  opacity: 0.4;
-  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
-}
-.bubble-tts-btn:hover {
-  opacity: 1;
-  color: var(--text-secondary);
-  border-color: var(--text-secondary);
-}
-.bubble-tts-btn.playing {
-  opacity: 1;
-  color: #7c3aed;
-  border-color: #7c3aed;
-  animation: ttsPulse 1s ease-in-out infinite;
-}
-@keyframes ttsPulse {
-  0%, 100% { opacity: 0.7; }
-  50% { opacity: 1; }
-}
-.bubble-tts-btn svg {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-}
-
-/* Overflow ("⋯") menu button — same footprint/position as the play button.
-   Opens a menu of bubble actions (Speak aloud, Fork from here). */
+/* Overflow ("⋯") menu button on an agent bubble. Opens that bubble's action
+   menu (Copy as markdown, Speak aloud, and Fork from here when the bubble is
+   forkable). Every agent bubble has one — there is no standalone play button
+   in the live UI; the HTML export renders its own. */
 .bubble-menu-btn {
   position: absolute;
   right: -32px;
@@ -855,7 +820,6 @@ body {
 .bubble.user.pending-agent {
   opacity: 0.55;
   cursor: help;
-  position: relative;
 }
 
 /* The "⋯" actions control for a pending user bubble. Visually identical to the
@@ -863,9 +827,10 @@ body {
    colour and hover reveal — differing only in alignment: it mirrors to the
    bubble's left edge because user bubbles are right-aligned. Faintly visible at
    rest so it stays reachable on touch devices (no hover), fully opaque on
-   hover/focus. Only ever exists on .pending-agent bubbles — we don't render it
-   once the agent has proven receipt. Opens a menu (Delete + Send as
-   interrupting; Delete drops off once the message has been handed over). */
+   hover/focus. Every user bubble has one, read or not: it opens a menu that
+   always offers Copy as markdown, plus the queue actions while the message is
+   still pending (Delete + Send as interrupting; Delete drops off once the
+   message has been handed over). */
 .bubble-pending-menu {
   position: absolute;
   left: -32px;
@@ -885,7 +850,7 @@ body {
   transition: opacity 0.15s, color 0.15s, border-color 0.15s;
 }
 
-.bubble.user.pending-agent:hover .bubble-pending-menu,
+.bubble.user:hover .bubble-pending-menu,
 .bubble-pending-menu:hover,
 .bubble-pending-menu:focus {
   opacity: 1;
@@ -1408,4 +1373,33 @@ body {
 
 [data-theme="light"] .file-attachment-link:hover {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* Brief confirmation after a "Copy as markdown". The menu closes on click, so
+   the item itself can't report back — this is the only feedback that the text
+   reached the clipboard, and the only warning when it didn't. */
+#copy-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translate(-50%, 8px);
+  padding: 0.45rem 0.9rem;
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 1100;
+}
+#copy-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+#copy-toast.failed {
+  color: #fca5a5;
+  border-color: #fca5a5;
 }
