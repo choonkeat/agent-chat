@@ -84,13 +84,48 @@ func voiceSuffix(msgs []UserMessage) string {
 	return execTemplate("reply-instructions", replyInstructionsData{IsVoice: isVoiceMessage(msgs)})
 }
 
-// executeNotEchoGuidance is appended after every user message delivered to the
-// agent (via send_message return, send_verbal_reply return, check_messages, or
-// barge-in append) so the framing is uniform regardless of delivery path. The
-// wording was added after observing the agent reply "OK." to substantive user
-// requests; uniform delivery prevents the bypass where a path-specific wrapper
-// is missing.
+// voiceSuffixShort is the one-line restatement of voiceSuffix used on repeat
+// deliveries. See deliveryGuidance.
+func voiceSuffixShort(msgs []UserMessage) string {
+	return execTemplate("reply-instructions-short", replyInstructionsData{IsVoice: isVoiceMessage(msgs)})
+}
+
+// guidanceDeliveries counts how many times the reply guidance has been
+// appended to a user message in this process. Measured over 89 real sessions,
+// two thirds of everything agent-chat returned to the agent was this block
+// repeated verbatim, so only every fullGuidanceEvery-th delivery carries the
+// full text; the rest carry the one-line restatement. It refreshes rather than
+// firing once because the agent's context can be compacted mid-session, which
+// would silently drop a single early copy.
+var guidanceDeliveries atomic.Int64
+
+const fullGuidanceEvery = 10
+
+// deliveryGuidance is the block appended after every user message handed to the
+// agent (via send_message / send_verbal_reply return, check_messages, or a
+// barge-in append) so the framing is uniform regardless of delivery path.
+func deliveryGuidance(msgs []UserMessage) string {
+	if guidanceDeliveries.Add(1)%fullGuidanceEvery == 1 {
+		return executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	}
+	return executeNotEchoShort + "\n\n" + voiceSuffixShort(msgs)
+}
+
+// executeNotEchoGuidance is the full form carried by every fullGuidanceEvery-th
+// delivery (see deliveryGuidance). The wording was added after observing the
+// agent reply "OK." to substantive user requests; uniform delivery prevents the
+// bypass where a path-specific wrapper is missing.
 const executeNotEchoGuidance = "This IS the user's message — execute the request, do not echo it back as an acknowledgment. When the requested work is done, call send_message (or send_verbal_reply in voice mode) to deliver the result — never end your turn without sending a user-visible message."
+
+// executeNotEchoShort is the repeat-delivery form of executeNotEchoGuidance.
+const executeNotEchoShort = "This IS the user's message — execute it, do not echo it back."
+
+// progressAck is send_progress's return value when no barge-in is riding along.
+// It is deliberately two characters: the tool fired ~900 times across 89 real
+// sessions and the long-form nudge it used to carry ("use send_message to
+// present final results…") is already in send_message's own tool description
+// and in the reply guidance, so every repetition was dead weight in context.
+const progressAck = "ok"
 
 // emptyQueueGuidance is returned from check_messages when the queue is empty.
 // The literal `{"queue":"empty"}` shape is kept so any programmatic check still
@@ -114,11 +149,11 @@ func composeCheckMessagesResult(limbo, fresh []UserMessage) string {
 	case len(fresh) == 0 && len(limbo) == 0:
 		return emptyQueueGuidance
 	case len(fresh) == 0:
-		return redelivery + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(limbo)
+		return redelivery + "\n\n" + deliveryGuidance(limbo)
 	case len(limbo) == 0:
-		return "User said: " + FormatMessages(fresh) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(fresh)
+		return "User said: " + FormatMessages(fresh) + "\n\n" + deliveryGuidance(fresh)
 	default:
-		return "User said: " + FormatMessages(fresh) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(fresh) + "\n\n" + redelivery
+		return "User said: " + FormatMessages(fresh) + "\n\n" + deliveryGuidance(fresh) + "\n\n" + redelivery
 	}
 }
 
@@ -191,14 +226,14 @@ func appendBargeIn(bus *EventBus, text string) string {
 		return text
 	}
 	bus.SetLastVoice(isVoiceMessage(msgs))
-	return text + "\n\n---BARGE-IN---\nUser said: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	return text + "\n\n---BARGE-IN---\nUser said: " + FormatMessages(msgs) + "\n\n" + deliveryGuidance(msgs)
 }
 
 // userRespondedText is what every blocking tool hands back when the user
 // replies: the formatted messages, the do-not-echo guidance, and the reply
 // instructions in text or voice form.
 func userRespondedText(msgs []UserMessage) string {
-	return "User responded: " + FormatMessages(msgs) + "\n\n" + executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+	return "User responded: " + FormatMessages(msgs) + "\n\n" + deliveryGuidance(msgs)
 }
 
 // waitForUserReply parks on the message queue until the user says something,
@@ -557,7 +592,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 		files := resolveImageFiles(params.ImageURLs)
 		bus.Publish(Event{Type: "agentMessage", Text: params.Text, Files: files, AgentToolSeq: toolSeq, AgentToolName: "send_progress"})
 
-		ack := appendBargeIn(bus, "Progress sent. If you've finished your task, use send_message to present final results and wait for the user's next request.")
+		ack := appendBargeIn(bus, progressAck)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: ack},
@@ -742,8 +777,8 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 	})
 
 	type ExportChatMDParams struct {
-		Title      string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
-		TargetDir  string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
+		Title     string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
+		TargetDir string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{

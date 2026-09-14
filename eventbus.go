@@ -48,10 +48,10 @@ type UserMessage struct {
 // call has proven actually reached the agent; only then does the browser render
 // the bubble as read.
 type Event struct {
-	Type         string    `json:"type"`                   // "agentMessage", "userMessage", "userMessagesConsumed", "userMessagesRead"
-	Seq          int64     `json:"seq"`                    // monotonic sequence number
-	ID           string    `json:"id,omitempty"`           // userMessage: the message's unique ID
-	IDs          []string  `json:"ids,omitempty"`          // userMessagesConsumed / userMessagesRead: which IDs
+	Type         string    `json:"type"`          // "agentMessage", "userMessage", "userMessagesConsumed", "userMessagesRead"
+	Seq          int64     `json:"seq"`           // monotonic sequence number
+	ID           string    `json:"id,omitempty"`  // userMessage: the message's unique ID
+	IDs          []string  `json:"ids,omitempty"` // userMessagesConsumed / userMessagesRead: which IDs
 	Text         string    `json:"text,omitempty"`
 	QuickReplies []string  `json:"quick_replies,omitempty"`
 	Files        []FileRef `json:"files,omitempty"`
@@ -96,20 +96,20 @@ type ExportHandle struct {
 // EventBus fans out events to WebSocket subscribers, carries the user-message
 // queue, and maintains an in-memory event log for browser reconnect.
 type EventBus struct {
-	mu              sync.RWMutex
-	subscribers     map[chan Event]struct{}
-	eventLog        []Event  // session event log for reconnect replay
-	nextSeq         int64    // next sequence number (guarded by mu)
+	mu               sync.RWMutex
+	subscribers      map[chan Event]struct{}
+	eventLog         []Event  // session event log for reconnect replay
+	nextSeq          int64    // next sequence number (guarded by mu)
 	lastQuickReplies []string // last quick_replies sent to browser (nil = agent working)
 
-	exportMu        sync.Mutex
-	pendingExports  map[string]chan ExportResult // export token -> channel
+	exportMu       sync.Mutex
+	pendingExports map[string]chan ExportResult // export token -> channel
 
 	transientMu   sync.RWMutex
 	transientSubs map[chan any]struct{} // per-connection writeCh sinks for non-logged broadcasts
 
 	msgQueue  chan UserMessage // queued user messages from browser
-	lastVoice bool            // whether the last consumed user message was voice
+	lastVoice bool             // whether the last consumed user message was voice
 
 	// limbo retains the last batch of user messages handed to the agent whose
 	// receipt no later MCP call has confirmed. A blocking send_message can be
@@ -680,16 +680,45 @@ func applyMessageTemplate(template, text string) string {
 	return template + "\n\n" + text
 }
 
+// sharedPreamble returns the style template to hoist above a whole batch, or ""
+// to leave each message to applyMessageTemplate. A batch only qualifies when it
+// holds more than one message and every one carries the same preamble-style
+// template — a placeholder template embeds its message and so cannot be lifted
+// out, and a single message renders identically either way, so it takes the
+// per-message path and keeps its voice-decode note in front.
+//
+// Without this the preamble is pasted once per message in the batch. Across 89
+// real sessions the two paragraphs of one user's style template accounted for
+// 73% of everything that looked like their own words.
+func sharedPreamble(msgs []UserMessage) string {
+	if len(msgs) < 2 {
+		return ""
+	}
+	first := strings.TrimSpace(msgs[0].Template)
+	if first == "" || strings.Contains(first, messageTemplatePlaceholder) {
+		return ""
+	}
+	for _, m := range msgs[1:] {
+		if strings.TrimSpace(m.Template) != first {
+			return ""
+		}
+	}
+	return first
+}
+
 // FormatMessages joins user messages into a single string with file attachment info.
 func FormatMessages(msgs []UserMessage) string {
-	data := formatMessagesData{}
+	preamble := sharedPreamble(msgs)
+	data := formatMessagesData{Preamble: preamble}
 	for _, m := range msgs {
 		isVoice := strings.HasPrefix(m.Text, "\U0001f3a4 ")
 		text := m.Text
 		if isVoice {
 			text = strings.TrimPrefix(text, "\U0001f3a4 ")
 		}
-		text = applyMessageTemplate(m.Template, text)
+		if preamble == "" {
+			text = applyMessageTemplate(m.Template, text)
+		}
 		data.Messages = append(data.Messages, messageData{Text: text, IsVoice: isVoice})
 		for _, f := range m.Files {
 			mime := f.Type

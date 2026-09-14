@@ -168,6 +168,65 @@ func TestFormatMessagesMultiple(t *testing.T) {
 	}
 }
 
+// A style preamble used to be pasted onto every message in a batch. Measured
+// over 89 real sessions, one user's two-paragraph style template accounted for
+// 73% of everything that looked like their own words, so a batch that shares one
+// preamble now carries it once.
+func TestFormatMessagesSharedPreambleHoistedOnce(t *testing.T) {
+	pre := "Reply for a reader with ADHD: lead with the next action."
+	msgs := []UserMessage{
+		{Text: "first message", Template: pre},
+		{Text: "second message", Template: pre},
+	}
+	got := FormatMessages(msgs)
+	want := pre + "\n\nfirst message\n\nsecond message"
+	if got != want {
+		t.Errorf("shared preamble:\ngot:  %q\nwant: %q", got, want)
+	}
+	if n := strings.Count(got, pre); n != 1 {
+		t.Errorf("preamble appears %d times, want 1", n)
+	}
+}
+
+// Only a batch that agrees on one preamble can hoist it; a mid-batch style
+// change must keep each message with its own.
+func TestFormatMessagesMixedTemplatesStayPerMessage(t *testing.T) {
+	msgs := []UserMessage{
+		{Text: "first", Template: "Be direct."},
+		{Text: "second", Template: "Be verbose."},
+	}
+	got := FormatMessages(msgs)
+	want := "Be direct.\n\nfirst\n\nBe verbose.\n\nsecond"
+	if got != want {
+		t.Errorf("mixed templates:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// A placeholder template embeds its message, so it cannot be lifted out.
+func TestFormatMessagesPlaceholderTemplateNotHoisted(t *testing.T) {
+	tpl := "Reply concisely.\n\n{{message}}"
+	msgs := []UserMessage{
+		{Text: "first", Template: tpl},
+		{Text: "second", Template: tpl},
+	}
+	got := FormatMessages(msgs)
+	want := "Reply concisely.\n\nfirst\n\nReply concisely.\n\nsecond"
+	if got != want {
+		t.Errorf("placeholder template:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// Hoisting would move the voice-decode note behind the preamble, so a lone
+// message keeps the per-message path and renders exactly as before.
+func TestFormatMessagesSingleMessageUnaffectedByHoisting(t *testing.T) {
+	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red", Template: "Be brief."}}
+	got := FormatMessages(msgs)
+	want := "Decoded user's speech to text (may be inaccurate): Be brief.\n\nturn the box red"
+	if got != want {
+		t.Errorf("single voice message with preamble:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
 func TestVoiceSuffixTextMessage(t *testing.T) {
 	msgs := []UserMessage{{Text: "hello"}}
 	got := voiceSuffix(msgs)
@@ -246,7 +305,42 @@ func TestIsVoiceMessage(t *testing.T) {
 	}
 }
 
+// resetGuidance pins guidanceDeliveries so the next delivery carries the FULL
+// guidance. deliveryGuidance rotates (full every fullGuidanceEvery-th call) to
+// keep repeat deliveries out of the agent's context, so any test asserting the
+// full text must start from a known count.
+func resetGuidance(t *testing.T) {
+	t.Helper()
+	guidanceDeliveries.Store(0)
+}
+
+func TestDeliveryGuidanceRotates(t *testing.T) {
+	resetGuidance(t)
+	full := deliveryGuidance([]UserMessage{{Text: "hi"}})
+	if !strings.Contains(full, executeNotEchoGuidance) || !strings.Contains(full, replyInstructionsBody) {
+		t.Fatalf("first delivery must carry the full guidance:\n%s", full)
+	}
+	short := deliveryGuidance([]UserMessage{{Text: "hi"}})
+	if !strings.Contains(short, executeNotEchoShort) || !strings.Contains(short, "Reply ONLY via `send_message`") {
+		t.Fatalf("second delivery must carry the short guidance:\n%s", short)
+	}
+	if strings.Contains(short, replyInstructionsBody) {
+		t.Errorf("second delivery must not repeat the full reply instructions:\n%s", short)
+	}
+	if len(short) >= len(full)/4 {
+		t.Errorf("short guidance %d chars is not meaningfully smaller than full %d", len(short), len(full))
+	}
+	// The full form refreshes so a compacted context cannot lose it for good.
+	for i := 2; i < fullGuidanceEvery; i++ {
+		deliveryGuidance([]UserMessage{{Text: "hi"}})
+	}
+	if again := deliveryGuidance([]UserMessage{{Text: "hi"}}); !strings.Contains(again, replyInstructionsBody) {
+		t.Errorf("delivery %d must refresh the full guidance:\n%s", fullGuidanceEvery+1, again)
+	}
+}
+
 func TestComposedResultSendMessage(t *testing.T) {
+	resetGuidance(t)
 	msgs := []UserMessage{{Text: "looks good"}}
 	got := userRespondedText(msgs)
 	want := "User responded: looks good\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
@@ -256,6 +350,7 @@ func TestComposedResultSendMessage(t *testing.T) {
 }
 
 func TestComposedResultVoiceMessage(t *testing.T) {
+	resetGuidance(t)
 	msgs := []UserMessage{{Text: "\U0001f3a4 make it blue"}}
 	got := userRespondedText(msgs)
 	want := "User responded: Decoded user's speech to text (may be inaccurate): make it blue\n\n" +
@@ -380,6 +475,7 @@ func TestAppendBargeInEmptyQueueNoOp(t *testing.T) {
 }
 
 func TestAppendBargeInPicksUpQueuedMessage(t *testing.T) {
+	resetGuidance(t)
 	bus := NewEventBus()
 	bus.PushMessage("skip e2e, just unit tests", nil)
 	got := appendBargeIn(bus, "Progress sent.")
@@ -785,7 +881,10 @@ func TestRenderChatMarkdownBlockquoteEscape(t *testing.T) {
 }
 
 func TestFormatElapsed(t *testing.T) {
-	cases := []struct{ ms int64; want string }{
+	cases := []struct {
+		ms   int64
+		want string
+	}{
 		{500, "500ms"},
 		{1500, "1.5s"},
 		{37900, "37.9s"},
@@ -809,6 +908,7 @@ func TestComposeCheckMessagesResultEmpty(t *testing.T) {
 }
 
 func TestComposeCheckMessagesResultFreshOnly(t *testing.T) {
+	resetGuidance(t)
 	fresh := []UserMessage{{Text: "update please"}}
 	got := composeCheckMessagesResult(nil, fresh)
 	want := "User said: update please\n\n" + executeNotEchoGuidance + "\n\n" + replyInstructionsBody
@@ -818,6 +918,7 @@ func TestComposeCheckMessagesResultFreshOnly(t *testing.T) {
 }
 
 func TestComposeCheckMessagesResultLimboOnly(t *testing.T) {
+	resetGuidance(t)
 	limbo := []UserMessage{{Text: "did you get my reply"}}
 	got := composeCheckMessagesResult(limbo, nil)
 	if !strings.Contains(got, "---REDELIVERY---") {
@@ -835,6 +936,7 @@ func TestComposeCheckMessagesResultLimboOnly(t *testing.T) {
 }
 
 func TestComposeCheckMessagesResultFreshAndLimbo(t *testing.T) {
+	resetGuidance(t)
 	limbo := []UserMessage{{Text: "possibly lost"}}
 	fresh := []UserMessage{{Text: "new instruction"}}
 	got := composeCheckMessagesResult(limbo, fresh)

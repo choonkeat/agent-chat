@@ -14,6 +14,9 @@ var agentReplyTmpl = template.Must(template.New("agent-reply").Parse(agentReplyT
 
 // formatMessagesData is the data passed to the "format-messages" template.
 type formatMessagesData struct {
+	// Preamble is the style template hoisted above a multi-message batch that
+	// shares one; empty when each message carries its own (see sharedPreamble).
+	Preamble string
 	Messages []messageData
 	Files    []fileData
 }
