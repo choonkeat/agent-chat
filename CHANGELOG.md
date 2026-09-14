@@ -2,6 +2,21 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.13.1] — 2026-09-18
+
+### Changes
+- **Standing guidance is no longer repeated in every tool result.** Measured
+  across 89 real sessions, two thirds of everything agent-chat handed back to
+  the agent was the same instructions pasted in again. Three repeats are gone:
+  the full reply guidance now rides on every 10th delivery of user messages,
+  with a one-line reminder in between (it refreshes rather than firing once, so
+  a compacted context still gets it back); `send_progress` answers `ok` instead
+  of a nudge its sibling tool's description already carries; and when several
+  queued messages share one style preamble, it is written once above the batch
+  instead of in front of each message. A single message, or a batch with mixed
+  or placeholder templates, is delivered exactly as before. Together: 82% less
+  boilerplate, and 28% less text from agent-chat overall.
+
 ## [0.13.0] — 2026-09-14
 
 ### Features
