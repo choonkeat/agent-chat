@@ -2,7 +2,20 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.13.0] — 2026-09-14
+
+### Features
+- **Copy as markdown, from every bubble.** Every bubble now carries the `⋯`
+  menu, and its first row copies the message's markdown SOURCE rather than the
+  rendered text the page holds — so `**bold**` comes back as `**bold**`. The
+  source is stashed on the bubble at render time, because the page itself keeps
+  only the formatted result. The menu was previously conditional (agent bubbles
+  had it only when forking was on, user bubbles only while unread) and the
+  standalone play button stood in for it; the button is now unconditional and
+  its rows are decided when it opens — Speak aloud on agent bubbles, Fork from
+  here when forkable, Delete and Send as interrupting while a user message is
+  still queued. All three surfaces got it: the live chat, the chat-log viewer
+  the Files tab opens, and the self-contained HTML export.
 
 ### Fixes
 - **Nested bullets render as nested lists.** A sub-item written under a list
@@ -22,6 +35,15 @@ All notable changes to agent-chat are documented in this file.
   matched nothing and rendered as a literal `>` between two separate quotes.
   A bare `>` is now a blank line inside one quote, and `>text` with no space
   after the marker quotes as CommonMark specifies.
+- **Indented blocks stay inside their list item.** A quote or sub-list written
+  under a list item came out as literal `> ` lines, and every item after it
+  began a fresh list — which is why a list numbered 1..7 in the source rendered
+  1, 2, 3, then 1, 1, 1. Lines indented at least two columns past their item's
+  marker are now collected as that item's continuation and run through the same
+  block rules, so a quote is a quote and a nested list is a list, and the blank
+  line between them ends nothing. Ordered lists also honour the number they
+  were typed with: `6.` starts at 6, so an interrupted list resumes its
+  numbering instead of restarting.
 
 ## [0.12.0] — 2026-09-05
 
