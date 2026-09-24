@@ -2,9 +2,9 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.15.0] — 2026-10-01
 
-### Changed
+### Changes
 - **Chat-log exports no longer archive screenshots by default.** Full-size
   phone screenshots filled a repo's git-LFS quota in months. The new
   `AGENT_CHAT_EXPORT_ASSETS` setting decides what streaming exports and
@@ -17,6 +17,20 @@ All notable changes to agent-chat are documented in this file.
   `AGENT_CHAT_EXPORT_ASSETS=small` or `original`.** `export_chat_md` takes an
   `assets` parameter to override the setting for one export. Existing
   archives are untouched.
+- **One wake-up line for every nudge.** Send-as-interrupting, stop words and
+  `/clear` each typed their own wording, so only the first-message nudge named
+  the agent-chat server. All paths now type the same line, which also tells the
+  agent that when the queue comes back empty, the last user message is still
+  its instruction unless it is already on it.
+
+### Fixes
+- **Long pastes become an attachment on every paste path.** The 30-line rule
+  judged each paste alone, skipped pastes that also carried an image snapshot
+  (Excel, Word, Slack), counted only `\n` line endings, and ignored length. It
+  now judges what the composer would hold after a multi-line paste, applies
+  whenever text wins over files, normalises `\r` and `\r\n` first, and stages
+  anything 8000 characters or longer. A one-line paste never tips the composer
+  over.
 
 ## [0.14.0] — 2026-09-24
 
