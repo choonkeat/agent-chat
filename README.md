@@ -153,6 +153,7 @@ The chat UI opens automatically in your browser.
 | `AGENT_CHAT_PORT` | Fixed port for the HTTP server (default: random) |
 | `AGENT_CHAT_EVENT_LOG` | Path to a JSONL file for event persistence across restarts |
 | `AGENT_CHAT_EXPORT_DIR` | Directory (relative to cwd) for the streaming markdown chat-log export; unset = disabled |
+| `AGENT_CHAT_PROMPTS_FILE` | Path to an editable copy of the text wrapped around each user message ([`prompts/agent-reply.tmpl`](prompts/agent-reply.tmpl)). Missing or blank: filled with the built-in rules. Reread on every message; a broken file falls back to the built-in rules and says so in the chat |
 | `AGENT_CHAT_DISABLE` | Set to any value to disable tools and HTTP server |
 
 ## License

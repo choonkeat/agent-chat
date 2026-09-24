@@ -53,3 +53,18 @@ Voice mode: conversational, no markdown, one question per message.
 {{end -}}
 Reply ONLY via `{{$reply}}` (blocking, terminal) or `{{$progress}}` (non-blocking) — TUI text and AskUserQuestion are invisible to the user. `{{$progress}}` first, then execute; do not echo the request back. Never end a turn without `{{$reply}}`.
 {{- end}}
+
+
+{{- define "execute-not-echo" -}}
+This IS the user's message — execute the request, do not echo it back as an acknowledgment. When the requested work is done, call send_message (or send_verbal_reply in voice mode) to deliver the result — never end your turn without sending a user-visible message.
+{{- end}}
+
+
+{{- define "execute-not-echo-short" -}}
+This IS the user's message — execute it, do not echo it back.
+{{- end}}
+
+
+{{- define "empty-queue" -}}
+{"queue":"empty"} — no user message is pending. Do NOT call send_message just to report this; the user did not ask anything. Return to your previous task, or stay silent and wait for the next user message.
+{{- end}}

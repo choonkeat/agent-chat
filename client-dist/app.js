@@ -4326,6 +4326,11 @@ function connect() {
           }
         }
         addSystemBubble(label);
+        // The server's AGENT_CHAT_PROMPTS_FILE is broken or older than the
+        // built-in rules. Once per page load, like the MOTD tip beside it.
+        if (data.rulesNotice && !isReconnect) {
+          addBubble(data.rulesNotice, 'system');
+        }
         hasConnectedBefore = true;
         // History is now streamed as individual events after connect — no replay needed.
         // Defer quick replies until historyEnd — showing them now would

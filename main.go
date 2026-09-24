@@ -309,6 +309,14 @@ func main() {
 		}
 	}
 
+	// Editable reply rules (AGENT_CHAT_PROMPTS_FILE). Checked once here so a
+	// missing file is created before the user goes looking for it; after that
+	// it is reread on every delivery, so edits need no restart.
+	promptsFilePath = os.Getenv("AGENT_CHAT_PROMPTS_FILE")
+	if s := promptsStatus(); s != "" {
+		log.Printf("Warning: %s", s)
+	}
+
 	// Initialize event bus, optionally with JSONL file logging.
 	if logPath := os.Getenv("AGENT_CHAT_EVENT_LOG"); logPath != "" {
 		var err error
@@ -680,6 +688,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// signals "your turn" instead of looking frozen. Suppressed once any
 		// history exists (including a send_progress-only opening).
 		connectMsg["quickReplies"] = welcomeReplies
+	}
+	if s := promptsStatus(); s != "" {
+		connectMsg["rulesNotice"] = s
 	}
 	conn.WriteJSON(connectMsg)
 

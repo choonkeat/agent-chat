@@ -106,19 +106,21 @@ const fullGuidanceEvery = 10
 // barge-in append) so the framing is uniform regardless of delivery path.
 func deliveryGuidance(msgs []UserMessage) string {
 	if guidanceDeliveries.Add(1)%fullGuidanceEvery == 1 {
-		return executeNotEchoGuidance + "\n\n" + voiceSuffix(msgs)
+		return execTemplate("execute-not-echo", nil) + "\n\n" + voiceSuffix(msgs)
 	}
-	return executeNotEchoShort + "\n\n" + voiceSuffixShort(msgs)
+	return execTemplate("execute-not-echo-short", nil) + "\n\n" + voiceSuffixShort(msgs)
 }
 
 // executeNotEchoGuidance is the full form carried by every fullGuidanceEvery-th
 // delivery (see deliveryGuidance). The wording was added after observing the
 // agent reply "OK." to substantive user requests; uniform delivery prevents the
 // bypass where a path-specific wrapper is missing.
-const executeNotEchoGuidance = "This IS the user's message — execute the request, do not echo it back as an acknowledgment. When the requested work is done, call send_message (or send_verbal_reply in voice mode) to deliver the result — never end your turn without sending a user-visible message."
+// The text lives in prompts/agent-reply.tmpl so AGENT_CHAT_PROMPTS_FILE can
+// override it; this is the built-in rendering, kept for tests.
+var executeNotEchoGuidance = builtinText("execute-not-echo")
 
 // executeNotEchoShort is the repeat-delivery form of executeNotEchoGuidance.
-const executeNotEchoShort = "This IS the user's message — execute it, do not echo it back."
+var executeNotEchoShort = builtinText("execute-not-echo-short")
 
 // progressAck is send_progress's return value when no barge-in is riding along.
 // It is deliberately two characters: the tool fired ~900 times across 89 real
@@ -132,7 +134,8 @@ const progressAck = "ok"
 // works, but extra guidance is appended to stop the agent from sending a
 // vacuous "Queue is empty." reply to the user — which was observed when an
 // agent treated the empty-queue payload as the body of a send_message reply.
-const emptyQueueGuidance = `{"queue":"empty"} — no user message is pending. Do NOT call send_message just to report this; the user did not ask anything. Return to your previous task, or stay silent and wait for the next user message.`
+// Built-in rendering of the "empty-queue" template; see executeNotEchoGuidance.
+var emptyQueueGuidance = builtinText("empty-queue")
 
 // composeCheckMessagesResult builds the check_messages result from the fresh
 // queue drain plus any un-acked limbo batch (see EventBus.SetLimbo). A limbo
@@ -147,7 +150,7 @@ func composeCheckMessagesResult(limbo, fresh []UserMessage) string {
 	}
 	switch {
 	case len(fresh) == 0 && len(limbo) == 0:
-		return emptyQueueGuidance
+		return execTemplate("empty-queue", nil)
 	case len(fresh) == 0:
 		return redelivery + "\n\n" + deliveryGuidance(limbo)
 	case len(limbo) == 0:
