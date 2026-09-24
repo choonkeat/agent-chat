@@ -119,8 +119,9 @@ test.describe('export_chat_md — content-addressed asset filenames', () => {
     // Seed an attachment into the live event bus via a non-blocking agent turn.
     await mcp.call('send_progress', { text: 'here is a screenshot', image_urls: [srcPng] });
 
-    // Trigger the markdown export.
-    const exp = await mcp.call('export_chat_md', { title: 'sha-suffix-check' });
+    // Trigger the markdown export. assets: 'original' because the default
+    // (none) writes a placeholder instead of the file under test.
+    const exp = await mcp.call('export_chat_md', { title: 'sha-suffix-check', assets: 'original' });
     const summary = exp.content.map((c) => c.text).join('');
     const mdMatch = summary.match(/Exported chat to (\S+\.md)/);
     expect(mdMatch, `export summary should name the .md file; got: ${summary}`).toBeTruthy();
