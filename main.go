@@ -331,9 +331,12 @@ func main() {
 	defer bus.Close()
 
 	// Streaming chat-log export (append-as-it-goes .md twin of the JSONL log),
-	// enabled by AGENT_CHAT_EXPORT_DIR. A misconfigured dir disables the
+	// enabled by AGENT_CHAT_EXPORT_DIR; AGENT_CHAT_EXPORT_ASSETS (none|small|
+	// original, default none) decides what attachments it and export_chat_md
+	// archive. A misconfigured dir disables the
 	// feature with a warning; it never takes the chat down.
 	{
+		chatAssetMode = assetModeFromEnv(os.Getenv("AGENT_CHAT_EXPORT_ASSETS"))
 		history := bus.History()
 		stream, err := initChatLogStream(
 			os.Getenv("AGENT_CHAT_EXPORT_DIR"), cwd,

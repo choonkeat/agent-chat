@@ -300,7 +300,7 @@ func TestNewExportHonoursLayout(t *testing.T) {
 
 	t.Run("flat by default", func(t *testing.T) {
 		dir := t.TempDir()
-		mdPath, _, err := runChatMarkdownExport(dir, "flat-chat", events, "claude", "v1", now)
+		mdPath, _, err := runChatMarkdownExport(dir, "flat-chat", events, "claude", "v1", assetsOriginal, now)
 		if err != nil {
 			t.Fatalf("export: %v", err)
 		}
@@ -315,7 +315,7 @@ func TestNewExportHonoursLayout(t *testing.T) {
 	t.Run("month when asked", func(t *testing.T) {
 		withLayout(t, layoutMonth)
 		dir := t.TempDir()
-		mdPath, _, err := runChatMarkdownExport(dir, "month-chat", events, "claude", "v1", now)
+		mdPath, _, err := runChatMarkdownExport(dir, "month-chat", events, "claude", "v1", assetsOriginal, now)
 		if err != nil {
 			t.Fatalf("export: %v", err)
 		}

@@ -205,7 +205,9 @@ func imageBlock(files []FileRef, imageMap map[string]string) string {
 		if rel == "" {
 			continue
 		}
-		if isImage(f) {
+		if text, ok := strings.CutPrefix(rel, placeholderPrefix); ok {
+			others = append(others, text)
+		} else if isImage(f) {
 			// Flex constraints go on the <a> (the direct flex item) so each
 			// link-wrapped thumbnail occupies a third of the row. Without
 			// this the <a> would shrink to its content and stack 1 per row.
@@ -283,7 +285,7 @@ func formatElapsed(ms int64) string {
 // rest of the conversation. renderChatMarkdown omits any attachment missing
 // from the returned map, so the .md simply won't reference the skipped file.
 // The collected warnings are returned so the caller can surface them.
-func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[string]string, []string, error) {
+func writeImageAttachments(events []Event, assetsDir, date, idx string, mode assetMode) (map[string]string, []string, error) {
 	if err := os.MkdirAll(assetsDir, 0755); err != nil {
 		return nil, nil, fmt.Errorf("mkdir assets: %w", err)
 	}
@@ -296,7 +298,7 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 		default:
 			continue
 		}
-		w, err := writeEventAttachments(e, assetsDir, date, idx, &n, out)
+		w, err := writeEventAttachments(e, assetsDir, date, idx, mode, &n, out)
 		warnings = append(warnings, w...)
 		if err != nil {
 			return nil, nil, err
@@ -316,7 +318,7 @@ func writeImageAttachments(events []Event, assetsDir, date, idx string) (map[str
 // directory as os.ErrNotExist, indistinguishable from a vanished upload, so a
 // month directory that doesn't exist yet would silently "skip" every
 // attachment instead of failing loudly.
-func writeEventAttachments(e Event, assetsDir, date, idx string, n *int, out map[string]string) ([]string, error) {
+func writeEventAttachments(e Event, assetsDir, date, idx string, mode assetMode, n *int, out map[string]string) ([]string, error) {
 	var warnings []string
 	for _, f := range e.Files {
 		if f.Path == "" {
@@ -335,11 +337,23 @@ func writeEventAttachments(e Event, assetsDir, date, idx string, n *int, out map
 			}
 		}
 		*n++
+		if !keepsAsset(mode, f) {
+			out[f.Path] = assetPlaceholder(f, *n)
+			continue
+		}
 		// Copy under a provisional numbered name, then rename to include a
 		// content digest before the extension so assets never collide even
 		// if the numbering ever repeats: {date}-{NN}-{N}-{sha12}.{ext}.
-		staging := filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, *n, ext))
-		sum, err := copyFileSum(f.Path, staging)
+		var sum, staging string
+		var err error
+		if small, smallExt, ok := shrinkForMode(mode, f); ok {
+			ext = smallExt
+			staging = filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, *n, ext))
+			sum, err = writeBytesSum(small, staging)
+		} else {
+			staging = filepath.Join(assetsDir, fmt.Sprintf("%s-%s-%d.partial%s", date, idx, *n, ext))
+			sum, err = copyFileSum(f.Path, staging)
+		}
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				// Source vanished between the upload and the export. Warn
@@ -575,7 +589,7 @@ func regenerateIndexHTML(dir string) error {
 // .md file, copies image attachments, ensures viewer assets exist, and
 // upserts index.html. Returns the absolute path of the .md file and any
 // non-fatal warnings (e.g. attachments whose source files had gone missing).
-func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, now time.Time) (string, []string, error) {
+func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, version string, mode assetMode, now time.Time) (string, []string, error) {
 	date := now.Format("2006-01-02")
 	idx := fmt.Sprintf("%02d", nextDailyIndex(rootDir, date))
 	mdPath := exportMDPath(rootDir, date, idx, slug)
@@ -586,7 +600,7 @@ func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, v
 	if err := ensureViewerAssets(viewerAssetsDir(rootDir)); err != nil {
 		return "", nil, err
 	}
-	imageMap, warnings, err := writeImageAttachments(events, exportAssetsDir(mdPath), date, idx)
+	imageMap, warnings, err := writeImageAttachments(events, exportAssetsDir(mdPath), date, idx, mode)
 	if err != nil {
 		return "", nil, err
 	}

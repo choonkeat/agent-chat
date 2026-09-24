@@ -36,7 +36,8 @@ type chatLogStream struct {
 	meta     chatExportMeta
 	st       renderState       // renderer carry-state
 	assetN   int               // per-file asset counter (shared numbering with the .md's references)
-	imageMap map[string]string // upload path -> ./assets/... relative URL
+	imageMap map[string]string // upload path -> ./assets/... relative URL, or a placeholder (see assetPlaceholder)
+	assets   assetMode         // what to do with attachments; chatAssetMode at creation
 	f        *os.File          // O_APPEND handle
 	stopped  bool              // chatlog_optout / chatlog_close
 	optedOut bool              // chatlog_optout specifically: the .md was deleted
@@ -158,6 +159,7 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 		mdPath:   mdPath,
 		meta:     meta,
 		imageMap: map[string]string{},
+		assets:   chatAssetMode,
 		f:        f,
 	}
 	// Feature enabled mid-session (event log restored history but no export
@@ -206,6 +208,7 @@ func resumeChatLogStream(dir, sessionID, agent, version string, history []Event)
 				Version: version,
 			},
 			imageMap: map[string]string{},
+			assets:   chatAssetMode,
 			f:        f,
 		}
 		s.recoverFromHistory(history)
@@ -239,6 +242,8 @@ func (s *chatLogStream) recoverFromHistory(history []Event) {
 			prefix := fmt.Sprintf("%s%d-", chatAssetPrefix(s.meta.Date, s.meta.Index), s.assetN)
 			if matches, _ := filepath.Glob(filepath.Join(assetsDir, prefix+"*")); len(matches) > 0 {
 				s.imageMap[fr.Path] = "./assets/" + filepath.Base(matches[0])
+			} else if !keepsAsset(s.assets, fr) {
+				s.imageMap[fr.Path] = assetPlaceholder(fr, s.assetN)
 			}
 		}
 		renderChatBubble(e, &s.st, s.imageMap)
@@ -496,7 +501,7 @@ func (s *chatLogStream) HandleEvent(e Event) {
 		return
 	}
 	if len(e.Files) > 0 {
-		warnings, err := writeEventAttachments(e, exportAssetsDir(s.mdPath), s.meta.Date, s.meta.Index, &s.assetN, s.imageMap)
+		warnings, err := writeEventAttachments(e, exportAssetsDir(s.mdPath), s.meta.Date, s.meta.Index, s.assets, &s.assetN, s.imageMap)
 		for _, w := range warnings {
 			log.Printf("agent-chat: chatlog stream: %s", w)
 		}

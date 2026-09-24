@@ -782,11 +782,12 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 	type ExportChatMDParams struct {
 		Title     string `json:"title" jsonschema:"Short kebab-case slug describing the chat (e.g. 'auth-bug-fix'). Used to name the output file."`
 		TargetDir string `json:"target_dir,omitempty" jsonschema:"Optional override directory. If set, must resolve inside the current working directory. Defaults to ./agent-chats."`
+		Assets    string `json:"assets,omitempty" jsonschema:"Optional override for this export only: none (attachments become [name #N] placeholders; text files still copied), small (images downscaled to 1280px), or original (byte-for-byte). Defaults to AGENT_CHAT_EXPORT_ASSETS, which defaults to none."`
 	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "export_chat_md",
-		Description: "Manually export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. NOTE: when AGENT_CHAT_EXPORT_DIR is set the chat log auto-exports continuously (see set_chat_title) — this tool is the manual escape hatch for a custom target_dir or a forced full export. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies attachments into ./agent-chats/assets/ (content-sha filenames, relative-path links from the .md), refreshes viewer.css/viewer.js, and regenerates ./agent-chats/index.html — the chat-archive landing page — from the .md files on disk (newest first). Path safety: target_dir cannot escape cwd.",
+		Description: "Manually export the current chat as a markdown file (script-style: `**USER**` / `**AGENT**` markers with `> ` blockquoted bodies, elapsed-time annotations, and trailing `[Quick replies]` blocks) for review on GitHub/GitLab and viewing in a sibling bubble UI. NOTE: when AGENT_CHAT_EXPORT_DIR is set the chat log auto-exports continuously (see set_chat_title) — this tool is the manual escape hatch for a custom target_dir or a forced full export. Writes ./agent-chats/YYYY-MM-DD-NN-{title}.md, copies attachments into ./agent-chats/assets/ per `assets` (default none: `[name #N]` placeholders; content-sha filenames, relative-path links from the .md), refreshes viewer.css/viewer.js, and regenerates ./agent-chats/index.html — the chat-archive landing page — from the .md files on disk (newest first). Path safety: target_dir cannot escape cwd.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ExportChatMDParams) (*mcp.CallToolResult, any, error) {
 		bus.ProveDelivery()
 		bus.CancelActiveWait()
@@ -823,8 +824,19 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 			rootDir = filepath.Join(cwd, "agent-chats")
 		}
 
+		mode := chatAssetMode
+		if params.Assets != "" {
+			var ok bool
+			if mode, ok = parseAssetMode(params.Assets); !ok {
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("error: assets %q must be one of none, small, original", params.Assets)}},
+					IsError: true,
+				}, nil, nil
+			}
+		}
+
 		events := bus.History()
-		mdPath, warnings, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", time.Now())
+		mdPath, warnings, err := runChatMarkdownExport(rootDir, slug, events, "claude", version+" ("+commit+")", mode, time.Now())
 		if err != nil {
 			return nil, nil, err
 		}

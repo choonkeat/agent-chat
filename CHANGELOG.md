@@ -2,6 +2,22 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Changed
+- **Chat-log exports no longer archive screenshots by default.** Full-size
+  phone screenshots filled a repo's git-LFS quota in months. The new
+  `AGENT_CHAT_EXPORT_ASSETS` setting decides what streaming exports and
+  `export_chat_md` do with attachments: `none` (the new default) writes a
+  numbered `[image.png #3]` placeholder instead of copying images or binary
+  files, but still copies plain-text attachments such as pasted long text;
+  `small` downscales PNG/JPEG to 1280px on the long edge (JPEG, or PNG when
+  transparent; on this repo's own archive, 12.6 MB became 4.6 MB); `original`
+  keeps the old byte-for-byte copy. **To keep images, set
+  `AGENT_CHAT_EXPORT_ASSETS=small` or `original`.** `export_chat_md` takes an
+  `assets` parameter to override the setting for one export. Existing
+  archives are untouched.
+
 ## [0.14.0] — 2026-09-24
 
 ### Features

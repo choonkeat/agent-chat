@@ -50,7 +50,7 @@ Agent (Claude, etc.)
 | `set_chat_title` | Name the streaming chat-log export (see below): renames the auto-written `…-untitled.md` to `…-{slugified-title}.md` and rewrites its header. Call again anytime to rename; also re-enables the export after `chatlog_optout`. |
 | `chatlog_close` | Close out the streaming chat-log export for a clean git commit: freezes this session's `.md` (kept, unlike `chatlog_optout`), regenerates `index.html`, and returns the exact paths to `git add`. Requires a `title` while the file is still untitled; never renames an already-titled file. `set_chat_title` re-opens with a full-history backfill. |
 | `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
-| `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, copies attachments to `./agent-chats/assets/`, refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
+| `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, archives attachments to `./agent-chats/assets/` per `AGENT_CHAT_EXPORT_ASSETS` (or its `assets` param; default `none` = placeholders), refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
 
 ## Chat commands
 
@@ -75,9 +75,20 @@ itself, no `export_chat_md` call needed:
 
 - **Every chat bubble is appended to `{date}-{NN}-untitled.md` the moment it
   happens** (`{date}-{NN}-untitled-{SESSION_UUID}.md` when a `SESSION_UUID`
-  env var identifies the host session), and its attachments are copied into
-  the `assets/` directory beside it at that same moment (content-sha
-  filenames), while the upload files still exist.
+  env var identifies the host session), and its attachments are handled at
+  that same moment, while the upload files still exist.
+- **Attachments are NOT archived by default** — screenshots grow a repo (or
+  its git-LFS quota) fast. `AGENT_CHAT_EXPORT_ASSETS` picks what happens:
+  - `none` (default): images and binary files become `[image.png #3]`
+    placeholders, numbered per chat; plain-text attachments (pasted long text)
+    are still copied, since they are part of the conversation.
+  - `small`: PNG/JPEG images are downscaled to 1280px on the long edge and
+    re-encoded (JPEG; PNG when transparent), only when that is smaller.
+  - `original`: every attachment copied byte-for-byte (the pre-0.15 behaviour).
+
+  Copied files go into the `assets/` directory beside the `.md` (content-sha
+  filenames). `export_chat_md` follows the same setting; its `assets`
+  parameter overrides it for one export.
 - **Month directories are understood everywhere, and written only on request.**
   A chat can live flat in the archive root, or one directory per month:
 
@@ -153,6 +164,7 @@ The chat UI opens automatically in your browser.
 | `AGENT_CHAT_PORT` | Fixed port for the HTTP server (default: random) |
 | `AGENT_CHAT_EVENT_LOG` | Path to a JSONL file for event persistence across restarts |
 | `AGENT_CHAT_EXPORT_DIR` | Directory (relative to cwd) for the streaming markdown chat-log export; unset = disabled |
+| `AGENT_CHAT_EXPORT_ASSETS` | What chat-log exports do with attachments: `none` (default — placeholders; text files still copied), `small` (images downscaled to 1280px), `original` (byte-for-byte) |
 | `AGENT_CHAT_PROMPTS_FILE` | Path to an editable copy of the text wrapped around each user message ([`prompts/agent-reply.tmpl`](prompts/agent-reply.tmpl)). Missing or blank: filled with the built-in rules. Reread on every message; a broken file falls back to the built-in rules and says so in the chat |
 | `AGENT_CHAT_DISABLE` | Set to any value to disable tools and HTTP server |
 

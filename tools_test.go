@@ -588,7 +588,7 @@ func TestRunChatMarkdownExportFreshDir(t *testing.T) {
 		{Type: "agentMessage", Text: "hi there", Timestamp: 4500, QuickReplies: []string{"more", "stop"}},
 		{Type: "userMessage", Text: "thanks", Timestamp: 5000},
 	}
-	mdPath, _, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", now)
+	mdPath, _, err := runChatMarkdownExport(dir, "test-chat", events, "claude", "v0.5.0 (abc123)", assetsOriginal, now)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -660,10 +660,10 @@ func TestRunChatMarkdownExportPrependsToExistingIndex(t *testing.T) {
 	now1 := mustParseTime(t, "2026-04-30T10:00:00Z")
 	now2 := mustParseTime(t, "2026-04-30T11:00:00Z") // same day → idx 02
 
-	if _, _, err := runChatMarkdownExport(dir, "first", []Event{{Type: "userMessage", Text: "a"}}, "claude", "v1", now1); err != nil {
+	if _, _, err := runChatMarkdownExport(dir, "first", []Event{{Type: "userMessage", Text: "a"}}, "claude", "v1", assetsOriginal, now1); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	if _, _, err := runChatMarkdownExport(dir, "second", []Event{{Type: "userMessage", Text: "b"}}, "claude", "v1", now2); err != nil {
+	if _, _, err := runChatMarkdownExport(dir, "second", []Event{{Type: "userMessage", Text: "b"}}, "claude", "v1", assetsOriginal, now2); err != nil {
 		t.Fatalf("second: %v", err)
 	}
 
@@ -741,7 +741,7 @@ func TestRunChatMarkdownExportEmbedsAgentImages(t *testing.T) {
 		{Type: "agentMessage", Text: "here it is", Timestamp: 2000,
 			Files: []FileRef{{Name: "shot.png", Path: src, Type: "image/png"}}},
 	}
-	mdPath, _, err := runChatMarkdownExport(dir, "agent-shot", events, "claude", "v1", now)
+	mdPath, _, err := runChatMarkdownExport(dir, "agent-shot", events, "claude", "v1", assetsOriginal, now)
 	if err != nil {
 		t.Fatalf("export: %v", err)
 	}
@@ -801,7 +801,7 @@ func TestRunChatMarkdownExportSkipsMissingAttachment(t *testing.T) {
 			}},
 	}
 
-	mdPath, warnings, err := runChatMarkdownExport(dir, "missing-attach", events, "claude", "v1", now)
+	mdPath, warnings, err := runChatMarkdownExport(dir, "missing-attach", events, "claude", "v1", assetsOriginal, now)
 	if err != nil {
 		t.Fatalf("export must not fail on a missing attachment: %v", err)
 	}

@@ -64,6 +64,7 @@ func TestRenderChatBubbleMatchesBatch(t *testing.T) {
 // and an attachment's asset file exists on disk the moment its event is
 // handled — not at turn end.
 func TestChatLogStreamAppends(t *testing.T) {
+	withAssetMode(t, assetsOriginal)
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 
@@ -214,6 +215,7 @@ func TestChatLogStreamRename(t *testing.T) {
 // lastTs/assetN by re-folding the in-memory history — instead of minting a
 // new NN. A different session DOES mint a new NN.
 func TestChatLogStreamResume(t *testing.T) {
+	withAssetMode(t, assetsOriginal)
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 
@@ -427,6 +429,7 @@ func TestIndexReferencesMD(t *testing.T) {
 // stay — content-sha names may be shared), regenerates index.html; a later
 // set_chat_title re-arms the stream with a full rewrite from history.
 func TestChatLogOptout(t *testing.T) {
+	withAssetMode(t, assetsOriginal)
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
 
