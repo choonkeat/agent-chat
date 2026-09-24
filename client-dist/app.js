@@ -393,11 +393,15 @@ function autolinkFilePaths(html, filePaths) {
 function filePathAnchor(entry) {
   var filesPath = entry && filesBaseUrl && workspaceFilePath(entry.path);
   if (!filesPath) return '';
+  // A directory keeps its trailing slash in the href and data-files-path too:
+  // the Files pane shows a listing only for a path ending in '/', otherwise a
+  // folder with an index.html opens as that page.
+  if (entry.dir) filesPath += '/';
   var absolute = entry.path;
   try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
   return '<a href="' + absolute.replace(/"/g, '&quot;')
     + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
-    + '" target="_blank" rel="noopener">@' + filesPath + (entry.dir ? '/' : '') + '</a>';
+    + '" target="_blank" rel="noopener">@' + filesPath + '</a>';
 }
 
 // Look up a code span's exact content in the bubble's file_paths. Whole-content

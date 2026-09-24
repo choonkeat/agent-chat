@@ -143,7 +143,7 @@ test.describe('bare workspace paths -> Files-pane links', () => {
     await expect(bubble).toContainText('the writeups live in', { timeout: 5000 });
 
     const link = bubble.locator('a[data-files-path]').first();
-    await expect(link).toHaveAttribute('data-files-path', 'docs/adr');
+    await expect(link).toHaveAttribute('data-files-path', 'docs/adr/');
     await expect(link).toHaveText('@docs/adr/');
   });
 
