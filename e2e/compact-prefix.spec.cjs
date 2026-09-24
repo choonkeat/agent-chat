@@ -22,7 +22,7 @@ const CDP_ENDPOINT = process.env.CDP_ENDPOINT
   || (process.env.BROWSER_CDP_PORT ? `http://localhost:${process.env.BROWSER_CDP_PORT}` : 'http://chrome:9223');
 const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
 
-const NUDGE = 'agent-chat mcp: check_messages; report progress before you start processing';
+const NUDGE = 'agent-chat mcp: check_messages and report progress before you start. If nothing new comes back, the last user message is your instruction, unless you are already on it';
 
 function startServer(extraArgs = []) {
   return new Promise((resolve, reject) => {

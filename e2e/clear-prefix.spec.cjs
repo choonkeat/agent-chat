@@ -23,6 +23,8 @@ const os = require('os');
 const CDP_ENDPOINT = process.env.CDP_ENDPOINT
   || (process.env.BROWSER_CDP_PORT ? `http://localhost:${process.env.BROWSER_CDP_PORT}` : 'http://chrome:9223');
 const SLOW_MO = parseInt(process.env.SLOW_MO || '0', 10);
+// The one wake-up line (chatNudgeText in tools.go) typed on every path.
+const NUDGE = 'agent-chat mcp: check_messages and report progress before you start. If nothing new comes back, the last user message is your instruction, unless you are already on it';
 
 // Starts a fresh agent-chat server with the streaming chat-log export on —
 // without it there is no file for the resume line to name.
@@ -126,7 +128,7 @@ test.describe('/clear-and-then prefix', () => {
       const [, resume] = await interrupts(page);
       expect(resume).toMatch(/^resume agent-chats\/(\d{4}-\d{2}\/)?[\d-]+-untitled.*\.md /);
       expect(resume).toContain('for context');
-      expect(resume).toContain('check_messages');
+      expect(resume.endsWith('for context. ' + NUDGE)).toBe(true);
       // An `@` would open the agent CLI's file picker and the trailing Enter
       // would pick an entry instead of submitting the line.
       expect(resume).not.toContain('@');
@@ -511,9 +513,10 @@ test.describe('/clear-and-then prefix', () => {
 
       await expect(frame.locator('.bubble.user', { hasText: 'stop' })).toBeVisible({ timeout: 10000 });
       // Exactly the interrupt the chat has always sent — the break-in that
-      // reaches a busy agent — and no `/clear` in front of it.
+      // reaches a busy agent, carrying the one wake-up line — and no `/clear`
+      // in front of it.
       await expect.poll(() => interrupts(page), { timeout: 10000 })
-        .toEqual(['check_messages; ask me how to proceed']);
+        .toEqual([NUDGE]);
       // And the box is free again straight away, so a second "stop" needs no
       // waiting: the reset route is what holds it, and this did not take it.
       await expect(frame.locator('#chat-input')).toHaveJSProperty('readOnly', false);

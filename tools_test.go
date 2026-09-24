@@ -1170,4 +1170,9 @@ func TestAgentWaitingCarriesTheNudgeText(t *testing.T) {
 	if !strings.HasPrefix(chatNudgeText, "agent-chat mcp: check_messages") {
 		t.Errorf("nudge must name the server and check_messages: %q", chatNudgeText)
 	}
+	// A nudge that races the drain finds the queue empty; the fallback keeps the
+	// agent acting on the message that woke it without answering it twice.
+	if !strings.Contains(chatNudgeText, "the last user message is your instruction, unless you are already on it") {
+		t.Errorf("nudge must carry the empty-queue fallback: %q", chatNudgeText)
+	}
 }

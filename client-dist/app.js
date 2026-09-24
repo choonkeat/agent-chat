@@ -978,7 +978,7 @@ function removePendingMenuBtn(bubble) {
 }
 
 // Interrupt the agent to make it drain its queue NOW. We abort its current tool
-// (Esc Esc) and submit "check_messages" into the host terminal, so the agent
+// (Esc) and submit the wake-up line into the host terminal, so the agent
 // reads ALL queued messages through the normal agent-chat channel — with full
 // redelivery/ordering/file-attachment semantics. We deliberately do NOT unsend
 // and do NOT promote any bubble: each pending bubble stays "pending" until the
@@ -990,7 +990,7 @@ function interruptWithPendingMessage() {
     addAgentMessage('Cannot interrupt: host terminal not connected.', null, 'warning', Date.now());
     return;
   }
-  window.parent.postMessage({ type: 'agent-chat-interrupt', text: 'check_messages' }, '*');
+  window.parent.postMessage({ type: 'agent-chat-interrupt', text: chatNudgeText }, '*');
 }
 
 // ONE click listener for every bubble menu in the transcript. It handles all
@@ -2576,7 +2576,7 @@ function typeClearResumeLine() {
         addAgentMessage('Context cleared, but no chat log is being written (AGENT_CHAT_EXPORT_DIR is unset) — the agent resumes without the earlier conversation.', null, null, Date.now());
       }
       var text = path
-        ? 'resume ' + path + ' - read the whole file for context, then check_messages for your instruction (if it returns nothing, the last USER entry in the file is your instruction)'
+        ? 'resume ' + path + ' - read the whole file for context. ' + chatNudgeText
         : chatNudgeText;
       window.parent.postMessage({ type: 'agent-chat-interrupt', text: text }, '*');
     });
@@ -4473,9 +4473,9 @@ function connect() {
         // Server confirmed the message is in the queue — now safe to
         // tell the parent frame so it can trigger check_messages.
         if (pendingNotifyParent) {
-          var nudgeText = pendingInterrupt
-            ? 'check_messages; ask me how to proceed'
-            : chatNudgeText;
+          // One wake-up line for every path: the stop word itself is the
+          // queued message, so the agent reads "stop" and asks from there.
+          var nudgeText = chatNudgeText;
           if (window.parent !== window) {
             if (pendingInterrupt) {
               // Voice interrupt: send Esc-Esc to abort current tool, then

@@ -848,8 +848,11 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 // it from agent_waiting's "nudge" field, so a change here reaches both without
 // either having to be told. It names the MCP server because an agent handed
 // several tool groups at once has more than one plausible send_message to pick
-// from.
-const chatNudgeText = "agent-chat mcp: check_messages; report progress before you start processing"
+// from. It is the one wake-up line for every path — first message, interrupt,
+// stop word, /compact, and the tail of the /clear resume line — so the fallback
+// sentence covers a nudge that races the drain: the agent that finds the queue
+// empty still acts on the message that woke it, but not twice.
+const chatNudgeText = "agent-chat mcp: check_messages and report progress before you start. If nothing new comes back, the last user message is your instruction, unless you are already on it"
 
 // agentWaitingJSON is agent_waiting's reply: whether a pushed message would be
 // read now, and the exact line to type if it would not.
