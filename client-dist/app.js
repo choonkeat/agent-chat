@@ -1455,15 +1455,48 @@ dropZone.addEventListener('drop', function(e) {
 // upload when there's a file/image AND no meaningful text — that separates a
 // real screenshot/copied file (no text) from a rich-text paste (has text),
 // which should paste as plain text and ignore the image snapshot.
-// A plain-text paste this many lines or longer is staged as a .txt attachment
-// instead of being inserted — a dump that long is unreadable in the composer
-// and more useful to the agent as a file it can open.
+// Pasted text that would leave the composer this many lines or longer is
+// staged as a .txt attachment instead of being inserted — a dump that long is
+// unreadable in the composer and more useful to the agent as a file it can
+// open. The character limit catches what the line count cannot see: one long
+// paragraph, a minified JSON blob.
 var PASTE_AS_FILE_MIN_LINES = 30;
+var PASTE_AS_FILE_MIN_CHARS = 8000;
+
+// Old Mac apps, some Java and terminal output end lines in a bare \r; Windows
+// in \r\n. Counted as-is, a bare-\r paste of 5000 rows is "one line".
+function normalizeNewlines(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
 
 // Line count, ignoring one trailing newline so a copied 3-line block that ends
 // in \n counts as 3, not 4.
 function countLines(text) {
-  return text.replace(/\n$/, '').split('\n').length;
+  return normalizeNewlines(text).replace(/\n$/, '').split('\n').length;
+}
+
+// Whether `text` belongs in an attachment rather than the composer. Judged on
+// what the composer would hold afterwards, not on this paste alone: two
+// 20-line pastes in a row used to leave 40 lines inline because neither one
+// crossed the line on its own. A single-line paste never tips it over, so a
+// word pasted into a long message you typed stays a word. While the composer
+// is readOnly (mid-send) its contents are on their way out, so only the paste
+// itself counts.
+function belongsInAttachment(text) {
+  var result = text;
+  if (!chatInput.readOnly && countLines(text) > 1) {
+    var v = chatInput.value;
+    result = v.slice(0, chatInput.selectionStart) + text + v.slice(chatInput.selectionEnd);
+  }
+  return countLines(result) >= PASTE_AS_FILE_MIN_LINES ||
+    result.length >= PASTE_AS_FILE_MIN_CHARS;
+}
+
+// Stage text as a .txt attachment, named with its own line count so the chip
+// says what it swallowed.
+function stageTextAsFile(text) {
+  text = normalizeNewlines(text);
+  addStagedFiles([new File([text], 'pasted-' + countLines(text) + '-lines.txt', { type: 'text/plain' })]);
 }
 
 // Insert text at the cursor, replacing any selection. Prefers execCommand so
@@ -1625,22 +1658,24 @@ function handleTransfer(dt, insertByHand, isPaste) {
   // like an empty clipboard — and the words we found are lost. Not while the
   // composer is readOnly (mid-send), where nothing may be typed into it.
   if (text !== readTransferData(dt, 'text/plain') && !chatInput.readOnly) insertByHand = true;
+  var hasText = text.trim().length > 0;
+  // Long text becomes an attachment wherever text is what gets used: always
+  // when there are no files, and on a paste even when there are — rich text
+  // from Excel, Word or Slack carries an image snapshot alongside, and letting
+  // that skip this check put a 5000-row sheet straight into the composer. A
+  // drop is left alone: there the files win (see below).
+  if (hasText && (files.length === 0 || isPaste) && belongsInAttachment(text)) {
+    stageTextAsFile(text);
+    return true;
+  }
   if (files.length === 0) {
     // Nothing readable at all. Usually iOS handing over a file the page can't
     // open — surface it as a failed chip instead of doing nothing at all.
     // Whitespace-only counts as nothing: copying blank Excel cells gives
     // "\t\t\r\n", which used to insert something invisible instead of
     // saying the clipboard had nothing in it.
-    if (text.trim().length === 0) {
+    if (!hasText) {
       addFailedPasteChip(pasteFailureName(dt));
-      return true;
-    }
-    // Long multi-line text — stage it as a .txt attachment instead of flooding
-    // the composer. Named with its line count so the chip says what it
-    // swallowed.
-    var lineCount = countLines(text);
-    if (lineCount >= PASTE_AS_FILE_MIN_LINES) {
-      addStagedFiles([new File([text], 'pasted-' + lineCount + '-lines.txt', { type: 'text/plain' })]);
       return true;
     }
     // Paste only. iOS "smart paste" puts a space in front of a word it thinks
@@ -1669,7 +1704,7 @@ function handleTransfer(dt, insertByHand, isPaste) {
   // snapshot is ignored. A drop is the opposite: the OS attaches the file's
   // own path as text, and the file is what the user meant, so text never wins
   // there.
-  if (isPaste && text.trim().length > 0) {
+  if (isPaste && hasText) {
     if (insertByHand) insertPastedText(text);
     return insertByHand;
   }

@@ -1,7 +1,7 @@
 # Clipboard / paste / drop edge cases — 13 filed findings
 
-Filed 2026-08-25. **P1, P2, P3, P4 and P9 implemented 2026-08-26; the rest
-still open.** All 13 are audit findings from two research passes; every line
+Filed 2026-08-25. **P1, P2, P3, P4 and P9 implemented 2026-08-26; P7 and P8
+2026-09-29; the rest still open.** All 13 are audit findings from two research passes; every line
 reference below was verified against HEAD (`5d28938`) at filing time.
 
 **Line numbers below are stale from P1/P2/P4 onward** — the paste body moved
@@ -176,7 +176,7 @@ codec the browser refuses.
 
 ---
 
-### P7 — Big Excel pastes bypass the 30-line rule *(~15 min)*
+### P7 — Big Excel pastes bypass the 30-line rule — **DONE 2026-09-29**
 
 The stage-as-`.txt` rule at `app.js:1257` sits **inside** the
 `files.length === 0` branch, and `app.js:1279` returns early whenever text is
@@ -190,7 +190,7 @@ together.
 
 ---
 
-### P8 — The 30-line rule is line-count-only *(~15 min)*
+### P8 — The 30-line rule is line-count-only — **DONE 2026-09-29**
 
 `app.js:1207-1216`. Two holes:
 
@@ -203,6 +203,13 @@ together.
 **Fix:** add a byte-length threshold alongside the line count (e.g. stage as
 `.txt` above ~8 KB regardless of lines), and normalise `\r\n` and `\r` to `\n`
 before counting.
+
+**Done 2026-09-29** alongside a hole found since: the rule judged each paste
+alone, so two 20-line pastes in a row left 40 lines inline. `belongsInAttachment`
+now judges what the composer would hold after a multi-line paste (a one-line
+paste never tips it), with `PASTE_AS_FILE_MIN_CHARS = 8000` beside the line
+count and `\r`/`\r\n` normalised first. P5 (keeping the inline image) is
+still open; P7 only stopped the snapshot from bypassing the rule.
 
 ---
 

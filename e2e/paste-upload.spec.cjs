@@ -523,4 +523,63 @@ test.describe('Paste to upload', () => {
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
     } finally { await context.close().catch(() => {}); }
   });
+  // The 30-line rule judges what the composer would hold, not one paste alone:
+  // "copy, paste, copy, paste" of 20 lines each used to leave 40 lines inline.
+  test('a second 20-line paste that takes the composer past 30 lines becomes a .txt', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await textarea.fill(lines(20));
+      const prevented = await pasteText(page, lines(20));
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-20-lines.txt', { timeout: 3000 });
+      await expect(textarea).toHaveValue(lines(20)); // the first paste is untouched
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a one-line paste into a long typed message stays inline', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await textarea.fill(lines(29));
+      const prevented = await pasteText(page, 'one more word');
+      expect(prevented).toBe(false);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // Excel, Word and Slack put an image snapshot beside the text; that used to
+  // skip the 30-line rule and dump a whole sheet into the composer.
+  test('long rich text with an image snapshot becomes a .txt, not the image', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      const prevented = await pastePng(page, lines(30));
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-30-lines.txt');
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // PASTE_AS_FILE_MIN_CHARS in client-dist/app.js is 8000.
+  test('one very long line becomes a .txt even though it is one line', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteText(page, 'x'.repeat(8000));
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-1-lines.txt', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a 30-line paste with bare \\r line endings counts as 30 lines', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      const prevented = await pasteText(page, lines(30).split('\n').join('\r'));
+      expect(prevented).toBe(true);
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-30-lines.txt', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
 });
