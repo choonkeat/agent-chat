@@ -2,6 +2,22 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.14.0] — 2026-09-24
+
+### Features
+- **Editable reply rules via `AGENT_CHAT_PROMPTS_FILE`.** Every piece of text
+  agent-chat wraps around a user message -- the message layout, the reply
+  rules and their one-line short form, the execute-not-echo line and its short
+  form, and the empty-queue reply -- now lives in `prompts/agent-reply.tmpl`,
+  and a user file named by this variable overrides it. A missing or blank file
+  is filled with the built-in rules plus a header explaining each block, so
+  you only ever edit. The file is reread on every delivery, so edits need no
+  restart. A block the file leaves out falls back to the built-in one. If the
+  file fails to parse, the built-in rules are used, the file is left
+  untouched, and a warning is logged and shown in the chat on connect. Files
+  carry a rules-version fingerprint; when the built-in rules change, the chat
+  says the copy's rules have changed and to empty the file to refresh.
+
 ## [0.13.1] — 2026-09-18
 
 ### Changes
