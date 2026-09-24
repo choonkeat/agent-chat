@@ -25,8 +25,9 @@ var agentReplyTmpl = template.Must(template.New("agent-reply").Parse(agentReplyT
 var promptsFilePath string
 
 // builtinRulesVersion fingerprints the built-in template. It is stamped into a
-// rules file when agent-chat creates one, so a later release whose built-in
-// rules changed can tell the user their copy predates it.
+// rules file when agent-chat creates one, so a release whose built-in rules
+// differ can tell the user. A fingerprint says "different", not "newer": the
+// same notice fits a downgrade.
 var builtinRulesVersion = fmt.Sprintf("%x", sha256.Sum256([]byte(agentReplyTmplStr)))[:8]
 
 var rulesVersionRe = regexp.MustCompile(`rules-version: ([0-9a-f]+)`)
@@ -114,7 +115,7 @@ func loadRulesFile(path string) (*template.Template, string, error) {
 
 // promptsStatus reports the configured rules file's state as one line for the
 // chat's start-up tip, or "" when there is nothing to say (no file configured,
-// or it is healthy and current).
+// or it is healthy and matches the built-in rules it was copied from).
 func promptsStatus() string {
 	if promptsFilePath == "" {
 		return ""
@@ -125,7 +126,7 @@ func promptsStatus() string {
 		return fmt.Sprintf("Reply rules file `%s` has a problem, so the built-in rules are in use: %v", path, err)
 	}
 	if m := rulesVersionRe.FindStringSubmatch(text); m != nil && m[1] != builtinRulesVersion {
-		return fmt.Sprintf("Newer built-in reply rules exist than your copy in `%s`. Empty the file to refresh it (your edits will be replaced).", path)
+		return fmt.Sprintf("The built-in reply rules have changed since your copy in `%s` was made. Empty the file to refresh it (your edits will be replaced).", path)
 	}
 	return ""
 }

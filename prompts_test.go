@@ -98,7 +98,7 @@ func TestRulesFileOlderVersionNotice(t *testing.T) {
 	os.WriteFile(path, []byte(old), 0644)
 	useRulesFile(t, path)
 
-	if s := promptsStatus(); !strings.Contains(s, "Newer built-in reply rules exist") {
+	if s := promptsStatus(); !strings.Contains(s, "The built-in reply rules have changed since") {
 		t.Errorf("expected an out-of-date notice, got %q", s)
 	}
 }
