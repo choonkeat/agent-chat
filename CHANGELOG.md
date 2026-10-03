@@ -2,6 +2,25 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.17.1] — 2026-10-16
+
+### Fixes
+- **Typed text survives other messages arriving.** Every user message the
+  server broadcast emptied the text box, whoever sent it, so a message pushed
+  in by swe-swe's `send_chat_message`, another tab, or a reconnect's replay
+  erased an unsent prompt. The box is now only unlocked when this browser's
+  own message comes back, and never emptied there.
+- **Typed text survives a reload.** An unsent draft is kept in
+  `localStorage`, one per session, and put back when the page opens with an
+  empty box. Emptying the box deletes the copy at once, so sent words never
+  return. Copies older than 7 days, and all but the newest 20, are pruned.
+- **Paths that end a sentence are linked.** `see client-dist/app.js.` never
+  linked because the trailing `.` vetoed the match; a trailing run of `.`,
+  `-`, `~` or `@` now vetoes only when a path character follows it.
+- **Dunder paths are not cut up by emphasis.** Confirmed paths containing
+  `_` or `*` are hidden from the bold/italic rules, so `pkg/__init__.py` no
+  longer renders as a bold "init".
+
 ## [0.17.0] — 2026-10-03
 
 ### Changes
