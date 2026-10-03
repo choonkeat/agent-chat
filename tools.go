@@ -719,7 +719,7 @@ func registerTools(server *mcp.Server, bus *EventBus) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "chatlog_close",
-		Description: "Close out the streaming chat-log export so the archive can be git-committed cleanly: freezes this session's .md (no further appends — later messages are backfilled from history if set_chat_title re-opens it; the JSONL event log keeps recording regardless), regenerates index.html one last time, and returns the exact paths to `git add`. If the export is still untitled, `title` is REQUIRED and names it in the same call; an already-titled export is never renamed here. Idempotent. Typical close-out: deliver the final answer → chatlog_close → git add the returned paths → commit.",
+		Description: "Close out the streaming chat-log export so the archive can be git-committed cleanly: freezes this session's .md (no further appends — later messages are backfilled from history if set_chat_title re-opens it; the JSONL event log keeps recording regardless), regenerates index.html one last time, and returns the exact paths to `git add` (gitignored viewer files are left out). If the export is still untitled, `title` is REQUIRED and names it in the same call; an already-titled export is never renamed here. Idempotent. Typical close-out: deliver the final answer → chatlog_close → git add the returned paths → commit.",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, params *ChatlogCloseParams) (*mcp.CallToolResult, any, error) {
 		bus.ProveDelivery()
 		bus.CancelActiveWait()

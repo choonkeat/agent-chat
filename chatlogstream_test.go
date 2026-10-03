@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -376,6 +377,201 @@ func TestChatLogStreamLeavesIndexAlone(t *testing.T) {
 	}
 	if string(data) != "committed index\n" {
 		t.Errorf("streaming rewrote index.html; want it untouched\n---\n%s", data)
+	}
+}
+
+// gitIgnoringArchive makes dir a git repo whose .gitignore holds lines.
+func gitIgnoringArchive(t *testing.T, dir string, lines ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestChatLogStreamBootRegeneratesIgnoredIndex: a gitignored index.html comes
+// with no checkout, so boot is what lists the chats already in the archive.
+// A tracked (here: merely not ignored) one is left for a committable moment.
+func TestChatLogStreamBootRegeneratesIgnoredIndex(t *testing.T) {
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		ignored bool
+	}{{"ignored", true}, {"not ignored", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.ignored {
+				gitIgnoringArchive(t, dir, "index.html", "assets/viewer.css", "assets/viewer.js")
+			} else {
+				gitIgnoringArchive(t, dir)
+			}
+			pulled := filepath.Join(dir, "2026-07-17-01-pulled-chat.md")
+			if err := os.WriteFile(pulled, []byte("<!-- agent-chat export\ntitle: Pulled Chat\n-->\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			s, err := newChatLogStream(dir, "sess-boot", "", "claude", "v1", nil, now)
+			if err != nil {
+				t.Fatalf("newChatLogStream: %v", err)
+			}
+			defer s.Close()
+			<-s.bootIndex // regenerated off the boot path
+
+			data, err := os.ReadFile(filepath.Join(dir, "index.html"))
+			if !tc.ignored {
+				if !os.IsNotExist(err) {
+					t.Fatalf("boot wrote an index.html the repo does not ignore (err=%v)", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("boot did not write the ignored index.html: %v", err)
+			}
+			if !strings.Contains(string(data), "2026-07-17-01-pulled-chat.md") {
+				t.Error("boot-time index.html does not list the chat already in the archive")
+			}
+		})
+	}
+}
+
+// TestNewArchiveGetsGitignore: the archive directory agent-chat itself creates
+// inside a git repo ignores its three generated files from the first commit,
+// so a full boot → close → `git add` round trip stages the chat and the
+// .gitignore and nothing generated. An archive that already exists, a
+// directory outside git, and -chatlog-gitignore=off all write nothing.
+func TestNewArchiveGetsGitignore(t *testing.T) {
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	boot := func(t *testing.T, dir string) *chatLogStream {
+		t.Helper()
+		s, err := newChatLogStream(dir, "sess-new-archive", "", "claude", "v1", nil, now)
+		if err != nil {
+			t.Fatalf("newChatLogStream: %v", err)
+		}
+		t.Cleanup(s.Close)
+		<-s.bootIndex
+		return s
+	}
+	absent := func(t *testing.T, dir string) {
+		t.Helper()
+		if _, err := os.Stat(filepath.Join(dir, ".gitignore")); !os.IsNotExist(err) {
+			t.Errorf("%s/.gitignore written (err=%v), want none", dir, err)
+		}
+	}
+
+	t.Run("new archive in a git repo", func(t *testing.T) {
+		repo := t.TempDir()
+		gitIgnoringArchive(t, repo)
+		dir := filepath.Join(repo, "agent-chats")
+		s := boot(t, dir)
+		history := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+		s.HandleEvent(history[0])
+		paths, err := s.CloseOut("First Chat", history)
+		if err != nil {
+			t.Fatalf("CloseOut: %v", err)
+		}
+		cmd := exec.Command("git", append([]string{"add", "--"}, paths...)...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git add of the returned paths failed: %v: %s", err, out)
+		}
+		cmd = exec.Command("git", "status", "--porcelain", "--untracked-files=all")
+		cmd.Dir = repo
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// repo/.gitignore is the helper's own (empty) file, never staged.
+		want := "A  agent-chats/.gitignore\nA  agent-chats/2026-07-18-01-first-chat.md\n?? .gitignore\n"
+		if string(out) != want {
+			t.Errorf("git status after staging the returned paths:\n%s\nwant:\n%s", out, want)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "index.html")); err != nil {
+			t.Errorf("ignored index.html not on disk: %v", err)
+		}
+	})
+
+	t.Run("existing archive is left alone", func(t *testing.T) {
+		repo := t.TempDir()
+		gitIgnoringArchive(t, repo)
+		dir := filepath.Join(repo, "agent-chats")
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		boot(t, dir)
+		absent(t, dir)
+	})
+
+	t.Run("outside git", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "agent-chats")
+		boot(t, dir)
+		absent(t, dir)
+	})
+
+	t.Run("switched off", func(t *testing.T) {
+		chatLogGitignoreSetting = false
+		t.Cleanup(func() { chatLogGitignoreSetting = true })
+		repo := t.TempDir()
+		gitIgnoringArchive(t, repo)
+		dir := filepath.Join(repo, "agent-chats")
+		boot(t, dir)
+		absent(t, dir)
+	})
+}
+
+func TestParseChatLogGitignore(t *testing.T) {
+	for _, tc := range []struct {
+		flagVal, envVal string
+		want, wantErr   bool
+	}{
+		{"", "", true, false},
+		{"", "off", false, false},
+		{"on", "off", true, false},
+		{"false", "", false, false},
+		{"", "maybe", true, true},
+	} {
+		got, err := parseChatLogGitignore(tc.flagVal, tc.envVal)
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Errorf("parseChatLogGitignore(%q, %q) = %v, %v; want %v, err=%v", tc.flagVal, tc.envVal, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+// TestChatLogStreamCloseOutSkipsIgnoredPaths: `git add` refuses a command
+// naming an ignored path, so chatlog_close must not hand one back.
+func TestChatLogStreamCloseOutSkipsIgnoredPaths(t *testing.T) {
+	dir := t.TempDir()
+	gitIgnoringArchive(t, dir, "index.html", "assets/viewer.css", "assets/viewer.js")
+	now := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	s, err := newChatLogStream(dir, "sess-close-ignored", "", "claude", "v1", nil, now)
+	if err != nil {
+		t.Fatalf("newChatLogStream: %v", err)
+	}
+	<-s.bootIndex
+	history := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+	s.HandleEvent(history[0])
+
+	paths, err := s.CloseOut("Ignored Viewer", history)
+	if err != nil {
+		t.Fatalf("CloseOut: %v", err)
+	}
+	want := []string{filepath.Join(dir, "2026-07-18-01-ignored-viewer.md"), filepath.Join(dir, ".gitignore")}
+	if len(paths) != 2 || paths[0] != want[0] || paths[1] != want[1] {
+		t.Fatalf("CloseOut paths = %v, want %v", paths, want)
+	}
+	// The returned paths are a `git add` command line: it has to succeed.
+	cmd := exec.Command("git", append([]string{"add", "--"}, paths...)...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add of the returned paths failed: %v: %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "index.html")); err != nil {
+		t.Errorf("index.html not regenerated on close: %v", err)
 	}
 }
 

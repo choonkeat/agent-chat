@@ -71,3 +71,21 @@ one session would still rake in every other session's in-flight untitled file.
   the next regeneration, since provisional exports are now filtered out.
 - Merge conflicts in `index.html` become rare rather than routine; the healing
   behaviour stays as a safety net.
+
+## Addendum 2026-10-03: a gitignored `index.html` is also regenerated at boot
+
+Everything above rests on `index.html` being tracked. An archive may instead
+gitignore it (with `viewer.css` / `viewer.js` — the three generated files),
+and one agent-chat creates inside a git repo now does, via its own
+`agent-chats/.gitignore` (`ensureArchiveDir`; `-chatlog-gitignore=off` opts
+out). An existing archive is never switched automatically: the rule is inert
+on tracked files, and it breaks `chatlog_close` for teammates on a copy that
+still returns the three paths.
+Then no checkout carries it, so the commit moments alone would leave a
+teammate's pulled chats unlisted until they exported one of their own; and
+rewriting it cannot dirty the working tree. So `newChatLogStream` regenerates
+it at boot — in a goroutine, so the chat never waits on it — when
+`git check-ignore` reports it ignored, and only then — a
+tracked or merely untracked `index.html` keeps the rule above. `chatlog_close`
+drops ignored files from the paths it returns, because `git add` refuses a
+command line naming an ignored path and stages nothing.

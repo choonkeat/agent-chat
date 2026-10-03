@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -431,6 +432,9 @@ func ensureViewerAssets(dir string) error {
 	return nil
 }
 
+// indexMu serialises index.html writers within this process.
+var indexMu sync.Mutex
+
 // manifestEntry is rendered as one line of the inline MANIFEST array in
 // index.html.
 type manifestEntry struct {
@@ -523,8 +527,12 @@ func indexReferencesMD(root, mdPath string) bool {
 // set_chat_title that renames an export already present in the manifest.
 // Notably NOT on every appended bubble — regenerating live would leave the
 // working tree permanently dirty with manifest entries pointing at untracked,
-// still-renameable `untitled-{uuid}.md` files.
+// still-renameable `untitled-{uuid}.md` files. A gitignored index.html has no
+// tree to dirty, so boot regenerates that one as well (newChatLogStream).
 func regenerateIndexHTML(dir string) error {
+	// Boot regenerates in the background, so a tool call can land mid-write.
+	indexMu.Lock()
+	defer indexMu.Unlock()
 	if _, err := os.Stat(dir); err != nil {
 		return fmt.Errorf("read dir %s: %w", dir, err)
 	}
@@ -594,6 +602,9 @@ func runChatMarkdownExport(rootDir, slug string, events []Event, agent string, v
 	idx := fmt.Sprintf("%02d", nextDailyIndex(rootDir, date))
 	mdPath := exportMDPath(rootDir, date, idx, slug)
 
+	if err := ensureArchiveDir(rootDir); err != nil {
+		return "", nil, err
+	}
 	if err := os.MkdirAll(filepath.Dir(mdPath), 0755); err != nil {
 		return "", nil, fmt.Errorf("mkdir %s: %w", rootDir, err)
 	}

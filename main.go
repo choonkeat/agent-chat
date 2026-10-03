@@ -269,6 +269,7 @@ func main() {
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
 	filepathRootsFlag := flag.String("filepath-roots", "", "comma-separated allowlist of roots for absolute (@/…) filepath autocomplete (default: cwd + /repos,/workspace,/worktrees)")
 	chatlogLayoutFlag := flag.String("chatlog-layout", "", "where new chat-log exports are filed: \"auto\" (the default: by month once the archive already has a month-filed chat, flat until then), \"flat\" (agent-chats/YYYY-MM-DD-NN-title.md) or \"month\" (agent-chats/YYYY-MM/DD-NN-title.md). Both are always readable; this only picks where new files go. Falls back to AGENT_CHAT_CHATLOG_LAYOUT")
+	chatlogGitignoreFlag := flag.String("chatlog-gitignore", "", "\"on\" (the default) or \"off\": when agent-chat creates the chat-log archive directory inside a git repo, also write a .gitignore there for the three files it regenerates itself (index.html, assets/viewer.css, assets/viewer.js). An archive that already exists is never touched. Falls back to AGENT_CHAT_CHATLOG_GITIGNORE")
 	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; the opening position for this chat only, outranked by the box in Settings and by the browser's last choice")
 	flag.Parse()
 
@@ -279,6 +280,11 @@ func main() {
 		log.Fatalf("agent-chat: %v", err)
 	}
 	chatLogLayoutSetting = layout
+	archiveGitignoreOn, err := parseChatLogGitignore(*chatlogGitignoreFlag, os.Getenv("AGENT_CHAT_CHATLOG_GITIGNORE"))
+	if err != nil {
+		log.Fatalf("agent-chat: %v", err)
+	}
+	chatLogGitignoreSetting = archiveGitignoreOn
 
 	welcomeReplies = parseWelcomeReplies(*welcomeRepliesFlag)
 	cwd, _ := os.Getwd()

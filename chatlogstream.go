@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,6 +42,10 @@ type chatLogStream struct {
 	f        *os.File          // O_APPEND handle
 	stopped  bool              // chatlog_optout / chatlog_close
 	optedOut bool              // chatlog_optout specifically: the .md was deleted
+
+	// bootIndex is closed once the boot-time index.html regeneration (a
+	// gitignored index only) has finished or been skipped.
+	bootIndex <-chan struct{}
 }
 
 // chatLogSessionID derives the stable identity written to the `session:`
@@ -92,14 +97,34 @@ func initChatLogStream(exportDir, cwd, sessionID, sessionUUID, agent, version st
 // recovered by re-folding history — the same in-memory events the bus replays
 // — never by parsing the markdown.
 func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, history []Event, now time.Time) (*chatLogStream, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir %s: %w", dir, err)
+	if err := ensureArchiveDir(dir); err != nil {
+		return nil, err
 	}
 	if err := ensureViewerAssets(viewerAssetsDir(dir)); err != nil {
 		return nil, err
 	}
+	// A gitignored index.html is not in anyone's checkout, so nothing but this
+	// process will ever list the chats a pull just brought in — and rewriting
+	// it cannot dirty the working tree, which is the only reason a tracked
+	// index.html waits for a committable moment (regenerateIndexHTML's
+	// contract). Off the boot path: asking git and reading every export's
+	// header must not hold up the chat, and a failure here costs a stale
+	// landing page, never the export.
+	bootIndex := make(chan struct{})
+	go func() {
+		defer close(bootIndex)
+		if !gitIgnores(filepath.Join(dir, "index.html")) {
+			return
+		}
+		if err := regenerateIndexHTML(dir); err != nil {
+			log.Printf("Warning: chat-log index.html not regenerated at boot: %v", err)
+		}
+	}()
 
 	if s, err := resumeChatLogStream(dir, sessionID, agent, version, history); s != nil || err != nil {
+		if s != nil {
+			s.bootIndex = bootIndex
+		}
 		return s, err
 	}
 
@@ -162,6 +187,7 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 		assets:   chatAssetMode,
 		f:        f,
 	}
+	s.bootIndex = bootIndex
 	// Feature enabled mid-session (event log restored history but no export
 	// file existed yet): stream the backlog into the fresh file now.
 	// Attachments are best-effort — some upload sources may already be gone.
@@ -341,7 +367,9 @@ func isProvisionalSlug(slug string) bool {
 // filename churn on a committed file is always a deliberate set_chat_title,
 // never a side effect of closing. Idempotent: closing a closed stream returns
 // the same paths again. Returns the exact paths to git add: the .md, its
-// assets, index.html, and the shared viewer assets.
+// assets, the archive's .gitignore when it has one, index.html, and the shared
+// viewer assets — minus any of those last three the repo gitignores, since `git add` refuses a command that names an
+// ignored path and would then stage nothing at all.
 func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error) {
 	s.mu.Lock()
 	if s.optedOut {
@@ -377,15 +405,26 @@ func (s *chatLogStream) CloseOut(title string, history []Event) ([]string, error
 	assets, _ := filepath.Glob(filepath.Join(exportAssetsDir(mdPath), assetPrefix+"*"))
 	paths = append(paths, assets...)
 	for _, shared := range []string{
+		filepath.Join(dir, ".gitignore"),
 		filepath.Join(dir, "index.html"),
 		filepath.Join(viewerAssetsDir(dir), "viewer.css"),
 		filepath.Join(viewerAssetsDir(dir), "viewer.js"),
 	} {
-		if _, err := os.Stat(shared); err == nil {
+		if _, err := os.Stat(shared); err == nil && !gitIgnores(shared) {
 			paths = append(paths, shared)
 		}
 	}
 	return paths, nil
+}
+
+// gitIgnores reports whether a .gitignore rule excludes path. A file git
+// already tracks is never reported, whatever the rules say — `git add` takes
+// it — and neither is anything outside a git repo, or when git is missing: all
+// of those keep the tracked-file behaviour.
+func gitIgnores(path string) bool {
+	cmd := exec.Command("git", "check-ignore", "-q", "--", filepath.Base(path))
+	cmd.Dir = filepath.Dir(path)
+	return cmd.Run() == nil
 }
 
 // chatLogStatus is what an external orchestrator needs to decide whether to

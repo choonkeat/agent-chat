@@ -48,7 +48,7 @@ Agent (Claude, etc.)
 | `send_verbal_progress` | Send a non-blocking spoken progress update. |
 | `check_messages` | Non-blocking check for queued user messages. |
 | `set_chat_title` | Name the streaming chat-log export (see below): renames the auto-written `…-untitled.md` to `…-{slugified-title}.md` and rewrites its header. Call again anytime to rename; also re-enables the export after `chatlog_optout`. |
-| `chatlog_close` | Close out the streaming chat-log export for a clean git commit: freezes this session's `.md` (kept, unlike `chatlog_optout`), regenerates `index.html`, and returns the exact paths to `git add`. Requires a `title` while the file is still untitled; never renames an already-titled file. `set_chat_title` re-opens with a full-history backfill. |
+| `chatlog_close` | Close out the streaming chat-log export for a clean git commit: freezes this session's `.md` (kept, unlike `chatlog_optout`), regenerates `index.html`, and returns the exact paths to `git add` (gitignored generated files left out). Requires a `title` while the file is still untitled; never renames an already-titled file. `set_chat_title` re-opens with a full-history backfill. |
 | `chatlog_optout` | Stop the streaming chat-log export for this session and delete its `.md` (assets are left — content-sha names may be shared; `index.html` regenerated). |
 | `export_chat_md` | Manually export the current chat as a markdown file (script-style `**USER**` / `**AGENT**` markers that render as iMessage-style left/right bubbles via a sibling `index.html` and as a normal markdown doc on GitHub/GitLab). Writes `./agent-chats/YYYY-MM-DD-NN-{title}.md`, archives attachments to `./agent-chats/assets/` per `AGENT_CHAT_EXPORT_ASSETS` (or its `assets` param; default `none` = placeholders), refreshes `viewer.css` / `viewer.js`, and regenerates the chat-archive `index.html`. The manual escape hatch when the streaming export (below) is enabled. |
 
@@ -139,6 +139,34 @@ itself, no `export_chat_md` call needed:
   exports are never listed — otherwise every live session would leave the
   working tree dirty with links to untracked files that `set_chat_title` is
   about to rename.
+- **The three generated files stay out of git in a new archive.** When
+  agent-chat creates the archive directory inside a git repo, it also writes
+  `agent-chats/.gitignore`:
+
+  ```
+  /index.html
+  /assets/viewer.css
+  /assets/viewer.js
+  ```
+
+  Nothing else under `assets/` is generated — attachments cannot be rebuilt,
+  so never ignore the directory. `-chatlog-gitignore=off` (or
+  `AGENT_CHAT_CHATLOG_GITIGNORE=off`) keeps the file from being written, for
+  a team that wants the bubble view committed: it then exists in a fresh
+  clone and on a site published straight from the repo, which an ignored one
+  does not.
+
+  An ignored `index.html` is regenerated every time agent-chat starts with
+  the streaming export on (the viewer files always are), so chats a
+  `git pull` brought in are listed without anyone exporting. That runs in the
+  background; the chat does not wait for it. `chatlog_close` leaves ignored
+  files out of the paths it returns, and includes the `.gitignore`.
+- **An archive that already exists is never switched** — an ignore rule does
+  nothing to files git already tracks, and a teammate on agent-chat ≤ 0.16.0
+  gets those three paths from `chatlog_close`, which `git add` refuses once
+  they are ignored. To switch one deliberately, after everyone has updated:
+  add the `.gitignore` above, then
+  `git rm --cached agent-chats/index.html agent-chats/assets/viewer.css agent-chats/assets/viewer.js`.
 - The header comment carries a `session:` line, so a restarted process
   (same `AGENT_CHAT_EVENT_LOG`) resumes appending to its own file instead of
   minting a new one.
@@ -168,6 +196,7 @@ The chat UI opens automatically in your browser.
 | `AGENT_CHAT_EVENT_LOG` | Path to a JSONL file for event persistence across restarts |
 | `AGENT_CHAT_EXPORT_DIR` | Directory (relative to cwd) for the streaming markdown chat-log export; unset = disabled |
 | `AGENT_CHAT_EXPORT_ASSETS` | What chat-log exports do with attachments: `none` (default — placeholders; text files still copied), `small` (images downscaled to 1280px), `original` (byte-for-byte) |
+| `AGENT_CHAT_CHATLOG_GITIGNORE` | `on` (default) or `off`: whether a newly created chat-log archive inside a git repo gets a `.gitignore` for its three generated files. Same as `-chatlog-gitignore` |
 | `AGENT_CHAT_PROMPTS_FILE` | Path to an editable copy of the text wrapped around each user message ([`prompts/agent-reply.tmpl`](prompts/agent-reply.tmpl)). Missing or blank: filled with the built-in rules. Reread on every message; a broken file falls back to the built-in rules and says so in the chat |
 | `AGENT_CHAT_DISABLE` | Set to any value to disable tools and HTTP server |
 
