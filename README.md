@@ -89,14 +89,14 @@ itself, no `export_chat_md` call needed:
   Copied files go into the `assets/` directory beside the `.md` (content-sha
   filenames). `export_chat_md` follows the same setting; its `assets`
   parameter overrides it for one export.
-- **Month directories are understood everywhere, and written only on request.**
+- **A new chat is filed the way the archive already is.**
   A chat can live flat in the archive root, or one directory per month:
 
   ```
   agent-chats/
     index.html                     ← landing page, always at the root
     assets/viewer.css, viewer.js   ← one copy for the whole archive
-    2026-08-15-01-some-title.md    ← flat (the default)
+    2026-08-15-01-some-title.md    ← flat
     assets/2026-08-15-01-1-{sha}.png
     2026-08/                       ← month layout
       15-01-another-title.md
@@ -104,11 +104,14 @@ itself, no `export_chat_md` call needed:
   ```
 
   Listing, session resume and daily `NN` numbering all read both shapes, so a
-  mixed archive is correct. New exports go flat unless you pass
-  `-chatlog-layout=month` (or set `AGENT_CHAT_CHATLOG_LAYOUT=month`) — the
-  default flips to `month` in a later release, once installed copies have
-  caught up: an older copy regenerating `index.html` drops every file it cannot
-  see, and it cannot see month directories.
+  mixed archive is correct. Where a *new* export goes follows the archive:
+  flat until the archive holds at least one chat in a month directory, by
+  month from then on. So one person migrating (below) and committing switches
+  every copy that writes to that archive, with nothing to set per machine.
+  Pin it with `-chatlog-layout=flat` or `=month` (or
+  `AGENT_CHAT_CHATLOG_LAYOUT`) — pin `flat` while anyone still runs a copy too
+  old to see month directories: such a copy regenerating `index.html` drops
+  every file it cannot see.
 - **`agent-chat migrate-chatlogs`** files an existing flat archive by month —
   it prints the `git mv` lines, and `-apply` runs them and regenerates
   `index.html`. Attachments keep their full-date basenames and are routed by

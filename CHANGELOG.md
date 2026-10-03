@@ -2,6 +2,19 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Changes
+- **A new chat follows the layout its archive already uses.** The chat-log
+  layout defaults to `auto`: flat while the archive has no chat in a month
+  directory, by month once it has one. One person running
+  `agent-chat migrate-chatlogs -apply` (or exporting with the layout set to
+  `month`) and committing is now enough — every other copy writing to that
+  archive files its next chat by month, instead of dropping it loose in the
+  root beside the month directories. `-chatlog-layout=flat|month` (or
+  `AGENT_CHAT_CHATLOG_LAYOUT`) still pins it; pin `flat` while anyone runs a
+  copy too old to see month directories.
+
 ## [0.15.0] — 2026-10-01
 
 ### Changes

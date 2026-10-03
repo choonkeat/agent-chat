@@ -46,27 +46,32 @@ var mdMonthNameRE = regexp.MustCompile(`^(\d{2})-(\d{2,3})-(.+)\.md$`)
 // to — so an archive holding a mixture is listed, resumed and numbered
 // correctly either way.
 //
-// The default is deliberately layoutFlat, and the rollout is staged: a release
-// that only *understands* month directories goes out first, and the default
-// flips to layoutMonth only once installed copies have caught up. Until then a
-// version that wrote month directories would produce an archive that older
-// copies cannot see -- and an older copy regenerating index.html drops every
-// file it cannot see out of the listing.
+// The default is layoutAuto: a new export follows the archive it lands in. Once
+// any chat is filed in a month directory -- one person ran migrate-chatlogs, or
+// set the layout to month, and committed the result -- every copy that reads
+// that archive files its next chat by month too, with nothing to configure per
+// machine. An archive with no month-filed chat stays flat, which is what keeps
+// it visible to copies too old to see month directories (such a copy
+// regenerating index.html drops every file it cannot see out of the listing).
+// "flat" and "month" pin the layout regardless of what the archive holds.
 type chatLogLayout int
 
 const (
+	// layoutAuto writes by month if the archive already has a month-filed
+	// chat, flat otherwise.
+	layoutAuto chatLogLayout = iota
 	// layoutFlat writes agent-chats/{YYYY-MM-DD}-{NN}-{slug}.md.
-	layoutFlat chatLogLayout = iota
+	layoutFlat
 	// layoutMonth writes agent-chats/{YYYY-MM}/{DD}-{NN}-{slug}.md.
 	layoutMonth
 )
 
 // chatLogLayoutSetting is resolved once at startup from -chatlog-layout /
 // AGENT_CHAT_CHATLOG_LAYOUT (see parseChatLogLayout).
-var chatLogLayoutSetting = layoutFlat
+var chatLogLayoutSetting = layoutAuto
 
 // parseChatLogLayout resolves the layout from the flag value (empty when the
-// flag was not given) falling back to the env var, then to layoutFlat. An
+// flag was not given) falling back to the env var, then to layoutAuto. An
 // unrecognised value is an error rather than a silent default: writing chats
 // somewhere other than intended is not something to discover months later.
 func parseChatLogLayout(flagVal, envVal string) (chatLogLayout, error) {
@@ -75,13 +80,31 @@ func parseChatLogLayout(flagVal, envVal string) (chatLogLayout, error) {
 		v = strings.TrimSpace(envVal)
 	}
 	switch strings.ToLower(v) {
-	case "", "flat":
+	case "", "auto":
+		return layoutAuto, nil
+	case "flat":
 		return layoutFlat, nil
 	case "month":
 		return layoutMonth, nil
 	default:
-		return layoutFlat, fmt.Errorf("unknown chat-log layout %q: want \"flat\" or \"month\"", v)
+		return layoutAuto, fmt.Errorf("unknown chat-log layout %q: want \"auto\", \"flat\" or \"month\"", v)
 	}
+}
+
+// archiveFiledByMonth reports whether root already holds at least one chat in
+// a month directory. An empty `2026-08/` does not count: only a filed chat is
+// evidence that someone chose the month layout for this archive.
+func archiveFiledByMonth(root string) bool {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return false
+	}
+	for _, de := range entries {
+		if de.IsDir() && monthDirRE.MatchString(de.Name()) && len(scanMonthDir(root, de.Name())) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // monthOf returns the "YYYY-MM" part of a "YYYY-MM-DD" date, or "" if date is
@@ -175,7 +198,8 @@ func flatMDPath(root, date, idx, slug string) string {
 // Migration deliberately does not use it: migrateChatLogs always targets the
 // month layout, because moving files there is the whole point of running it.
 func exportMDPath(root, date, idx, slug string) string {
-	if chatLogLayoutSetting == layoutMonth {
+	if chatLogLayoutSetting == layoutMonth ||
+		(chatLogLayoutSetting == layoutAuto && archiveFiledByMonth(root)) {
 		return chatMDPath(root, date, idx, slug)
 	}
 	return flatMDPath(root, date, idx, slug)

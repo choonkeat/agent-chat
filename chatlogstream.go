@@ -113,8 +113,8 @@ func newChatLogStream(dir, sessionID, sessionUUID, agent, version string, histor
 		slug = "untitled-" + suffix
 	}
 	idxNum := nextDailyIndex(dir, date)
-	// The month directory only exists under layoutMonth; under layoutFlat this
-	// is the archive root, already created above.
+	// The month directory only exists when filing by month; filing flat this is
+	// the archive root, already created above.
 	if exportDir := filepath.Dir(exportMDPath(dir, date, "01", "x")); exportDir != dir {
 		if err := os.MkdirAll(exportDir, 0755); err != nil {
 			return nil, fmt.Errorf("mkdir %s: %w", exportDir, err)

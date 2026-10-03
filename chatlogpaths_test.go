@@ -261,7 +261,7 @@ func withLayout(t *testing.T, l chatLogLayout) {
 }
 
 // TestParseChatLogLayout: the flag wins over the env var, an absent setting
-// means flat, and a typo is an error rather than a silent fallback — writing
+// means auto, and a typo is an error rather than a silent fallback — writing
 // chats somewhere other than intended should not be discovered months later.
 func TestParseChatLogLayout(t *testing.T) {
 	cases := []struct {
@@ -269,15 +269,16 @@ func TestParseChatLogLayout(t *testing.T) {
 		want      chatLogLayout
 		wantErr   bool
 	}{
-		{"", "", layoutFlat, false},
+		{"", "", layoutAuto, false},
+		{"auto", "month", layoutAuto, false},
 		{"", "month", layoutMonth, false},
 		{"", "flat", layoutFlat, false},
 		{"month", "", layoutMonth, false},
 		{"flat", "month", layoutFlat, false}, // flag outranks env
 		{"MONTH", "", layoutMonth, false},    // case-insensitive
 		{" month ", "", layoutMonth, false},  // trimmed
-		{"monthly", "", layoutFlat, true},
-		{"", "subdir", layoutFlat, true},
+		{"monthly", "", layoutAuto, true},
+		{"", "subdir", layoutAuto, true},
 	}
 	for _, c := range cases {
 		got, err := parseChatLogLayout(c.flag, c.env)
@@ -298,7 +299,7 @@ func TestNewExportHonoursLayout(t *testing.T) {
 	events := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
 	now := mustParseTime(t, "2026-04-30T10:00:00Z")
 
-	t.Run("flat by default", func(t *testing.T) {
+	t.Run("flat by default in an archive with no month-filed chat", func(t *testing.T) {
 		dir := t.TempDir()
 		mdPath, _, err := runChatMarkdownExport(dir, "flat-chat", events, "claude", "v1", assetsOriginal, now)
 		if err != nil {
@@ -333,6 +334,7 @@ func TestNewExportHonoursLayout(t *testing.T) {
 // the other layout — that mixture is the whole point of shipping the reader
 // before the writer.
 func TestStreamHonoursLayoutAndReadsBoth(t *testing.T) {
+	withLayout(t, layoutFlat)
 	dir := t.TempDir()
 	// An existing month-filed chat, as if written by a later version.
 	mustMkdir(t, filepath.Join(dir, "2026-07"))
@@ -346,7 +348,7 @@ func TestStreamHonoursLayoutAndReadsBoth(t *testing.T) {
 	}
 	defer s.Close()
 
-	// Flat by default — and numbered 02, because the month-filed chat already
+	// Flat because pinned — and numbered 02, because the month-filed chat already
 	// claimed 01 for that day.
 	if got, want := rel(t, dir, s.MDPath()), "2026-07-18-02-untitled.md"; got != want {
 		t.Errorf("stream md path = %q, want %q", got, want)
@@ -370,4 +372,67 @@ func TestStreamHonoursLayoutAndReadsBoth(t *testing.T) {
 			t.Errorf("index.html missing %s\n---\n%s", want, html)
 		}
 	}
+}
+
+// TestNewExportFollowsArchiveLayout: with nothing configured, a new chat is
+// filed the way the archive already is. One month-filed chat -- committed by
+// whoever migrated -- is enough to carry every other copy along, strays in the
+// root notwithstanding; an empty month directory is not evidence of anything;
+// and an explicit "flat" still outranks what the archive holds.
+func TestNewExportFollowsArchiveLayout(t *testing.T) {
+	events := []Event{{Type: "userMessage", Text: "hello", Timestamp: 1000}}
+	now := mustParseTime(t, "2026-04-30T10:00:00Z")
+	const monthChat = "<!-- agent-chat export\ntitle: Earlier\ndate: 2026-03-02\nindex: 01\nslug: earlier\n-->\n\n# Earlier\n"
+
+	export := func(t *testing.T, dir string) string {
+		t.Helper()
+		mdPath, _, err := runChatMarkdownExport(dir, "new-chat", events, "claude", "v1", assetsOriginal, now)
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+		return rel(t, dir, mdPath)
+	}
+
+	t.Run("month once the archive has a month-filed chat", func(t *testing.T) {
+		dir := t.TempDir()
+		mustMkdir(t, filepath.Join(dir, "2026-03"))
+		writeMd(t, filepath.Join(dir, "2026-03"), "02-01-earlier.md", monthChat)
+		// A stray flat chat beside the month directories does not pull it back.
+		writeMd(t, dir, "2026-04-01-01-stray.md", "# Stray\n")
+		if got, want := export(t, dir), "2026-04/30-01-new-chat.md"; got != want {
+			t.Errorf("md path = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an empty month directory does not count", func(t *testing.T) {
+		dir := t.TempDir()
+		mustMkdir(t, filepath.Join(dir, "2026-03"))
+		if got, want := export(t, dir), "2026-04-30-01-new-chat.md"; got != want {
+			t.Errorf("md path = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("flat when pinned, whatever the archive holds", func(t *testing.T) {
+		withLayout(t, layoutFlat)
+		dir := t.TempDir()
+		mustMkdir(t, filepath.Join(dir, "2026-03"))
+		writeMd(t, filepath.Join(dir, "2026-03"), "02-01-earlier.md", monthChat)
+		if got, want := export(t, dir), "2026-04-30-01-new-chat.md"; got != want {
+			t.Errorf("md path = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the streaming export follows it too", func(t *testing.T) {
+		dir := t.TempDir()
+		mustMkdir(t, filepath.Join(dir, "2026-03"))
+		writeMd(t, filepath.Join(dir, "2026-03"), "02-01-earlier.md", monthChat)
+		s, err := newChatLogStream(dir, "sess-follow", "", "claude", "v1", nil, now)
+		if err != nil {
+			t.Fatalf("newChatLogStream: %v", err)
+		}
+		defer s.Close()
+		if got, want := rel(t, dir, s.MDPath()), "2026-04/30-01-untitled.md"; got != want {
+			t.Errorf("stream md path = %q, want %q", got, want)
+		}
+	})
 }
