@@ -2,6 +2,31 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.17.0] — 2026-10-03
+
+### Changes
+- **A new chat archive keeps its three generated files out of git.**
+  `index.html`, `assets/viewer.css` and `assets/viewer.js` are rewritten by
+  agent-chat itself, so committing them only bought merge conflicts and a
+  dirty working tree. When agent-chat creates the archive directory inside a
+  git repo it now also writes `agent-chats/.gitignore` naming those three.
+  Attachments under `assets/` are not generated and stay tracked.
+  `-chatlog-gitignore=off` (or `AGENT_CHAT_CHATLOG_GITIGNORE=off`) keeps the
+  file from being written, for a team that wants the bubble view present in a
+  fresh clone or on a site published straight from the repo.
+- **An archive that already exists is never switched.** An ignore rule does
+  nothing to files git already tracks, and a teammate on 0.16.0 or older
+  still gets those three paths from `chatlog_close`, which `git add` refuses
+  once they are ignored. To switch deliberately, after everyone has updated:
+  add the `.gitignore`, then `git rm --cached` the three files (README).
+- **An ignored `index.html` is rebuilt at start.** With the streaming export
+  on, agent-chat regenerates it in the background each time it starts, so
+  chats a `git pull` brought in are listed without anyone exporting, and the
+  chat does not wait for it. A tracked `index.html` is still only rewritten
+  at commit moments.
+- **`chatlog_close` returns only paths `git add` will take.** Ignored
+  generated files are left out, and the archive's `.gitignore` is included.
+
 ## [0.16.0] — 2026-10-03
 
 ### Changes
