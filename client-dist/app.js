@@ -2688,9 +2688,94 @@ function autoGrow() {
   chatInput.style.height = 'auto';
   chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
   chatInput.style.overflowY = chatInput.scrollHeight > 150 ? 'auto' : 'hidden';
+  scheduleDraftSave();
 }
 
 chatInput.addEventListener('input', autoGrow);
+
+// --- Unsent draft, kept across reloads ---
+//
+// What is typed into the box is copied to localStorage, one copy per session,
+// and put back when the page opens with an empty box: a reload, a crash or a
+// reopened tab no longer loses an intricate prompt. Emptying the box (a send)
+// deletes the copy at once, so sent words never come back. The copies of
+// sessions abandoned mid-draft are pruned by age and count whenever a page
+// opens. Every storage call is guarded: a private window may refuse them, and
+// the chat must work the same without.
+
+var DRAFT_PREFIX = 'agent-chat-draft:';
+var DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+var DRAFT_MAX_COUNT = 20;
+var DRAFT_SAVE_DELAY_MS = 300;
+// swe-swe names each session; without it, the address tells sessions apart
+// (each runs on its own port).
+var draftKey = DRAFT_PREFIX + ((typeof SESSION_UUID === 'string' && SESSION_UUID) ? SESSION_UUID : location.host + location.pathname);
+var draftSaveTimer = null;
+
+/** Saving waits for typing to pause, and for the input listeners after this one
+    (the paste repair) to finish; deleting happens at once, so a page closed
+    right after a send cannot bring the sent words back. */
+function scheduleDraftSave() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = null;
+  if (!chatInput.value) {
+    saveDraftNow();
+    return;
+  }
+  draftSaveTimer = setTimeout(saveDraftNow, DRAFT_SAVE_DELAY_MS);
+}
+
+function saveDraftNow() {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = null;
+  try {
+    if (chatInput.value) {
+      localStorage.setItem(draftKey, JSON.stringify({ text: chatInput.value, t: Date.now() }));
+    } else {
+      localStorage.removeItem(draftKey);
+    }
+  } catch (e) { /* storage unavailable or full: the draft is simply not kept */ }
+}
+
+/** Drop copies older than DRAFT_MAX_AGE_MS, then all but the newest
+    DRAFT_MAX_COUNT. Unreadable entries go too. */
+function pruneDrafts() {
+  try {
+    var now = Date.now();
+    var kept = [];
+    for (var i = localStorage.length - 1; i >= 0; i--) {
+      var key = localStorage.key(i);
+      if (!key || key.indexOf(DRAFT_PREFIX) !== 0) continue;
+      var d = null;
+      try { d = JSON.parse(localStorage.getItem(key)); } catch (e) { /* removed below */ }
+      if (!d || typeof d.text !== 'string' || typeof d.t !== 'number' || now - d.t > DRAFT_MAX_AGE_MS) {
+        localStorage.removeItem(key);
+      } else {
+        kept.push({ key: key, t: d.t });
+      }
+    }
+    kept.sort(function (a, b) { return b.t - a.t; });
+    for (var j = DRAFT_MAX_COUNT; j < kept.length; j++) localStorage.removeItem(kept[j].key);
+  } catch (e) { /* storage unavailable */ }
+}
+
+function restoreDraft() {
+  pruneDrafts();
+  if (chatInput.value) return; // never overwrite what is already there
+  try {
+    var d = JSON.parse(localStorage.getItem(draftKey));
+    if (d && typeof d.text === 'string' && d.text) {
+      chatInput.value = d.text;
+      autoGrow();
+      updateSendButton();
+    }
+  } catch (e) { /* nothing to restore */ }
+}
+
+// A pending save is written before the page goes away.
+window.addEventListener('pagehide', function () {
+  if (draftSaveTimer) saveDraftNow();
+});
 
 // --- Autocomplete ---
 
@@ -4458,6 +4543,12 @@ function connect() {
         // The chip's words are the instruction; a reset command in front of
         // them is not part of what was chosen.
         var liveView = userMessageView(data.text);
+        // Whether this is the message this browser is waiting on, decided
+        // before adoptUnsentBubble takes it off the list. Anything else — a
+        // message pushed in by another agent, another tab's, a reconnect's
+        // replay — must leave the box alone: it may hold an unsent draft.
+        var waitingForOwn = awaitingEcho.length > 0;
+        var ownEcho = waitingForOwn && awaitingEcho[0].displayText === liveView.display;
         freezeCurrentReplies(liveView.cmd ? clearInstruction(data.text) : data.text);
         // Reset scroll flag before addBubble so scrollToBottom succeeds.
         isUserScrolledUp = false;
@@ -4472,13 +4563,15 @@ function connect() {
             addBubble(displayText, 'user', data.files, isVoiceMsg ? 'voice' : null, data.ts, data.id, undefined, undefined, data.file_paths);
           }
         }
-        // Re-enable input and clear the text now that the message is confirmed
-        chatInput.value = '';
-        chatInput.style.height = 'auto';
-        chatInput.readOnly = false;
-        chatInput.classList.remove('sending');
-        sendBtn.disabled = false;
-        sendBtn.classList.remove('sending');
+        // Unlock the box now that our message is confirmed. Never empty it:
+        // handleSend already did, and whatever is there now was typed since
+        // (a chip's send does not lock the box) or is a draft.
+        if (chatInput.readOnly && (ownEcho || !waitingForOwn)) {
+          chatInput.readOnly = false;
+          chatInput.classList.remove('sending');
+          sendBtn.disabled = false;
+          sendBtn.classList.remove('sending');
+        }
         updateSendButton(); // re-disable if uploads still pending
         // Show loading — agent is now processing the user's message.
         // Also ensures correct state after replay for new/reconnecting browsers.
@@ -4931,6 +5024,7 @@ if (typeof AGENT_CHAT_DEFER_STARTUP === 'undefined' || !AGENT_CHAT_DEFER_STARTUP
   if (playbackUrl) {
     startPlaybackMode(playbackUrl);
   } else {
+    restoreDraft();
     connect();
   }
 }
