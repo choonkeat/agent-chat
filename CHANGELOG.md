@@ -2,7 +2,7 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.16.0] — 2026-10-03
 
 ### Changes
 - **A new chat follows the layout its archive already uses.** The chat-log
@@ -14,6 +14,12 @@ All notable changes to agent-chat are documented in this file.
   root beside the month directories. `-chatlog-layout=flat|month` (or
   `AGENT_CHAT_CHATLOG_LAYOUT`) still pins it; pin `flat` while anyone runs a
   copy too old to see month directories.
+
+### Fixes
+- **A chat link to a folder opens the folder listing.** The trailing `/` was
+  added only to the visible `@dir/` text, not to the link itself. swe-swe's
+  Files pane lists a folder only for a path ending in `/`, so a link to a
+  folder holding an `index.html` opened that page instead of the listing.
 
 ## [0.15.0] — 2026-10-01
 
