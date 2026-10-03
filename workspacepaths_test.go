@@ -164,6 +164,11 @@ func TestExtractWorkspacePaths_RawIsTheSearchKey(t *testing.T) {
 		{"see ./client-dist/app.js here", "./client-dist/app.js", "client-dist/app.js"},
 		{"ends the sentence at client-dist/app.js.", "client-dist/app.js", "client-dist/app.js"},
 		{"the docs/adr/ directory", "docs/adr/", "docs/adr"},
+		{"look in docs/adr/.", "docs/adr/", "docs/adr"},
+		{"see client-dist/app.js...", "client-dist/app.js", "client-dist/app.js"},
+		{"run @Makefile.", "@Makefile", "Makefile"},
+		{"(see client-dist/app.js).", "client-dist/app.js", "client-dist/app.js"},
+		{"at client-dist/app.js:42.", "client-dist/app.js", "client-dist/app.js"},
 	}
 
 	for _, tc := range tests {

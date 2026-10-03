@@ -264,6 +264,103 @@ test.describe('bare workspace paths -> Files-pane links', () => {
     expect(html).not.toContain('data-files-path');
   });
 
+  // --- trailing punctuation and neighbouring characters ---
+  //
+  // The server trims sentence punctuation off a token before it stats it, so
+  // `client-dist/app.js.` arrives as raw `client-dist/app.js`. The browser must
+  // then find that raw in text where the punctuation is still attached.
+
+  test('full stack: a path ending a sentence (trailing ".") is linked', async ({ page }) => {
+    await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    await pushAgentBubble(server.url, 'the fix is in client-dist/app.js.');
+
+    const bubble = page.locator('.bubble.agent').last();
+    await expect(bubble).toContainText('the fix is in', { timeout: 5000 });
+    const link = bubble.locator('a[data-files-path]');
+    await expect(link).toHaveCount(1);
+    await expect(link.first()).toHaveText('@client-dist/app.js');
+  });
+
+  // Each row: the text, the raw the server sends for it, and the rendered
+  // text that must remain right after the link.
+  const NEIGHBOURS = [
+    { name: 'period ending a sentence', text: 'see client-dist/app.js.', raw: 'client-dist/app.js', after: '.' },
+    { name: 'period then another sentence', text: 'see client-dist/app.js. Then run it.', raw: 'client-dist/app.js', after: '. Then' },
+    { name: 'ellipsis', text: 'see client-dist/app.js...', raw: 'client-dist/app.js', after: '...' },
+    { name: 'directory with slash then period', text: 'look in docs/adr/.', raw: 'docs/adr/', path: 'docs/adr', dir: true, after: '.' },
+    { name: '@-path ending a sentence', text: 'run @Makefile.', raw: '@Makefile', path: 'Makefile', after: '.' },
+    // Controls: punctuation the browser already accepts.
+    { name: 'comma (control)', text: 'see client-dist/app.js, then', raw: 'client-dist/app.js', after: ',' },
+    { name: 'question mark (control)', text: 'is it client-dist/app.js?', raw: 'client-dist/app.js', after: '?' },
+    { name: 'closing paren (control)', text: '(see client-dist/app.js)', raw: 'client-dist/app.js', after: ')' },
+    { name: 'colon line number (control)', text: 'at client-dist/app.js:42', raw: 'client-dist/app.js', after: ':42' },
+    { name: 'bold then period (control)', text: 'see **client-dist/app.js**.', raw: 'client-dist/app.js', after: '</strong>.' },
+  ];
+
+  for (const row of NEIGHBOURS) {
+    test(`neighbouring chars: ${row.name}`, async ({ page }) => {
+      await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+      await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+      const entry = { raw: row.raw, path: row.path || row.raw, ...(row.dir && { dir: true }) };
+      const html = await render(page, row.text, [entry]);
+      expect(html).toContain('data-files-path=');
+      expect(html).toContain('</a>' + row.after);
+    });
+  }
+
+  // The trailing run is forgiven only when nothing path-like follows it.
+  const LONGER_NAMES = [
+    { name: 'a dotted extension', text: 'see docs/adr.md here', raw: 'docs/adr' },
+    { name: 'a hyphenated suffix', text: 'see client-dist/app.js-old here', raw: 'client-dist/app.js' },
+    { name: 'a dot then a slash', text: 'see docs/adr./x here', raw: 'docs/adr' },
+  ];
+
+  for (const row of LONGER_NAMES) {
+    test(`a longer name is still not matched: ${row.name}`, async ({ page }) => {
+      await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+      await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+      const html = await render(page, row.text, [{ raw: row.raw, path: row.raw }]);
+      expect(html).not.toContain('data-files-path');
+    });
+  }
+
+  test('a python dunder path is not mangled into bold', async ({ page }) => {
+    await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    // `__init__` is the bold marker pair, so the markdown pass runs first and
+    // the raw path is no longer in the text to find.
+    const html = await render(page, 'edit pkg/__init__.py now',
+      [{ raw: 'pkg/__init__.py', path: 'pkg/__init__.py' }]);
+    expect(html).not.toContain('<strong>');
+    expect(html).toContain('data-files-path="pkg/__init__.py"');
+  });
+
+  test('a dunder path keeps its link and its neighbours keep their bold', async ({ page }) => {
+    await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await render(page, '__note__: edit pkg/__init__.py.',
+      [{ raw: 'pkg/__init__.py', path: 'pkg/__init__.py' }]);
+    expect(html).toContain('<strong>note</strong>');
+    expect(html).toContain('>@pkg/__init__.py</a>.');
+  });
+
+  test('a dunder path as a markdown link target is untouched', async ({ page }) => {
+    await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+
+    const html = await render(page, 'see [the package](pkg/__init__.py) here',
+      [{ raw: 'pkg/__init__.py', path: 'pkg/__init__.py' }]);
+    expect((html.match(/<a /g) || []).length).toBe(1);
+    expect(html).toContain('data-files-path="pkg/__init__.py"');
+    expect(html).toContain('>the package</a>');
+  });
+
   test('no file_paths on the event leaves the text untouched', async ({ page }) => {
     await gotoRetry(page, `${server.url}?files_url=${encodeURIComponent(FILES_BASE)}`);
     await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });

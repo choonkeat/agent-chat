@@ -346,28 +346,9 @@ function parseTableAlign(sep) {
 // Without `files_url` there is no Files pane for a link to open, so the whole
 // thing stays off and paths render as the plain text they always were.
 function autolinkFilePaths(html, filePaths) {
-  if (!filesBaseUrl || !filePaths || !filePaths.length) return html;
-
-  // Longest raw first: regex alternation takes the first branch that matches at
-  // a position, so `docs/adr/x.md` must be offered before `docs/adr`.
-  var entries = filePaths.slice().sort(function (a, b) {
-    return (b.raw || '').length - (a.raw || '').length;
-  });
-  var byRaw = {};
-  var alternatives = [];
-  entries.forEach(function (entry) {
-    if (!entry || !entry.raw || byRaw[entry.raw]) return;
-    byRaw[entry.raw] = entry;
-    alternatives.push(entry.raw.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&'));
-  });
-  if (!alternatives.length) return html;
-
-  // Path characters on either side veto a match, so `docs/adr` does not fire
-  // inside `docs/adrenaline`.
-  var matcher = new RegExp(
-    '(?<![A-Za-z0-9_.@~/-])(' + alternatives.join('|') + ')(?![A-Za-z0-9_.@~/-])',
-    'g'
-  );
+  var found = filePathMatcher(filePaths);
+  if (!found) return html;
+  var matcher = found.matcher, byRaw = found.byRaw;
 
   // Split on tags so substitution only touches text, never an attribute value,
   // and track anchor depth so a path inside an existing link's text (a bare URL
@@ -384,6 +365,37 @@ function autolinkFilePaths(html, filePaths) {
       return filePathAnchor(byRaw[raw]) || raw;
     });
   }).join('');
+}
+
+// The regex that finds a bubble's file_paths raws in its text, plus the entry
+// for each raw. Null when there is nothing to link (no Files pane, no paths).
+function filePathMatcher(filePaths) {
+  if (!filesBaseUrl || !filePaths || !filePaths.length) return null;
+
+  // Longest raw first: regex alternation takes the first branch that matches at
+  // a position, so `docs/adr/x.md` must be offered before `docs/adr`.
+  var entries = filePaths.slice().sort(function (a, b) {
+    return (b.raw || '').length - (a.raw || '').length;
+  });
+  var byRaw = {};
+  var alternatives = [];
+  entries.forEach(function (entry) {
+    if (!entry || !entry.raw || byRaw[entry.raw]) return;
+    byRaw[entry.raw] = entry;
+    alternatives.push(entry.raw.replace(/[.*+?^${}()|[\]\\\/-]/g, '\\$&'));
+  });
+  if (!alternatives.length) return null;
+
+  // Path characters on either side veto a match, so `docs/adr` does not fire
+  // inside `docs/adrenaline`. After the path, a run of `.`, `-`, `~` or `@`
+  // vetoes only when a path character follows it: those are exactly what the
+  // server trims off as sentence noise, so `docs/adr.` and `app.js...` link
+  // while `docs/adr.md` and `app.js-old` still do not.
+  var matcher = new RegExp(
+    '(?<![A-Za-z0-9_.@~/-])(' + alternatives.join('|') + ')(?![.@~-]*[A-Za-z0-9_/])',
+    'g'
+  );
+  return { matcher: matcher, byRaw: byRaw };
 }
 
 // The anchor a workspace path renders as — same shape the markdown-link rule
@@ -663,12 +675,27 @@ function renderMarkdown(text, filePaths) {
   });
   // Headings, rules, lists and blockquotes — see parseBlocks.
   html = parseBlocks(html);
+  // A confirmed path holding `_` or `*` (pkg/__init__.py) would be cut up by
+  // the emphasis rules below into `pkg/<strong>init</strong>.py`, leaving no
+  // raw for autolinkFilePaths to find. Hide those paths from emphasis only;
+  // they are back in the text before the link rules run.
+  var emphasisSafe = [];
+  var pathsFound = filePathMatcher(filePaths);
+  if (pathsFound) {
+    html = html.replace(pathsFound.matcher, function (raw) {
+      if (!/[_*]/.test(raw)) return raw;
+      return '\u0000PATH' + (emphasisSafe.push(raw) - 1) + '\u0000';
+    });
+  }
   // Bold (**text** or __text__)
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/__(.+?)__/g, '<strong>$1</strong>');
   // Italic (*text* or _text_)
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
   html = html.replace(/(?<!\w)_(.+?)_(?!\w)/g, '<em>$1</em>');
+  html = html.replace(/\u0000PATH(\d+)\u0000/g, function(_, idx) {
+    return emphasisSafe[parseInt(idx, 10)];
+  });
   // Images ![alt](url) — accept absolute (http/https) AND relative URLs since
   // chat content often embeds images by path. Block `javascript:` for safety.
   // Must run before the link rule so the leading "!" is consumed.
