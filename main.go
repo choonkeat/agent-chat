@@ -49,6 +49,12 @@ var uploadDir string
 // for trigger entries that don't specify their own URL.
 var autocompleteURL string
 
+// autocompleteHeaders are sent on every external autocomplete request. Set
+// from --autocomplete-header-env so a secret (e.g. a session key) comes from
+// the environment instead of sitting in a URL on the command line, which
+// every process on the machine can read.
+var autocompleteHeaders http.Header
+
 // autocompleteTriggers is the raw flag value (e.g. "/=http://host/api,@=filepath").
 var autocompleteTriggers string
 
@@ -264,6 +270,8 @@ func main() {
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
 	flag.StringVar(&uploadDir, "upload-dir", "", "directory for uploaded files (default: temp dir)")
 	flag.StringVar(&autocompleteURL, "autocomplete-url", "", "legacy: fallback URL for triggers without an explicit URL")
+	var autocompleteHeaderEnvs stringListFlag
+	flag.Var(&autocompleteHeaderEnvs, "autocomplete-header-env", "send header 'Name: ENV_VAR' with the value of ENV_VAR on external autocomplete requests (repeatable); keeps secrets out of the command line")
 	flag.StringVar(&autocompleteTriggers, "autocomplete-triggers", "", "trigger characters mapped to URLs (e.g. '/=http://host/api')")
 	defaultWelcome := "What can you help me with?,Give me an overview of this project,What's changed recently?"
 	welcomeRepliesFlag := flag.String("welcome-replies", defaultWelcome, "comma-separated quick replies shown on an empty chat ('' to disable)")
@@ -272,6 +280,11 @@ func main() {
 	chatlogGitignoreFlag := flag.String("chatlog-gitignore", "", "\"on\" (the default) or \"off\": when agent-chat creates the chat-log archive directory inside a git repo, also write a .gitignore there for the three files it regenerates itself (index.html, assets/viewer.css, assets/viewer.js). An archive that already exists is never touched. Falls back to AGENT_CHAT_CHATLOG_GITIGNORE")
 	ctxOnlyFlag := flag.Bool("conversation-context-only", false, "\"conversation context only\": every message resets the agent and points it at the chat log. Off unless set; the opening position for this chat only, outranked by the box in Settings and by the browser's last choice")
 	flag.Parse()
+	if h, err := headersFromEnv(autocompleteHeaderEnvs); err != nil {
+		log.Fatalf("--autocomplete-header-env: %v", err)
+	} else {
+		autocompleteHeaders = h
+	}
 
 	conversationContextOnly = *ctxOnlyFlag
 
@@ -998,7 +1011,18 @@ func handleAutocomplete(w http.ResponseWriter, r *http.Request) {
 	// External URL proxy.
 	if providerURL != "" {
 		proxyBody, _ := json.Marshal(map[string]string{"query": req.Query})
-		resp, err := http.Post(providerURL, "application/json", bytes.NewReader(proxyBody))
+		upReq, err := http.NewRequest(http.MethodPost, providerURL, bytes.NewReader(proxyBody))
+		if err != nil {
+			http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		upReq.Header.Set("Content-Type", "application/json")
+		for k, vs := range autocompleteHeaders {
+			for _, v := range vs {
+				upReq.Header.Add(k, v)
+			}
+		}
+		resp, err := http.DefaultClient.Do(upReq)
 		if err != nil {
 			http.Error(w, "autocomplete upstream error: "+err.Error(), http.StatusBadGateway)
 			return
@@ -1276,4 +1300,26 @@ func fuzzyScorePath(s, query string) (int, bool) {
 func fuzzyMatchPath(s, query string) bool {
 	_, ok := fuzzyScorePath(s, query)
 	return ok
+}
+
+// stringListFlag collects a repeatable string flag.
+type stringListFlag []string
+
+func (f *stringListFlag) String() string     { return strings.Join(*f, ", ") }
+func (f *stringListFlag) Set(v string) error { *f = append(*f, v); return nil }
+
+// headersFromEnv turns "Name: ENV_VAR" specs into headers whose values come
+// from the environment. An unset or empty variable produces no header.
+func headersFromEnv(specs []string) (http.Header, error) {
+	h := http.Header{}
+	for _, spec := range specs {
+		parts := strings.SplitN(spec, ": ", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return nil, fmt.Errorf("header spec wants 'Name: ENV_VAR', got %q", spec)
+		}
+		if v := os.Getenv(parts[1]); v != "" {
+			h.Set(parts[0], v)
+		}
+	}
+	return h, nil
 }

@@ -1073,3 +1073,54 @@ func TestCtxOnlyMethodNotAllowed(t *testing.T) {
 		t.Fatalf("expected 405, got %d", rr.Code)
 	}
 }
+
+// Headers configured with --autocomplete-header-env (values read from env)
+// are sent to the external autocomplete URL, so a secret such as a session
+// key never has to sit in the URL on the command line.
+func TestAutocompleteProxyHeaders(t *testing.T) {
+	var got string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("X-Swe-Session-Key")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]string{})
+	}))
+	defer upstream.Close()
+
+	t.Setenv("AC_TEST_KEY", "s3cret")
+	h, err := headersFromEnv([]string{"X-Swe-Session-Key: AC_TEST_KEY"})
+	if err != nil {
+		t.Fatalf("headersFromEnv: %v", err)
+	}
+	origMap, origHeaders := triggerMap, autocompleteHeaders
+	triggerMap = map[string]string{"/": upstream.URL}
+	autocompleteHeaders = h
+	t.Cleanup(func() { triggerMap, autocompleteHeaders = origMap, origHeaders })
+
+	req := httptest.NewRequest(http.MethodPost, "/autocomplete", bytes.NewBufferString(`{"trigger":"/","query":"x"}`))
+	rr := httptest.NewRecorder()
+	handleAutocomplete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got != "s3cret" {
+		t.Fatalf("upstream header = %q, want s3cret", got)
+	}
+}
+
+func TestHeadersFromEnv(t *testing.T) {
+	t.Setenv("AC_TEST_KEY2", "v")
+	h, err := headersFromEnv([]string{"X-A: AC_TEST_KEY2", "X-B: AC_TEST_UNSET_VAR"})
+	if err != nil {
+		t.Fatalf("headersFromEnv: %v", err)
+	}
+	if h.Get("X-A") != "v" {
+		t.Errorf("X-A = %q", h.Get("X-A"))
+	}
+	if _, ok := h["X-B"]; ok {
+		t.Error("unset env var must not produce a header")
+	}
+	if _, err := headersFromEnv([]string{"bad"}); err == nil {
+		t.Error("expected error for a spec without 'Name: VAR'")
+	}
+}
