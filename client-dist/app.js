@@ -5014,6 +5014,241 @@ function startPlaybackMode(url) {
     });
 }
 
+// --- Draft reply from a selection ---
+// Select text inside one bubble and a "Draft reply" button appears under the
+// end of the selection. It adds the selection to the end of the text box as a
+// markdown quote ("> " on every line), then a blank line, with the cursor on
+// that blank line. The blank line matters: a line typed directly under a quote
+// is pulled into it, and two quotes added back to back would merge into one.
+//
+// Whole bubble selected → the bubble's own markdown source (data-md), exactly.
+// Part of a bubble → the selected piece of the page, turned back into markdown
+// (lists, bold, code, links, code blocks, tables, nested quotes). A numbered
+// list restarts at 1 there, because the piece no longer knows where it began.
+
+var draftReplyBtn = null;
+var draftReplyRange = null; // the selection the button was shown for
+
+function draftReplyBubbleOf(node) {
+  var el = node && (node.nodeType === 1 ? node : node.parentNode);
+  var bubble = el && el.closest ? el.closest('.bubble') : null;
+  if (!bubble || !bubble.dataset.md) return null;
+  if (!bubble.classList.contains('agent') && !bubble.classList.contains('user')) return null;
+  return bubble;
+}
+
+// The bubble's readable text, without its ⋯ button or attachment chips.
+function draftReplyVisibleText(root) {
+  var clone = root.cloneNode(true);
+  var junk = clone.querySelectorAll('button, .file-attachments');
+  for (var i = 0; i < junk.length; i++) junk[i].remove();
+  return clone.textContent;
+}
+
+function draftReplySqueeze(s) {
+  return String(s || '').replace(/\s+/g, '');
+}
+
+// Markdown for a DOM node's children. `ctx` carries list depth for indents.
+function domToMarkdown(node, ctx) {
+  ctx = ctx || { indent: '' };
+  var out = '';
+  for (var c = node.firstChild; c; c = c.nextSibling) out += domNodeToMarkdown(c, ctx);
+  return out;
+}
+
+function domNodeToMarkdown(n, ctx) {
+  if (n.nodeType === 3) return n.nodeValue;
+  if (n.nodeType !== 1) return '';
+  var tag = n.tagName.toLowerCase();
+  if (tag === 'button' || n.classList.contains('file-attachments')) return '';
+  var inner = function () { return domToMarkdown(n, ctx); };
+  switch (tag) {
+    case 'br': return '\n';
+    case 'strong': case 'b': return wrapInline('**', inner());
+    case 'em': case 'i': return wrapInline('*', inner());
+    case 'code': return '`' + n.textContent + '`';
+    case 'pre': {
+      var code = n.querySelector('code');
+      var m = code && /(?:^|\s)language-(\w+)/.exec(code.className || '');
+      var body = n.textContent.replace(/\n$/, '');
+      return '\n```' + (m ? m[1] : '') + '\n' + body + '\n```\n';
+    }
+    case 'a': {
+      var text = n.textContent;
+      // An autolinked workspace path shows as "@path" — that is how the
+      // composer refers to files, so keep it as typed.
+      if (n.dataset.filesPath && text.charAt(0) === '@') return text;
+      var href = n.dataset.filesPath || n.getAttribute('href') || '';
+      if (!href || href === text) return text;
+      return '[' + text + '](' + href + ')';
+    }
+    case 'img': return '![' + (n.getAttribute('alt') || '') + '](' + (n.getAttribute('src') || '') + ')';
+    case 'h1': case 'h2': case 'h3': case 'h4': case 'h5': case 'h6':
+      return '\n' + '######'.slice(0, +tag.charAt(1)) + ' ' + inner().trim() + '\n';
+    case 'hr': return '\n---\n';
+    case 'blockquote': {
+      var q = domToMarkdown(n, { indent: '' }).replace(/^\n+|\n+$/g, '');
+      return '\n' + q.split('\n').map(function (l) { return l ? '> ' + l : '>'; }).join('\n') + '\n';
+    }
+    case 'ul': case 'ol': {
+      var items = '';
+      var num = 0;
+      for (var li = n.firstChild; li; li = li.nextSibling) {
+        if (li.nodeType !== 1 || li.tagName.toLowerCase() !== 'li') continue;
+        num++;
+        var marker = tag === 'ol' ? num + '. ' : '- ';
+        var pad = ctx.indent + '          '.slice(0, marker.length);
+        var body2 = domToMarkdown(li, { indent: pad }).replace(/^\n+|\n+$/g, '');
+        // Continuation lines (a nested list, a <br>) sit under the item text.
+        body2 = body2.split('\n').map(function (l, i) {
+          if (i === 0) return l;
+          return l && l.indexOf(pad) !== 0 ? pad + l : l;
+        }).join('\n');
+        items += ctx.indent + marker + body2 + '\n';
+      }
+      return '\n' + items;
+    }
+    case 'table': {
+      var rows = n.querySelectorAll('tr');
+      var lines = [];
+      for (var r = 0; r < rows.length; r++) {
+        var cells = rows[r].querySelectorAll('th,td');
+        var vals = [];
+        for (var k = 0; k < cells.length; k++) vals.push(domToMarkdown(cells[k], ctx).replace(/\n/g, ' ').trim());
+        lines.push('| ' + vals.join(' | ') + ' |');
+        if (r === 0 && cells.length && cells[0].tagName.toLowerCase() === 'th') {
+          lines.push('|' + vals.map(function () { return ' --- '; }).join('|') + '|');
+        }
+      }
+      return '\n' + lines.join('\n') + '\n';
+    }
+    default: return inner();
+  }
+}
+
+// "**  word **" is not bold in markdown; keep the spaces outside the marks.
+function wrapInline(mark, s) {
+  var m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
+  return m[2] ? m[1] + mark + m[2] + mark + m[3] : s;
+}
+
+// The selected piece of a bubble as markdown. cloneContents keeps the partly
+// selected elements *inside* the range's common ancestor, but not the ones
+// around it — select within one list item and you get bare text. So rebuild
+// that outer chain (list, item, bold, code block…) up to the bubble.
+function selectionToMarkdown(range, bubble) {
+  var visible = draftReplySqueeze(draftReplyVisibleText(bubble));
+  if (visible && draftReplySqueeze(range.toString()) === visible) return bubble.dataset.md;
+  var frag = range.cloneContents();
+  var anc = range.commonAncestorContainer;
+  if (anc.nodeType !== 1) anc = anc.parentNode;
+  var wrapper = document.createElement('div');
+  wrapper.appendChild(frag);
+  for (var el = anc; el && el !== bubble; el = el.parentNode) {
+    var shell = el.cloneNode(false);
+    while (wrapper.firstChild) shell.appendChild(wrapper.firstChild);
+    wrapper.appendChild(shell);
+  }
+  return domToMarkdown(wrapper);
+}
+
+// "> " in front of every line; empty lines get ">" alone so the quote holds.
+function quoteMarkdown(md) {
+  md = normalizeNewlines(md).replace(/[ \t]+$/gm, '').replace(/^\n+|\n+$/g, '').replace(/\n{3,}/g, '\n\n');
+  return md.split('\n').map(function (l) { return l ? '> ' + l : '>'; }).join('\n');
+}
+
+// Add the quote at the end of the draft — never in the middle of what was
+// typed — with a blank line before it (if the box has text) and after it.
+function appendQuoteToDraft(md) {
+  var quote = quoteMarkdown(md);
+  if (!quote) return;
+  var v = chatInput.value;
+  var lead = '';
+  if (v && !/\n\n$/.test(v)) lead = /\n$/.test(v) ? '\n' : '\n\n';
+  chatInput.focus();
+  chatInput.setSelectionRange(v.length, v.length);
+  insertAtCursor(lead + quote + '\n\n');
+  chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+}
+
+function hideDraftReplyBtn() {
+  if (draftReplyBtn) draftReplyBtn.hidden = true;
+  draftReplyRange = null;
+}
+
+function ensureDraftReplyBtn() {
+  if (draftReplyBtn) return draftReplyBtn;
+  draftReplyBtn = document.createElement('button');
+  draftReplyBtn.type = 'button';
+  draftReplyBtn.id = 'draft-reply-btn';
+  draftReplyBtn.hidden = true;
+  draftReplyBtn.innerHTML = '<span aria-hidden="true">&#x275D;</span> Draft reply';
+  // Pressing the button must not clear the selection it is about.
+  draftReplyBtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+  draftReplyBtn.addEventListener('click', function () {
+    var range = draftReplyRange;
+    var bubble = range && draftReplyBubbleOf(range.startContainer);
+    hideDraftReplyBtn();
+    if (!bubble) return;
+    var md = selectionToMarkdown(range, bubble);
+    // Clear the page selection first: clearing it after the text box has focus
+    // would also throw away the cursor placed there.
+    var sel = window.getSelection();
+    if (sel) sel.removeAllRanges();
+    appendQuoteToDraft(md);
+  });
+  document.body.appendChild(draftReplyBtn);
+  return draftReplyBtn;
+}
+
+// Show the button under where the selection ends, kept inside the screen.
+// Below, not above: phones put their own copy/paste menu above a selection.
+function updateDraftReplyBtn() {
+  var sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed || !chatInput || chatInput.disabled) {
+    hideDraftReplyBtn();
+    return;
+  }
+  var range = sel.getRangeAt(0);
+  var bubble = draftReplyBubbleOf(range.startContainer);
+  if (!bubble || draftReplyBubbleOf(range.endContainer) !== bubble || !range.toString().trim()) {
+    hideDraftReplyBtn();
+    return;
+  }
+  var rects = range.getClientRects();
+  var last = null;
+  for (var i = rects.length - 1; i >= 0; i--) {
+    if (rects[i].width > 0 || rects[i].height > 0) { last = rects[i]; break; }
+  }
+  if (!last) { hideDraftReplyBtn(); return; }
+  var btn = ensureDraftReplyBtn();
+  draftReplyRange = range.cloneRange();
+  btn.hidden = false;
+  var w = btn.offsetWidth;
+  var h = btn.offsetHeight;
+  var margin = 8;
+  var left = Math.min(Math.max(margin, last.right - w / 2), window.innerWidth - w - margin);
+  var top = last.bottom + 8;
+  if (top + h > window.innerHeight - margin) top = Math.max(margin, last.top - h - 8);
+  btn.style.left = left + 'px';
+  btn.style.top = top + 'px';
+}
+
+var draftReplyFrame = 0;
+function scheduleDraftReplyUpdate() {
+  if (draftReplyFrame) return;
+  draftReplyFrame = requestAnimationFrame(function () {
+    draftReplyFrame = 0;
+    updateDraftReplyBtn();
+  });
+}
+document.addEventListener('selectionchange', scheduleDraftReplyUpdate);
+window.addEventListener('resize', scheduleDraftReplyUpdate);
+// Bubbles scroll inside their own container; capture catches that scroll.
+document.addEventListener('scroll', scheduleDraftReplyUpdate, true);
+
 // --- Startup ---
 // If AGENT_CHAT_DEFER_STARTUP is set, skip automatic connect/playback
 // (allows embedding pages to call startPlaybackMode() manually).

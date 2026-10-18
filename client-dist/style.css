@@ -1403,3 +1403,31 @@ body {
   color: #fca5a5;
   border-color: #fca5a5;
 }
+
+/* "Draft reply": floats under the end of a text selection inside a bubble
+   (appended to <body>, positioned in JS). */
+#draft-reply-btn {
+  position: fixed;
+  z-index: 1000;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-secondary);
+  border-radius: 18px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#draft-reply-btn[hidden] {
+  display: none;
+}
+#draft-reply-btn:hover {
+  background: var(--bg-elevated);
+}
