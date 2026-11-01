@@ -1228,6 +1228,7 @@ function setQuickReplies(replies) {
     btn.className = 'chip';
     btn.dataset.message = replies[i];
     btn.textContent = replies[i];
+    btn.title = 'Shift-click (or long-press) to add to your message without sending';
     quickReplies.appendChild(btn);
   }
   scrollToBottom(false);
@@ -3307,10 +3308,82 @@ sendBtn.addEventListener('click', handleSend);
 quickReplies.addEventListener('click', function (e) {
   var chip = e.target.closest('.chip');
   if (!chip || chip.disabled) return;
+  if (chipLongPressFired) { chipLongPressFired = false; return; } // long-press already appended
 
   var message = chip.dataset.message || '';
   if (!message) return;
+  if (e.shiftKey || e.metaKey || e.ctrlKey) {
+    appendChipToInput(message);
+    return;
+  }
   submitUserMessage(message, 'chip');
+});
+
+// Shift/Cmd/Ctrl-click on a chip adds its text to the box instead of sending,
+// so it can be edited or combined first. The chips stay up.
+function appendChipToInput(text) {
+  var cur = chatInput.value;
+  var sep = (cur && !/\s$/.test(cur)) ? ' ' : '';
+  chatInput.value = cur + sep + text;
+  chatInput.focus();
+  var end = chatInput.value.length;
+  chatInput.setSelectionRange(end, end);
+  autoGrow();
+}
+
+// While a modifier is held, chips end in "…" (the old menu convention for
+// "asks for more before acting"): a click will not send.
+function setChipAppendMode(on) {
+  document.body.classList.toggle('chip-append', on);
+}
+function isChipModifier(e) { return e.shiftKey || e.metaKey || e.ctrlKey; }
+document.addEventListener('keydown', function (e) { setChipAppendMode(isChipModifier(e)); });
+document.addEventListener('keyup', function (e) { setChipAppendMode(isChipModifier(e)); });
+window.addEventListener('blur', function () { setChipAppendMode(false); });
+quickReplies.addEventListener('mousemove', function (e) { setChipAppendMode(isChipModifier(e)); });
+
+// Touch has no modifier keys: a long-press on a chip appends it instead. The
+// chip shows the same "…" while held, so the user sees it is about to append.
+var CHIP_LONG_PRESS_MS = 500;
+var chipLongPressTimer = null;
+var chipLongPressFired = false;
+var chipPressStart = null;
+function cancelChipLongPress() {
+  if (chipLongPressTimer) clearTimeout(chipLongPressTimer);
+  chipLongPressTimer = null;
+  var held = quickReplies.querySelector('.chip.chip-holding');
+  if (held) held.classList.remove('chip-holding');
+}
+quickReplies.addEventListener('pointerdown', function (e) {
+  if (e.pointerType === 'mouse') return;
+  var chip = e.target.closest('.chip');
+  if (!chip || chip.disabled) return;
+  cancelChipLongPress();
+  chipLongPressFired = false;
+  chipPressStart = { x: e.clientX, y: e.clientY };
+  chip.classList.add('chip-holding');
+  chipLongPressTimer = setTimeout(function () {
+    chipLongPressTimer = null;
+    chip.classList.remove('chip-holding');
+    chipLongPressFired = true;
+    appendChipToInput(chip.dataset.message || chip.textContent);
+    if (navigator.vibrate) { try { navigator.vibrate(15); } catch (_) {} }
+  }, CHIP_LONG_PRESS_MS);
+});
+quickReplies.addEventListener('pointermove', function (e) {
+  if (!chipLongPressTimer || !chipPressStart) return;
+  if (Math.abs(e.clientX - chipPressStart.x) > 10 || Math.abs(e.clientY - chipPressStart.y) > 10) {
+    cancelChipLongPress(); // a scroll, not a press
+  }
+});
+quickReplies.addEventListener('pointerup', cancelChipLongPress);
+quickReplies.addEventListener('pointercancel', function () {
+  cancelChipLongPress();
+  chipLongPressFired = false;
+});
+// Stop the long-press menu (Android) from opening over the chip.
+quickReplies.addEventListener('contextmenu', function (e) {
+  if (e.target.closest('.chip')) e.preventDefault();
 });
 
 // --- Voice mode ---

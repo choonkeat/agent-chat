@@ -894,6 +894,10 @@ body {
 }
 
 .chip {
+  position: relative; /* anchors the "…" shown while a modifier is held */
+  -webkit-touch-callout: none; /* no iOS callout on long-press */
+  -webkit-user-select: none;
+  user-select: none;
   padding: 0.35rem 0.9rem;
   font-size: 0.8rem;
   font-weight: 500;
@@ -914,6 +918,20 @@ body {
 .chip:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+/* Modifier held: a click appends to the box instead of sending. */
+body.chip-append #quick-replies .chip:not(:disabled),
+#quick-replies .chip.chip-holding {
+  border-style: dashed;
+  cursor: copy;
+}
+body.chip-append #quick-replies .chip:not(:disabled)::after,
+#quick-replies .chip.chip-holding::after {
+  content: '\2026';
+  /* Sit in the right padding so the chip keeps its width: no jump. */
+  position: absolute;
+  right: 0.3rem;
 }
 
 /* --- Frozen (historical) quick-reply chips --- */
