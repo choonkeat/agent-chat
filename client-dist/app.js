@@ -623,12 +623,18 @@ function renderMarkdown(text, filePaths) {
   // would happily rewrite a path shown as an example. Restored before the
   // block-level newline cleanup, which still needs to see the real <pre>.
   var codeBlocks = [];
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, function(_, lang, code) {
+  // A fence inside a quote has "> " on every line, the code lines included.
+  // Those marks belong to the quote, not the code: strip them from the code and
+  // keep them in front of the placeholder, so the quote rule still wraps it.
+  html = html.replace(/(^(?:&gt; ?)+)?```(\w*)\n?([\s\S]*?)```/gm, function(_, prefix, lang, code) {
+    prefix = prefix || '';
+    var depth = (prefix.match(/&gt;/g) || []).length;
+    if (depth) code = code.replace(new RegExp('^(?:&gt; ?){0,' + depth + '}', 'gm'), '');
     var highlighted = lang ? highlightCode(code, lang) : code;
     highlighted = highlighted.replace(/\n/g, '&#10;');
     var cls = lang ? ' class="language-' + lang + '"' : '';
     var idx = codeBlocks.push('<pre><code' + cls + '>' + highlighted + '</code></pre>') - 1;
-    return '\u0000PRE' + idx + '\u0000';
+    return prefix + '\u0000PRE' + idx + '\u0000';
   });
   // Inline code (same line only to prevent dangling backtick eating content).
   // Stash code spans behind placeholders so later inline rules (bold/italic/links)

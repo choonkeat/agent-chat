@@ -167,4 +167,32 @@ test.describe('renderMarkdown — blockquotes', () => {
     const html = await render(page, '> quoted\n\nAfter the quote.');
     expect(html).toBe('<blockquote>quoted</blockquote>After the quote.');
   });
+
+  // The "> " marks on the lines of a quoted code block belong to the quote.
+  // They used to land inside the code box, one per line, plus a stray ">" row.
+  test('a quoted code block shows the code without "> " marks', async ({ page }) => {
+    const html = await render(page, [
+      '> ```',
+      '> The message above is from another agent',
+      '> ```',
+    ].join('\n'));
+    expect(html).toBe('<blockquote><pre><code>The message above is from another agent&#10;</code></pre></blockquote>');
+  });
+
+  test('a quoted code block keeps its language and the quote around it', async ({ page }) => {
+    const html = await render(page, '> Run this:\n> ```js\n> const a = 1;\n> ```\n\nmy answer');
+    expect(html).toContain('<blockquote>Run this:<pre><code class="language-js">');
+    expect(html).toContain('</code></pre></blockquote>my answer');
+    expect(html).not.toContain('&gt;');
+  });
+
+  test('a code block in a nested quote loses both levels of marks', async ({ page }) => {
+    const html = await render(page, '>> ```\n>> deep\n>> ```');
+    expect(html).toBe('<blockquote><blockquote><pre><code>deep&#10;</code></pre></blockquote></blockquote>');
+  });
+
+  test('a ">" written inside an unquoted code block stays (regression)', async ({ page }) => {
+    const html = await render(page, '```\n> literal\n```');
+    expect(html).toBe('<pre><code>&gt; literal&#10;</code></pre>');
+  });
 });
