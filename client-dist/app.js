@@ -416,6 +416,24 @@ function filePathAnchor(entry) {
     + '" target="_blank" rel="noopener">@' + filesPath + '</a>';
 }
 
+// [[name]] -> a Files-pane link that md-serve resolves at click time: one file
+// with that name opens it, none or several open its finder. Same anchor shape
+// as filePathAnchor, so the click handler routes it unchanged. The name must
+// start with a letter or digit, which keeps shell `[[:space:]]`, `[[...]]` and
+// code like `[[880, 0]]` as plain text.
+var WIKI_LINK_RE = /\[\[([A-Za-z0-9][A-Za-z0-9_.\-]*(?:\/[A-Za-z0-9_.\-]+)*)\]\]/g;
+
+function wikiLinkAnchor(name) {
+  if (!filesBaseUrl) return '';
+  var filesPath = '_md-serve-resolve?name=' + encodeURIComponent(name);
+  var absolute = filesPath;
+  try { absolute = new URL(filesPath, filesBaseUrl).href; } catch (e) { /* keep raw */ }
+  return '<a href="' + absolute.replace(/"/g, '&quot;')
+    + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
+    + '" title="Find ' + name.replace(/"/g, '&quot;') + ' in Files'
+    + '" target="_blank" rel="noopener">' + name + '</a>';
+}
+
 // Look up a code span's exact content in the bubble's file_paths. Whole-content
 // match only: `see docs/adr` stays literal code, `docs/adr` becomes a link.
 // Anything partial would re-open the hole the code-span stash exists to close.
@@ -653,6 +671,17 @@ function renderMarkdown(text, filePaths) {
     var idx = codeSpans.push(linked || '<code>' + content + '</code>') - 1;
     return '\u0000CODE' + idx + '\u0000';
   });
+  // [[name]] links. Stashed after code (so `[[x]]` in code stays literal) and
+  // before emphasis (so project_mca_hub keeps its underscores). Restored after
+  // autolinkFilePaths, so the anchor is never wrapped twice.
+  var wikiLinks = [];
+  if (filesBaseUrl) {
+    html = html.replace(WIKI_LINK_RE, function(raw, name) {
+      var anchor = wikiLinkAnchor(name);
+      if (!anchor) return raw;
+      return '\u0000WIKI' + (wikiLinks.push(anchor) - 1) + '\u0000';
+    });
+  }
   // Tables
   html = html.replace(/(\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n?)+)/g, function(block) {
     var lines = block.trim().split('\n');
@@ -732,6 +761,9 @@ function renderMarkdown(text, filePaths) {
   // link rules, so an already-linked path is never re-wrapped and the anchors
   // above are skipped as tags.
   html = autolinkFilePaths(html, filePaths);
+  html = html.replace(/\u0000WIKI(\d+)\u0000/g, function(_, idx) {
+    return wikiLinks[parseInt(idx, 10)];
+  });
   // Restore fenced code blocks: after every rule that could have reached into
   // them, before the block-level cleanup below that expects a real <pre>.
   html = html.replace(/\u0000PRE(\d+)\u0000/g, function(_, idx) {
