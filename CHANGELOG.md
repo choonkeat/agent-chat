@@ -2,16 +2,33 @@
 
 All notable changes to agent-chat are documented in this file.
 
-## [Unreleased]
+## [0.18.0] — 2026-11-04
 
 ### Changes
 - **`[[name]]` links to a file by name.** In a chat bubble, `[[parse-dont-validate]]`
-  shows as a link with its brackets dimmed (so the syntax stays visible, and
-  "Draft reply" quotes it back as `[[name]]`); a click opens the Files tab, where md-serve finds the file:
-  one match opens it, none or several show the finder with the name filled in.
-  Needs md-serve with the `/_md-serve-resolve` route (newer than 0.10.0);
-  without it the link gives a 404. Only active when embedded with a Files tab
-  (`files_url`); `[[name]]` inside backticks or a code block stays plain text.
+  shows as a link with its brackets dimmed, so the syntax stays visible; a
+  click opens the Files tab, where md-serve finds the file: one match opens
+  it, none or several show the finder with the name filled in. Needs md-serve
+  with the `/_md-serve-resolve` route (newer than 0.10.0); without it the link
+  gives a 404. Only active when embedded with a Files tab (`files_url`);
+  `[[name]]` inside backticks or a code block stays plain text.
+- **"Draft reply" quotes a selection into the text box.** Select text inside
+  one bubble and a "Draft reply" button appears under it. It adds the
+  selection to the end of the draft as a `> ` quote, then a blank line with
+  the cursor on it, so an answer is not pulled into the quote and two quotes
+  in a row do not merge. A whole bubble quotes its markdown source exactly; a
+  partial selection is turned back into markdown (lists, bold, code, links,
+  code blocks, tables, nested quotes, and `[[name]]` / `@path` file links as
+  typed). A selection spanning two bubbles gets no button.
+- **`--autocomplete-header-env 'Name: ENV_VAR'` sends a header read from
+  the environment** with each autocomplete request, so swe-swe can pass its
+  session key without putting it on the command line, where any process can
+  read it.
+
+### Fixes
+- **A quoted code block no longer shows `> ` inside the code.** Each line of
+  a fenced block inside a `>` quote kept its `> ` in the code box, plus a
+  stray `>` row from the closing fence.
 
 ## [0.17.1] — 2026-10-16
 
