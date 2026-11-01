@@ -2,6 +2,16 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [Unreleased]
+
+### Changes
+- **`[[name]]` links to a file by name.** In a chat bubble, `[[parse-dont-validate]]`
+  shows as a link; a click opens the Files tab, where md-serve finds the file:
+  one match opens it, none or several show the finder with the name filled in.
+  Needs md-serve with the `/_md-serve-resolve` route (newer than 0.10.0);
+  without it the link gives a 404. Only active when embedded with a Files tab
+  (`files_url`); `[[name]]` inside backticks or a code block stays plain text.
+
 ## [0.17.1] — 2026-10-16
 
 ### Fixes
