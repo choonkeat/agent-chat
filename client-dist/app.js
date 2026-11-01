@@ -431,7 +431,8 @@ function wikiLinkAnchor(name) {
   return '<a href="' + absolute.replace(/"/g, '&quot;')
     + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
     + '" title="Find ' + name.replace(/"/g, '&quot;') + ' in Files'
-    + '" target="_blank" rel="noopener">' + name + '</a>';
+    + '" target="_blank" rel="noopener"><span class="wiki-bracket">[[</span>'
+    + name + '<span class="wiki-bracket">]]</span></a>';
 }
 
 // Look up a code span's exact content in the bubble's file_paths. Whole-content
@@ -5117,6 +5118,8 @@ function domNodeToMarkdown(n, ctx) {
       // An autolinked workspace path shows as "@path" — that is how the
       // composer refers to files, so keep it as typed.
       if (n.dataset.filesPath && text.charAt(0) === '@') return text;
+      // A [[name]] link shows its brackets, so it quotes back as typed too.
+      if (n.dataset.filesPath && /^\[\[.*\]\]$/.test(text)) return text;
       var href = n.dataset.filesPath || n.getAttribute('href') || '';
       if (!href || href === text) return text;
       return '[' + text + '](' + href + ')';

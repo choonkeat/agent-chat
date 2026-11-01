@@ -98,17 +98,22 @@ test.describe('[[name]] wiki links -> Files pane', () => {
         title: a && a.getAttribute('title'),
         linkText: a && a.textContent,
         ems: holder.querySelectorAll('em, strong').length,
+        brackets: holder.querySelectorAll('a .wiki-bracket').length,
+        quoted: window.domToMarkdown(holder, { indent: '' }),
       };
     }, { markdown, filesBase });
   }
 
-  test('[[name]] renders as a resolve link with the bare name as its text', async ({ page }) => {
+  test('[[name]] renders as a resolve link with faint brackets kept in its text', async ({ page }) => {
     const r = await render(page, 'see [[parse-dont-validate]] for why', FILES_BASE);
     expect(r.filesPath).toBe('_md-serve-resolve?name=parse-dont-validate');
     expect(r.href).toBe(FILES_BASE + '_md-serve-resolve?name=parse-dont-validate');
-    expect(r.linkText).toBe('parse-dont-validate');
+    expect(r.linkText).toBe('[[parse-dont-validate]]');
+    expect(r.brackets).toBe(2);
     expect(r.title).toBe('Find parse-dont-validate in Files');
-    expect(r.text).toBe('see parse-dont-validate for why');
+    expect(r.text).toBe('see [[parse-dont-validate]] for why');
+    // "Draft reply" quotes it back as typed, not as a [text](url) link.
+    expect(r.quoted.trim()).toBe('see [[parse-dont-validate]] for why');
   });
 
   test('[[name]] inside a code span or fenced block stays literal', async ({ page }) => {
@@ -125,7 +130,7 @@ test.describe('[[name]] wiki links -> Files pane', () => {
     const r = await render(page, '[[project_mca_hub]] and [[pkg__init__]]', FILES_BASE);
     expect(r.ems).toBe(0);
     expect(r.anchors).toBe(2);
-    expect(r.linkText).toBe('project_mca_hub');
+    expect(r.linkText).toBe('[[project_mca_hub]]');
     expect(r.html).toContain('_md-serve-resolve?name=pkg__init__');
   });
 
@@ -141,7 +146,7 @@ test.describe('[[name]] wiki links -> Files pane', () => {
     const r = await render(page, '[[a]](b)', FILES_BASE);
     expect(r.anchors).toBe(1);
     expect(r.filesPath).toBe('_md-serve-resolve?name=a');
-    expect(r.text).toBe('a(b)');
+    expect(r.text).toBe('[[a]](b)');
   });
 
   test('without files_url the text stays [[name]] with no anchor', async ({ page }) => {

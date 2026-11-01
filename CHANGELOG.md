@@ -6,7 +6,8 @@ All notable changes to agent-chat are documented in this file.
 
 ### Changes
 - **`[[name]]` links to a file by name.** In a chat bubble, `[[parse-dont-validate]]`
-  shows as a link; a click opens the Files tab, where md-serve finds the file:
+  shows as a link with its brackets dimmed (so the syntax stays visible, and
+  "Draft reply" quotes it back as `[[name]]`); a click opens the Files tab, where md-serve finds the file:
   one match opens it, none or several show the finder with the name filled in.
   Needs md-serve with the `/_md-serve-resolve` route (newer than 0.10.0);
   without it the link gives a 404. Only active when embedded with a Files tab

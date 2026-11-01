@@ -710,6 +710,11 @@ body {
   color: rgba(255, 255, 255, 0.85);
 }
 
+/* [[name]] links keep their brackets, dimmed, so the syntax stays visible. */
+.bubble a .wiki-bracket {
+  opacity: 0.5;
+}
+
 [data-theme="light"] .bubble a {
   color: #1d4ed8;
 }
