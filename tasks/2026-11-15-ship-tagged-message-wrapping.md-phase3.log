@@ -1,1 +1,2 @@
 232005 BEFORE: make test on main 7cf64ad (0.19.0 + style patch): unit + full e2e, serial ~30 min. CDP on $BROWSER_CDP_PORT answered /json/version (still warm). Expect unit PASS; e2e all pass (retries/flaky allowed per CLAUDE.md), 2 known skips.
+235320 AFTER: make test OBSERVED: go vet + go test ok; e2e 249 passed, 1 flaky (e2e/markdown-images.spec.cjs:201 'parent base set: relative image src resolves against parent' -- passed on retry; unrelated to message formatting; retries:1 is the documented allowance), 1 skipped (known pinned-port skip), 0 failed, 32.7m. As expected.

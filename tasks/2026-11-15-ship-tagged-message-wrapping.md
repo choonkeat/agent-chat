@@ -64,9 +64,9 @@ wins for a batch. `.Preamble` kept (always empty) so old rules files parse.
 Also: a block missing from a rules file falls back to the built-in one WITH
 its data (0.19.0 passes nil: `<no value>`, and an empty message), tested.
 
-### Phase 3 — make test (unit + e2e)
+### Phase 3 — make test (unit + e2e) — DONE (249 passed, 1 flaky on retry, 1 skipped)
 
-### Phase 4 — live check
+### Phase 4 — live check — DONE (user ran a new session on the build: works; released 2.43.2 guard blocks a silent turn after `User said:` and allows an empty-queue nudge; see phase4 log)
 Local build in a dev swe-swe session (released 2.43.2 hook): ADHD preset,
 send "Discuss how do we support this?" with a file attached; the agent sees
 `User said: <words>` then the labelled style; the bubble shows only the words.
@@ -79,8 +79,8 @@ user's browser approval).
 ### Done when
 - [x] Phase 1 RED on 0.19.0 observed and logged
 - [x] Phase 2 GREEN; rules-file fallback tested
-- [ ] `make test` green
-- [ ] Live check done and noted here
+- [x] `make test` green
+- [x] Live check done and noted here
 - [ ] CHANGELOG + bump + publish (with approval)
 
 ---
