@@ -1,6 +1,6 @@
 # Ship tagged message wrapping (fix: style preset glued to the user's words)
 
-Filed 2026-11-15. Status: **REVISED 2026-11-15: ship a small 0.19.1 patch instead** (see "Revised plan" below). The tagged-branch work (rebase, merge, phases 1-4 below) is parked on branch `ship-tagged-wrapping` (tip d6babc2, with its own phase logs) and ships later on its own schedule, or never. Repo: agent-chat
+Filed 2026-11-15. Status: **0.19.1 SHIPPED 2026-11-16** (revised plan: small patch instead of the tagged branch) (see "Revised plan" below). The tagged-branch work (rebase, merge, phases 1-4 below) is parked on branch `ship-tagged-wrapping` (tip d6babc2, with its own phase logs) and ships later on its own schedule, or never. Repo: agent-chat
 (`/repos/agent-chat/workspace`). Do not publish to npm until every
 "Done when" box below is ticked.
 
@@ -72,7 +72,7 @@ send "Discuss how do we support this?" with a file attached; the agent sees
 `User said: <words>` then the labelled style; the bubble shows only the words.
 Idle nudge with an empty queue: the Stop hook does not block.
 
-### Phase 5 — release
+### Phase 5 — release — DONE (0.19.1 published 2026-11-16, all 7 packages)
 CHANGELOG `[0.19.1]`, `make bump NEW_VERSION=0.19.1`, npm publish (needs the
 user's browser approval).
 
@@ -81,7 +81,7 @@ user's browser approval).
 - [x] Phase 2 GREEN; rules-file fallback tested
 - [x] `make test` green
 - [x] Live check done and noted here
-- [ ] CHANGELOG + bump + publish (with approval)
+- [x] CHANGELOG + bump + publish (with approval)
 
 ---
 
