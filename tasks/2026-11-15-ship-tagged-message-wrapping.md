@@ -48,7 +48,7 @@ User said: Discuss how do we support this in swe-swe? ...
 (Reply style your user set in settings, not part of their message:) Reply for a reader with ADHD: ...
 ```
 
-### Phase 1 — regression test, RED on 0.19.0
+### Phase 1 — regression test, RED on 0.19.0 — DONE
 `style_after_message_test.go`, using only `UserMessage{Text, Template}`:
 the "Discuss how do we support this" case (check_messages and send_message
 reply), a 2-message batch (style once, after both), `{{message}}` templates
@@ -77,7 +77,7 @@ CHANGELOG `[0.19.1]`, `make bump NEW_VERSION=0.19.1`, npm publish (needs the
 user's browser approval).
 
 ### Done when
-- [ ] Phase 1 RED on 0.19.0 observed and logged
+- [x] Phase 1 RED on 0.19.0 observed and logged
 - [ ] Phase 2 GREEN; rules-file fallback tested
 - [ ] `make test` green
 - [ ] Live check done and noted here
