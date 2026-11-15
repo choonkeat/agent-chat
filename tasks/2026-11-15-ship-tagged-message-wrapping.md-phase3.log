@@ -1,0 +1,1 @@
+232005 BEFORE: make test on main 7cf64ad (0.19.0 + style patch): unit + full e2e, serial ~30 min. CDP on $BROWSER_CDP_PORT answered /json/version (still warm). Expect unit PASS; e2e all pass (retries/flaky allowed per CLAUDE.md), 2 known skips.
