@@ -2,6 +2,21 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.19.0] — 2026-11-15
+
+### Changes
+- **Shift-, cmd- or ctrl-click a quick reply to draft it** instead of
+  sending it. On a phone, press and hold for half a second. The reply's
+  text is added to the end of the text box so it can be edited or combined
+  first. While the key is held (or the finger is down), the reply buttons
+  show a trailing "..." and a dashed border; they do not change size.
+- **`AGENT_CHAT_UPLOAD_MAX_MB` sets the largest file you can attach**, in
+  megabytes (decimals allowed). Unset, empty or `0` means no limit, which
+  is now the default; it used to be a fixed 50 MB. A file over the limit is
+  refused in the page before anything is sent, and by the server too. The
+  file's label says why: "too large (65.2 MB); limit is 50.0 MB". Large
+  uploads with no limit are held on disk while they arrive, then deleted.
+
 ## [0.18.0] — 2026-11-04
 
 ### Changes
