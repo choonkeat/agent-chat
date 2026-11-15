@@ -146,3 +146,22 @@ func TestRulesFileOverridesFixedSentences(t *testing.T) {
 		t.Errorf("empty queue override not used, got %q", got)
 	}
 }
+
+// A rules file made before a block existed (here: a 0.19.0 copy, which has no
+// "style-note") falls back to the built-in block WITH the caller's data.
+// execTemplate used to render the built-in with nil data: "<no value>" for the
+// style, and an empty "format-messages" (the user's words lost) for a file
+// without that block.
+func TestRulesFileMissingBlockFallbackKeepsItsData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rules.tmpl")
+	os.WriteFile(path, []byte(`{{define "reply-instructions"}}old rules{{end}}{{define "reply-instructions-short"}}old short{{end}}`), 0644)
+	useRulesFile(t, path)
+
+	out := FormatMessages([]UserMessage{{Text: glueText, Template: glueStyle}})
+	if strings.Contains(out, "<no value>") {
+		t.Fatalf("fallback lost its data:\n%s", out)
+	}
+	if want := glueText + "\n\n" + styleLabel + glueStyle; out != want {
+		t.Errorf("got:  %q\nwant: %q", out, want)
+	}
+}

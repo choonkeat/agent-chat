@@ -45,6 +45,7 @@ This file is the text agent-chat adds around every user message it hands the age
   "reply-instructions"       the full reply rules, sent with every 10th message
   "reply-instructions-short" the one-line reminder sent with the other nine
   "empty-queue"              what check_messages returns when nothing is waiting
+  "style-note"               the user's message-style setting, after the messages. Slot: .Style
 
 {{$reply}} / {{$progress}} stand for the reply and progress tool names; they switch
 to the voice tools when the user is speaking. A block you delete uses the built-in text.
@@ -137,9 +138,10 @@ func execTemplate(name string, data any) string {
 		t, _, err := loadRulesFile(path)
 		// A block the file does not define uses the built-in one: files made
 		// by an older release lack blocks added since, and the out-of-date
-		// notice already tells the user to refresh.
+		// notice already tells the user to refresh. Same data as the file's
+		// block would get, or the built-in renders "<no value>".
 		if err == nil && t.Lookup(name) == nil {
-			return builtinText(name)
+			return builtinTextWith(name, data)
 		}
 		if err == nil {
 			var buf bytes.Buffer
@@ -165,8 +167,8 @@ func builtinTextWith(name string, data any) string {
 
 // formatMessagesData is the data passed to the "format-messages" template.
 type formatMessagesData struct {
-	// Preamble is the style template hoisted above a multi-message batch that
-	// shares one; empty when each message carries its own (see sharedPreamble).
+	// Preamble is always empty since 0.19.1: the style comes after the
+	// messages, in "style-note". Kept so a rules file that names it still parses.
 	Preamble string
 	Messages []messageData
 	Files    []fileData
@@ -181,6 +183,11 @@ type fileData struct {
 	Path string
 	Type string
 	Size string
+}
+
+// styleNoteData is the data passed to the "style-note" template.
+type styleNoteData struct {
+	Style string
 }
 
 // replyInstructionsData is the data passed to the "reply-instructions" template.

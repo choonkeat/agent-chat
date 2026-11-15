@@ -1,0 +1,5 @@
+231918 CHANGE: eventbus.go applyMessageTemplate/sharedPreamble replaced by messageStyle (latest non-blank template, {{message}} marker dropped); FormatMessages appends execTemplate("style-note") after format-messages. New style-note block in prompts/agent-reply.tmpl. Updated 7 tools_test.go tests that pinned style-above-message.
+231918 BEFORE: RED for rules-file fallback: TestRulesFileMissingBlockFallbackKeepsItsData with prompts.go fallback temporarily reverted to builtinText(name). Expect FAIL with '<no value>' (or empty format-messages).
+231933 AFTER: RED OBSERVED as expected: TestRulesFileMissingBlockFallbackKeepsItsData FAIL 'fallback lost its data' -- output was blank lines + <no value> (format-messages rendered empty: the user's words were lost entirely). Also TestWaitForUserReplyAppliesMessageTemplate failed: it pinned the old 'In one line: the blue one' embedding -> updated to expect the style after the words. Fallback fix restored (builtinTextWith(name, data)).
+231933 BEFORE: GREEN run, make unit-test. Expect all PASS incl. 7 style_after_message tests.
+231953 AFTER: GREEN OBSERVED: make unit-test ok agent-chat 4.657s, all PASS.

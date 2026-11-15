@@ -660,64 +660,39 @@ func (eb *EventBus) RemoveFromQueue(targetID string) bool {
 	}
 }
 
-// messageTemplatePlaceholder marks where the user's message is substituted into
-// their message-style template. If a template omits it, the template is treated
-// as a preamble prepended to the message — which is what the browser now always
-// sends, since styles combine and the message always lands at the bottom. The
-// placeholder is still honoured for templates saved by an older client.
+// messageTemplatePlaceholder is the marker older clients put in a message-style
+// template where the message went. It is dropped (see messageStyle), as the
+// client itself does: the template is a style either way.
 const messageTemplatePlaceholder = "{{message}}"
 
-// applyMessageTemplate wraps a single user message with the browser-supplied
-// style template. An empty template (the default) returns the text unchanged.
-func applyMessageTemplate(template, text string) string {
-	template = strings.TrimSpace(template)
-	if template == "" {
-		return text
-	}
-	if strings.Contains(template, messageTemplatePlaceholder) {
-		return strings.ReplaceAll(template, messageTemplatePlaceholder, text)
-	}
-	return template + "\n\n" + text
-}
-
-// sharedPreamble returns the style template to hoist above a whole batch, or ""
-// to leave each message to applyMessageTemplate. A batch only qualifies when it
-// holds more than one message and every one carries the same preamble-style
-// template — a placeholder template embeds its message and so cannot be lifted
-// out, and a single message renders identically either way, so it takes the
-// per-message path and keeps its voice-decode note in front.
+// messageStyle returns the message-style text for a batch: the latest
+// message's non-blank template, with any legacy "{{message}}" marker dropped.
+// Later wins, as with any other instruction in a batch.
 //
-// Without this the preamble is pasted once per message in the batch. Across 89
-// real sessions the two paragraphs of one user's style template accounted for
-// 73% of everything that looked like their own words.
-func sharedPreamble(msgs []UserMessage) string {
-	if len(msgs) < 2 {
-		return ""
-	}
-	first := strings.TrimSpace(msgs[0].Template)
-	if first == "" || strings.Contains(first, messageTemplatePlaceholder) {
-		return ""
-	}
-	for _, m := range msgs[1:] {
-		if strings.TrimSpace(m.Template) != first {
-			return ""
+// The style is delivered once, AFTER the messages and labelled as not part of
+// them (the "style-note" block). 0.19.0 pasted it above the user's words with
+// only a blank line between; a style ending in an instruction then ran into a
+// message starting "Discuss how do we support this", and the agent read "this"
+// as the style and answered the wrong question.
+func messageStyle(msgs []UserMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		t := strings.TrimSpace(strings.ReplaceAll(msgs[i].Template, messageTemplatePlaceholder, ""))
+		if t != "" {
+			return t
 		}
 	}
-	return first
+	return ""
 }
 
-// FormatMessages joins user messages into a single string with file attachment info.
+// FormatMessages joins user messages into a single string with file
+// attachment info, then the user's message style (if any) after them.
 func FormatMessages(msgs []UserMessage) string {
-	preamble := sharedPreamble(msgs)
-	data := formatMessagesData{Preamble: preamble}
+	var data formatMessagesData
 	for _, m := range msgs {
 		isVoice := strings.HasPrefix(m.Text, "\U0001f3a4 ")
 		text := m.Text
 		if isVoice {
 			text = strings.TrimPrefix(text, "\U0001f3a4 ")
-		}
-		if preamble == "" {
-			text = applyMessageTemplate(m.Template, text)
 		}
 		data.Messages = append(data.Messages, messageData{Text: text, IsVoice: isVoice})
 		for _, f := range m.Files {
@@ -728,7 +703,11 @@ func FormatMessages(msgs []UserMessage) string {
 			data.Files = append(data.Files, fileData{Path: f.Path, Type: mime, Size: formatSize(f.Size)})
 		}
 	}
-	return execTemplate("format-messages", data)
+	out := execTemplate("format-messages", data)
+	if style := messageStyle(msgs); style != "" {
+		out += "\n\n" + execTemplate("style-note", styleNoteData{Style: style})
+	}
+	return out
 }
 
 // Subscribe returns a buffered channel that receives all published events.

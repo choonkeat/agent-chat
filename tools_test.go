@@ -69,28 +69,28 @@ func TestFormatMessagesVoice(t *testing.T) {
 func TestFormatMessagesTemplatePlaceholder(t *testing.T) {
 	msgs := []UserMessage{{Text: "fix the login bug", Template: "Reply concisely.\n\n{{message}}"}}
 	got := FormatMessages(msgs)
-	want := "Reply concisely.\n\nfix the login bug"
+	want := "fix the login bug\n\n" + styleLabel + "Reply concisely."
 	if got != want {
 		t.Errorf("FormatMessages template placeholder:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
 func TestFormatMessagesTemplatePreamble(t *testing.T) {
-	// No {{message}} placeholder — the template is prepended as a preamble.
+	// The style comes after the message, labelled (see style_after_message_test.go).
 	msgs := []UserMessage{{Text: "fix the login bug", Template: "Be direct."}}
 	got := FormatMessages(msgs)
-	want := "Be direct.\n\nfix the login bug"
+	want := "fix the login bug\n\n" + styleLabel + "Be direct."
 	if got != want {
 		t.Errorf("FormatMessages template preamble:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
 func TestFormatMessagesTemplateVoiceStripsPrefixFirst(t *testing.T) {
-	// The 🎤 voice prefix is stripped before the template wraps the text, and
-	// the result still flows through the voice framing.
+	// The 🎤 voice prefix is stripped and the message keeps its voice framing;
+	// the style follows it.
 	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red", Template: "Be brief.\n\n{{message}}"}}
 	got := FormatMessages(msgs)
-	want := "Decoded user's speech to text (may be inaccurate): Be brief.\n\nturn the box red"
+	want := "Decoded user's speech to text (may be inaccurate): turn the box red\n\n" + styleLabel + "Be brief."
 	if got != want {
 		t.Errorf("FormatMessages template voice:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -170,8 +170,8 @@ func TestFormatMessagesMultiple(t *testing.T) {
 
 // A style preamble used to be pasted onto every message in a batch. Measured
 // over 89 real sessions, one user's two-paragraph style template accounted for
-// 73% of everything that looked like their own words, so a batch that shares one
-// preamble now carries it once.
+// 73% of everything that looked like their own words, so a batch carries the
+// style once, after the messages.
 func TestFormatMessagesSharedPreambleHoistedOnce(t *testing.T) {
 	pre := "Reply for a reader with ADHD: lead with the next action."
 	msgs := []UserMessage{
@@ -179,7 +179,7 @@ func TestFormatMessagesSharedPreambleHoistedOnce(t *testing.T) {
 		{Text: "second message", Template: pre},
 	}
 	got := FormatMessages(msgs)
-	want := pre + "\n\nfirst message\n\nsecond message"
+	want := "first message\n\nsecond message\n\n" + styleLabel + pre
 	if got != want {
 		t.Errorf("shared preamble:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -188,40 +188,38 @@ func TestFormatMessagesSharedPreambleHoistedOnce(t *testing.T) {
 	}
 }
 
-// Only a batch that agrees on one preamble can hoist it; a mid-batch style
-// change must keep each message with its own.
-func TestFormatMessagesMixedTemplatesStayPerMessage(t *testing.T) {
+// A mid-batch style change: the later style wins, as with any instruction.
+func TestFormatMessagesMixedTemplatesLaterWins(t *testing.T) {
 	msgs := []UserMessage{
 		{Text: "first", Template: "Be direct."},
 		{Text: "second", Template: "Be verbose."},
 	}
 	got := FormatMessages(msgs)
-	want := "Be direct.\n\nfirst\n\nBe verbose.\n\nsecond"
+	want := "first\n\nsecond\n\n" + styleLabel + "Be verbose."
 	if got != want {
 		t.Errorf("mixed templates:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
-// A placeholder template embeds its message, so it cannot be lifted out.
-func TestFormatMessagesPlaceholderTemplateNotHoisted(t *testing.T) {
+// A placeholder template no longer wraps each message: marker dropped, style once.
+func TestFormatMessagesPlaceholderTemplateOnceAfterBatch(t *testing.T) {
 	tpl := "Reply concisely.\n\n{{message}}"
 	msgs := []UserMessage{
 		{Text: "first", Template: tpl},
 		{Text: "second", Template: tpl},
 	}
 	got := FormatMessages(msgs)
-	want := "Reply concisely.\n\nfirst\n\nReply concisely.\n\nsecond"
+	want := "first\n\nsecond\n\n" + styleLabel + "Reply concisely."
 	if got != want {
 		t.Errorf("placeholder template:\ngot:  %q\nwant: %q", got, want)
 	}
 }
 
-// Hoisting would move the voice-decode note behind the preamble, so a lone
-// message keeps the per-message path and renders exactly as before.
-func TestFormatMessagesSingleMessageUnaffectedByHoisting(t *testing.T) {
+// The voice-decode note stays in front of the words; the style follows.
+func TestFormatMessagesSingleVoiceMessageStyleAfter(t *testing.T) {
 	msgs := []UserMessage{{Text: "\U0001f3a4 turn the box red", Template: "Be brief."}}
 	got := FormatMessages(msgs)
-	want := "Decoded user's speech to text (may be inaccurate): Be brief.\n\nturn the box red"
+	want := "Decoded user's speech to text (may be inaccurate): turn the box red\n\n" + styleLabel + "Be brief."
 	if got != want {
 		t.Errorf("single voice message with preamble:\ngot:  %q\nwant: %q", got, want)
 	}
@@ -394,8 +392,8 @@ func TestWaitForUserReplyAppliesMessageTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("waitForUserReply: %v", err)
 	}
-	if !strings.Contains(got, "In one line: the blue one") {
-		t.Errorf("template not applied to a reply:\n%s", got)
+	if !strings.HasPrefix(got, "User responded: the blue one\n\n"+styleLabel+"In one line:") {
+		t.Errorf("style not applied to a reply, after the words:\n%s", got)
 	}
 }
 

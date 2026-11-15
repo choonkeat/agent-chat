@@ -65,6 +65,10 @@ This IS the user's message — execute it, do not echo it back.
 {{- end}}
 
 
+{{- define "style-note" -}}
+(Reply style your user set in settings, not part of their message:) {{.Style}}
+{{- end}}
+
 {{- define "empty-queue" -}}
 {"queue":"empty"} — no user message is pending. Do NOT call send_message just to report this; the user did not ask anything. Return to your previous task, or stay silent and wait for the next user message.
 {{- end}}

@@ -56,7 +56,7 @@ reply), a 2-message batch (style once, after both), `{{message}}` templates
 plus pins for the swe-swe Stop hook: `User said:` / `User responded:` present,
 empty queue matches `queue.{0,8}empty`.
 
-### Phase 2 — the patch, GREEN
+### Phase 2 — the patch, GREEN — DONE
 Style rendered after the messages (and attached files) by a new
 `style-note` block, outside `format-messages`, so a custom rules file's
 layout keeps working and still gets the style. Latest user message's style
@@ -78,7 +78,7 @@ user's browser approval).
 
 ### Done when
 - [x] Phase 1 RED on 0.19.0 observed and logged
-- [ ] Phase 2 GREEN; rules-file fallback tested
+- [x] Phase 2 GREEN; rules-file fallback tested
 - [ ] `make test` green
 - [ ] Live check done and noted here
 - [ ] CHANGELOG + bump + publish (with approval)
