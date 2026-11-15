@@ -2,6 +2,24 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.19.1] — 2026-11-15
+
+### Fixes
+- **The message style no longer runs into your words.** The Message-style
+  setting was pasted above your message with only a blank line between, so
+  a style ending in an instruction ran straight into a message like "Discuss
+  how do we support this", and the agent answered the style instead of you.
+  Your words now come first, exactly as typed, and the style comes once
+  after them: `(Reply style your user set in settings, not part of their
+  message:) ...`. A style saved with the old `{{message}}` marker is treated
+  the same way. `User said:` / `User responded:` are unchanged, so swe-swe's
+  Stop hook keeps working on every released swe-swe.
+- **A reply-rules file missing a block no longer loses your message.** With
+  `AGENT_CHAT_PROMPTS_FILE` set, a block the file lacked fell back to the
+  built-in one without its data: `<no value>` for the style, and an empty
+  message when `format-messages` was missing. A rules file made before this
+  release has no `style-note` block and now gets the built-in one.
+
 ## [0.19.0] — 2026-11-15
 
 ### Changes
