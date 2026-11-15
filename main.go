@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -390,6 +391,12 @@ func main() {
 
 	disabled := os.Getenv("AGENT_CHAT_DISABLE") != ""
 
+	if n, err := parseUploadMaxBytes(os.Getenv(uploadMaxEnvKey)); err != nil {
+		log.Printf("%v; uploads are not limited", err)
+	} else {
+		uploadMaxBytes = n
+	}
+
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "agent-chat",
 		Version: version,
@@ -481,8 +488,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// this chat is actually running with.
 	indexBefore, indexAfter, _ := strings.Cut(string(indexHTML), "<!--CONFIG-->")
 	renderIndex := func() string {
-		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q,CHAT_NUDGE_TEXT=%q,SESSION_UUID=%q;</script>",
-			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined(), chatNudgeText, os.Getenv("SESSION_UUID"))
+		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q,CHAT_NUDGE_TEXT=%q,SESSION_UUID=%q,UPLOAD_MAX_BYTES=%d;</script>",
+			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined(), chatNudgeText, os.Getenv("SESSION_UUID"), uploadMaxBytes)
 		return indexBefore + configScript + indexAfter
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -540,17 +547,33 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Limit request body to 50MB
-	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
+	// With a limit, cap the body (plus room for multipart headers). Without
+	// one, any size is accepted: ParseMultipartForm keeps at most 32 MB in
+	// memory and spills the rest to temp files on disk.
+	if uploadMaxBytes > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, uploadMaxBytes+1<<20)
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			http.Error(w, uploadTooLargeText(r.ContentLength, uploadMaxBytes), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "invalid multipart form", http.StatusBadRequest)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 
 	files := r.MultipartForm.File["files"]
 	if len(files) == 0 {
 		http.Error(w, "no files provided", http.StatusBadRequest)
 		return
+	}
+	for _, fh := range files {
+		if uploadMaxBytes > 0 && fh.Size > uploadMaxBytes {
+			http.Error(w, uploadTooLargeText(fh.Size, uploadMaxBytes), http.StatusRequestEntityTooLarge)
+			return
+		}
 	}
 
 	var refs []FileRef

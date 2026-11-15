@@ -198,6 +198,7 @@ The chat UI opens automatically in your browser.
 | `AGENT_CHAT_EXPORT_ASSETS` | What chat-log exports do with attachments: `none` (default — placeholders; text files still copied), `small` (images downscaled to 1280px), `original` (byte-for-byte) |
 | `AGENT_CHAT_CHATLOG_GITIGNORE` | `on` (default) or `off`: whether a newly created chat-log archive inside a git repo gets a `.gitignore` for its three generated files. Same as `-chatlog-gitignore` |
 | `AGENT_CHAT_PROMPTS_FILE` | Path to an editable copy of the text wrapped around each user message ([`prompts/agent-reply.tmpl`](prompts/agent-reply.tmpl)). Missing or blank: filled with the built-in rules. Reread on every message; a broken file falls back to the built-in rules and says so in the chat |
+| `AGENT_CHAT_UPLOAD_MAX_MB` | Largest file the paperclip / paste upload accepts, in megabytes (decimals allowed). Unset, empty or `0` = no limit (default). Too-large files are refused in the page before sending, and with HTTP 413 by the server; the file chip shows the reason |
 | `AGENT_CHAT_DISABLE` | Set to any value to disable tools and HTTP server |
 
 ## License

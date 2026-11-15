@@ -1226,6 +1226,12 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   color: #ef4444;
 }
 
+/* A failure with a reason ("too large ...") wraps so the reason stays readable. */
+.file-chip.upload-failed .file-name.has-reason {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 /* --- Autocomplete dropdown --- */
 
 #autocomplete-dropdown {

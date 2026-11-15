@@ -1294,6 +1294,16 @@ function addStagedFiles(fileList) {
       addFailedPasteChip((file.name || 'clipboard-empty') + ' (empty)');
       continue;
     }
+    var maxBytes = typeof UPLOAD_MAX_BYTES === 'number' ? UPLOAD_MAX_BYTES : 0;
+    if (maxBytes > 0 && file.size > maxBytes) {
+      // Refuse before sending a byte (AGENT_CHAT_UPLOAD_MAX_MB).
+      stagedFiles.push({
+        file: file, name: file.name, previewUrl: null, ref: null,
+        uploading: false, uploadFailed: true, abortController: null,
+        failReason: 'too large (' + formatUploadSize(file.size) + '); limit is ' + formatUploadSize(maxBytes)
+      });
+      continue;
+    }
     var isImage = file.type && file.type.indexOf('image/') === 0;
     var entry = {
       file: file,
@@ -1353,11 +1363,20 @@ function pasteFailureName(cd) {
   return 'clipboard-empty';
 }
 
+// Matches the server's formatUploadSize so both refusals read the same.
+function formatUploadSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  if (n < 1024 * 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  return (n / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+}
+
 function startUpload(entry, isRetry) {
   var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   entry.abortController = controller;
   entry.uploading = true;
   entry.uploadFailed = false;
+  entry.failReason = '';
   renderStaging();
   updateSendButton();
 
@@ -1368,6 +1387,14 @@ function startUpload(entry, isRetry) {
 
   fetch('upload', opts)
     .then(function(resp) {
+      if (resp.status === 413) {
+        // Over the limit: retrying cannot help, so fail now with the reason.
+        return resp.text().then(function(text) {
+          var err = new Error(text.trim() || 'too large');
+          err.final = true;
+          throw err;
+        });
+      }
       if (!resp.ok) throw new Error('Upload failed: ' + resp.status);
       return resp.json();
     })
@@ -1381,6 +1408,14 @@ function startUpload(entry, isRetry) {
     .catch(function(err) {
       entry.abortController = null;
       if (err.name === 'AbortError') return; // user removed chip
+      if (err.final) {
+        entry.uploading = false;
+        entry.uploadFailed = true;
+        entry.failReason = err.message;
+        renderStaging();
+        updateSendButton();
+        return;
+      }
       if (!isRetry) {
         // Auto-retry once after 1s
         setTimeout(function() {
@@ -1452,9 +1487,11 @@ function renderStaging() {
 
     var nameSpan = document.createElement('span');
     nameSpan.className = 'file-name';
-    nameSpan.textContent = sf.name;
+    nameSpan.textContent = sf.failReason ? sf.name + ' \u2014 ' + sf.failReason : sf.name;
+    if (sf.failReason) nameSpan.classList.add('has-reason');
     nameSpan.title = sf.pasteFailed
       ? 'Nothing came through on paste \u2014 use the paperclip button to attach the file'
+      : sf.failReason ? sf.name + ' \u2014 ' + sf.failReason
       : sf.uploadFailed ? 'Upload failed \u2014 remove and re-add' : sf.name;
     chip.appendChild(nameSpan);
 
