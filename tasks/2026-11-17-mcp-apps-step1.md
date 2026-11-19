@@ -1,6 +1,6 @@
 # MCP Apps, step 1: show tool pages in agent-chat via `agent-chat wrap`
 
-Filed 2026-11-17. Status: **PLANNED**. Branch: `mcp-apps`.
+Filed 2026-11-17. Status: **IN PROGRESS** (phase 1/5 done). Branch: `mcp-apps`.
 Repo: agent-chat (this worktree: `/repos/agent-chat/worktrees/mcp-apps`).
 
 ## Goal
@@ -184,4 +184,20 @@ About 5 working days.
 
 ## Logs
 
-(append phase logs here)
+### Phase 1 (2026-11-17): done
+
+- `wrap.go` + `wrap_test.go` (11 tests, fake child via `TestMain` re-exec);
+  dispatched in `main()` before flag parsing.
+- Beyond the plan: a client that already declares the ui extension is left
+  alone; a JSON batch (array) is forwarded unedited; CRLF endings are kept;
+  child killed by a signal → exit 128+signal; missing binary → exit 127.
+- Bug caught by the over-long-line test: a line just over 16 MB whose final
+  chunk contained the newline was still parsed. Fixed by checking the length
+  before editing.
+- Check: `printf <initialize as Claude Code 2.1.325 sends it> | agent-chat wrap -- mcp-apps-sample --ui=auto`
+  → sample logs `ui=true`, and `tools/list` carries `_meta.ui.resourceUri`.
+  Unwrapped → `ui=false`; `--no-advertise-ui` → `ui=false`.
+- `make unit-test` green. `make e2e-test` NOT run: the CDP browser returned
+  502 (`localhost:6045/json/version`) on two warm-up attempts. Phase 1 touches
+  no client-dist file; E2E is due at phase 4/5 anyway.
+

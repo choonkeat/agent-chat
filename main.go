@@ -265,6 +265,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "migrate-chatlogs" {
 		os.Exit(runMigrateChatLogs(os.Args[2:]))
 	}
+	// `wrap` relays a stdio MCP server's traffic (see wrap.go). It must not
+	// touch the chat server's state, so it exits before any of it is set up.
+	if len(os.Args) > 1 && os.Args[1] == "wrap" {
+		os.Exit(runWrap(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 
 	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
