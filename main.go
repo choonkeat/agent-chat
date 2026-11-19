@@ -218,6 +218,21 @@ var mcpServerRef *mcp.Server
 // channelInterceptorRef holds the channel interceptor for permission handling.
 var channelInterceptorRef *channelInterceptor
 
+// mainUsage is the top-level -h text. It names the subcommands: swe-swe looks
+// for "agent-chat wrap" here before ever running `agent-chat wrap --version`,
+// because an older agent-chat ignores the bare word "wrap" and starts a whole
+// chat server instead (see tasks/2026-11-17-mcp-apps-step1.md, "Wrap safety").
+func mainUsage(w io.Writer) {
+	fmt.Fprintln(w, "usage: agent-chat [flags]                      run the chat server (MCP over stdio + web UI)")
+	fmt.Fprintln(w, "       agent-chat wrap [flags] -- <command>    relay a stdio MCP server, showing its MCP Apps pages in the chat")
+	fmt.Fprintln(w, "       agent-chat migrate-chatlogs [flags]     move a flat chat archive into month folders")
+	fmt.Fprintln(w, "\nflags:")
+	orig := flag.CommandLine.Output()
+	flag.CommandLine.SetOutput(w)
+	flag.PrintDefaults()
+	flag.CommandLine.SetOutput(orig)
+}
+
 // nopWriteCloser wraps an io.Writer with a no-op Close method.
 type nopWriteCloser struct{ io.Writer }
 
@@ -265,7 +280,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "migrate-chatlogs" {
 		os.Exit(runMigrateChatLogs(os.Args[2:]))
 	}
+	// `wrap` relays a stdio MCP server's traffic (see wrap.go). It must not
+	// touch the chat server's state, so it exits before any of it is set up.
+	if len(os.Args) > 1 && os.Args[1] == "wrap" {
+		os.Exit(runWrap(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 
+	flag.Usage = func() { mainUsage(flag.CommandLine.Output()) }
 	showVersion := flag.Bool("v", false, "print version and exit")
 	noStdio := flag.Bool("no-stdio-mcp", false, "disable stdio MCP transport (HTTP MCP is always available)")
 	flag.StringVar(&themeCookieName, "theme-cookie", "agent-chat-theme", "cookie name for light/dark theme toggle")
@@ -476,6 +497,12 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/api/chatlog-path", handleChatlogPath)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.HandleFunc("/api/ctx-only", handleCtxOnly)
+	mux.HandleFunc("/api/mcp-app", handleMcpApp)
+	mux.HandleFunc(mcpAppPagePrefix, handleMcpAppPage)
+	mux.HandleFunc(mcpAppCallsPath, handleMcpAppCalls)
+	mux.HandleFunc(mcpAppCallsPath+"/", handleMcpAppCallResult)
+	mux.HandleFunc(mcpAppCallPath, handleMcpAppCall)
+	mux.HandleFunc("/api/mcp-app/allow", handleMcpAppAllow)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
 	// This avoids relative-path resolution failures when the page is served
@@ -517,6 +544,10 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 		return "", nil, fmt.Errorf("listen error: %w", err)
 	}
 	actualPort := ln.Addr().(*net.TCPAddr).Port
+	// Where `agent-chat wrap` finds the password for posting tool pages here.
+	if err := writeMcpAppToken(actualPort); err != nil {
+		log.Printf("agent-chat: mcp-app token not written (tool pages will be refused): %v", err)
+	}
 	go func() {
 		http.Serve(ln, mux)
 		// Server stopped — mark as not running so next call restarts it

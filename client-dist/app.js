@@ -4674,6 +4674,15 @@ function replayHistory(history) {
         }
         pendingReplies = (event.quick_replies && event.quick_replies.length > 0) ? event.quick_replies : null;
         break;
+      case 'mcpApp':
+        // A tool's page (mcp-app.js). Leaves pendingReplies alone: the page
+        // is not the agent's turn, so the agent's chips stay as they were.
+        if (typeof renderMcpApp === 'function') renderMcpApp(event);
+        break;
+      case 'mcpAppCall':
+        // A page ran one of its tools (step 2): a small line, user's side.
+        if (typeof renderMcpAppCall === 'function') renderMcpAppCall(event);
+        break;
     }
   }
 }
@@ -4813,6 +4822,15 @@ function connect() {
         } else {
           speakVerbalReply(data.text || '', data.quick_replies);
         }
+        break;
+
+      case 'mcpApp':
+        // A tool's page, sent by `agent-chat wrap` (mcp-app.js).
+        if (typeof renderMcpApp === 'function') renderMcpApp(data);
+        break;
+
+      case 'mcpAppCall':
+        if (typeof renderMcpAppCall === 'function') renderMcpAppCall(data);
         break;
 
       case 'userMessage':
