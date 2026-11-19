@@ -52,9 +52,9 @@ func TestWrapForwardsUneditedLinesByteForByte(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2,"reason":"user"}}`,
 		`{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":"t","progress":1}}`,
 		`{"jsonrpc":"2.0","id":"srv-1","result":{"action":"accept","content":{"ok":true}}}`, // elicitation reply
-		`{"jsonrpc":"2.0","id":"srv-2","result":{"roots":[{"uri":"file:///x"}]}}`,          // roots reply
+		`{"jsonrpc":"2.0","id":"srv-2","result":{"roots":[{"uri":"file:///x"}]}}`,           // roots reply
 		`not json at all {"initialize"`,
-		`{"jsonrpc":"2.0","id":3,"method":"initialize","params":` + "\r",                   // truncated, CRLF
+		`{"jsonrpc":"2.0","id":3,"method":"initialize","params":` + "\r",                // truncated, CRLF
 		`[{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"capabilities":{}}}]`, // batch: left alone
 		`{"jsonrpc":"2.0","id":5,"result":{"method":"initialize","params":{"capabilities":{}}}}`,
 		``,
