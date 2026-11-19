@@ -378,3 +378,19 @@ Estimate (agent-chat side, items 1 and 3): about 1.5 hours including tests.
   "free", because `book_slot` has no page of its own and nothing updates the
   existing one. Fix belongs with "page buttons call tools directly" (Later 1).
 - `make unit-test` green; E2E as in phase 4.
+
+### Wrap safety (2026-11-18): done (agent-chat side, items 1 and 3)
+
+- `agent-chat wrap --version` prints `agent-chat wrap <version> (<commit>)`,
+  exit 0, starts nothing. Top-level `agent-chat -h` now lists the subcommands,
+  including `agent-chat wrap` (`mainUsage` in main.go), for swe-swe's
+  two-step check.
+- `wrapsafety.go`: `wrapGuard` wraps both relay hooks and every `after`. A
+  panic forwards the line unchanged, logs "extras crashed (...); relaying only
+  from now on" once, and turns the extras off. Server→client replies to the
+  wrapper's own `acw-` requests are still dropped while off. The delivery
+  goroutine defers `guard.catch()`. Test-only panic points: `wrapPanicAt`.
+- Tests (`wrapsafety_test.go`): `--version`, `-h` mentions wrap, crash at
+  client-hook / server-hook / deliver keeps traffic flowing (logged once), and
+  the guard drops late own replies and catches crashes in `after`.
+- `make unit-test` green.

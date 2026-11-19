@@ -51,7 +51,7 @@ const (
 type wrapEditFunc func(line []byte) []byte
 
 func wrapUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: agent-chat wrap [--name NAME] [--no-advertise-ui] [--agent-chat-url URL] -- <mcp server command> [args...]")
+	fmt.Fprintln(w, "usage: agent-chat wrap [--version] [--name NAME] [--no-advertise-ui] [--agent-chat-url URL] -- <mcp server command> [args...]")
 	fmt.Fprintln(w, "  Runs a stdio MCP server, relaying its traffic unchanged except that the")
 	fmt.Fprintln(w, "  client's capabilities also advertise MCP Apps (\"I can show pages\").")
 	fmt.Fprintln(w, "  When a tool with an MCP Apps page answers, the page and the answer are")
@@ -65,6 +65,7 @@ func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	noAdvertise := fs.Bool("no-advertise-ui", false, "don't add the MCP Apps capability to the client's")
 	name := fs.String("name", "", "server name shown with its pages in agent-chat (default: the command's base name)")
+	showVersion := fs.Bool("version", false, "print the version and exit (starts nothing; swe-swe's check)")
 	postURL := fs.String("agent-chat-url", "", "where to send pages (default: http://127.0.0.1:$AGENT_CHAT_PORT/api/mcp-app; neither set = relay only)")
 	fs.Usage = func() { wrapUsage(stderr); fs.PrintDefaults() }
 	if err := fs.Parse(args); err != nil {
@@ -72,6 +73,10 @@ func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if *showVersion {
+		fmt.Fprintf(stdout, "agent-chat wrap %s (%s)\n", version, commit)
+		return 0
 	}
 	cmdArgs := fs.Args()
 	if len(cmdArgs) == 0 {
@@ -125,6 +130,7 @@ func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			url = "http://127.0.0.1:" + port + "/api/mcp-app"
 		}
 	}
+	guard := &wrapGuard{log: stderr}
 	var apps *wrapApps
 	if url != "" {
 		serverName := *name
@@ -132,9 +138,11 @@ func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			serverName = filepath.Base(cmdArgs[0])
 		}
 		apps = newWrapApps(serverName, url, toChild, stderr)
+		apps.guard = guard
 		toServer = apps.clientHook(advertise)
 		fromServer = apps.serverHook
 	}
+	toServer, fromServer = guard.hook(toServer, false), guard.hook(fromServer, true)
 
 	// client → server. When the agent closes our stdin, close the server's.
 	go func() {

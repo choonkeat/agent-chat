@@ -75,6 +75,7 @@ type wrapApps struct {
 	toChild *wrapLineWriter
 	log     io.Writer
 	http    *http.Client
+	guard   *wrapGuard // nil in unit tests that build a wrapApps directly
 
 	mu          sync.Mutex
 	initialized bool
@@ -135,6 +136,7 @@ func wrapIDKey(raw json.RawMessage) string {
 // clientHook observes client→server traffic, then applies edit (may be nil).
 func (a *wrapApps) clientHook(edit wrapEditFunc) wrapHook {
 	return func(line []byte) wrapVerdict {
+		wrapMaybePanic("client-hook")
 		a.observeClient(line)
 		if edit == nil {
 			return wrapVerdict{}
@@ -182,6 +184,7 @@ func (a *wrapApps) observeClient(line []byte) {
 // replies to the wrapper's own requests, and schedules page delivery after a
 // page tool's answer has been forwarded.
 func (a *wrapApps) serverHook(line []byte) wrapVerdict {
+	wrapMaybePanic("server-hook")
 	a.mu.Lock()
 	idle := len(a.listReqs) == 0 && len(a.calls) == 0 && len(a.pending) == 0
 	a.mu.Unlock()
@@ -243,6 +246,7 @@ func (a *wrapApps) serverHook(line []byte) wrapVerdict {
 		return wrapVerdict{after: func() {
 			go func() {
 				defer a.wg.Done()
+				defer a.guard.catch()
 				a.deliver(call, tool, result)
 			}()
 		}}
@@ -298,6 +302,7 @@ func wrapToolPageURI(meta json.RawMessage) string {
 }
 
 func (a *wrapApps) deliver(call wrapCall, tool wrapTool, result json.RawMessage) {
+	wrapMaybePanic("deliver")
 	page := a.page(tool.uri)
 	if page.err != nil {
 		a.logf("page %s for %s: %v", tool.uri, call.tool, page.err)
