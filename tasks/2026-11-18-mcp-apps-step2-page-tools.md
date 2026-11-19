@@ -262,3 +262,25 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
 3. `ui/update-model-context` support (spec) as another way to tell Claude.
 
 ## Logs
+
+### Phase 1 (2026-11-18): done
+
+- `wrapApps.callTool(name, args)` in wrapapps.go. It checks `appTools`
+  (learned from every tool in `tools/list` via `wrapAppVisible`: no visibility
+  means allowed, otherwise it must include `"app"`; cleared on
+  `tools/list_changed`), then sends `tools/call` under an `acw-N` id.
+- The wrapper's own requests now share `request(method, params, timeout)`:
+  - `pending` carries `wrapReply{result, err, closed}`
+  - `fetch` uses it too
+  - errors are `*wrapCallError{Code, Message}`: -32602 refused, -32001
+    "tool took too long" (`wrapCallTimeout`, 2 min), -32000 "tool program not
+    running" (after shutdown), or the server's own JSON-RPC error
+- An `isError` result is returned as a normal result.
+- Tests (`wrapcall_test.go`, harness feeding replies through `serverHook`):
+  - app-visible tools run and the reply is dropped
+  - model-only and unknown tools are refused and the server sees nothing
+  - a timeout swallows the late reply
+  - errors are passed back
+  - list changes are followed
+  - shutdown frees a waiting call
+- `make unit-test` green.

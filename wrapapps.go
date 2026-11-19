@@ -17,7 +17,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -36,6 +35,24 @@ const (
 	wrapFetchTimeout = 10 * time.Second
 	wrapPostTimeout  = 2 * time.Second
 )
+
+// wrapCallTimeout caps how long a page's tool run may take (a var for tests).
+var wrapCallTimeout = 2 * time.Minute
+
+// wrapReply is the server's answer to one of the wrapper's own requests.
+type wrapReply struct {
+	result json.RawMessage
+	err    json.RawMessage // JSON-RPC error object, if any
+	closed bool            // the server connection ended before an answer
+}
+
+// wrapCallError is a JSON-RPC style error for a page's tool run.
+type wrapCallError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *wrapCallError) Error() string { return fmt.Sprintf("%s (%d)", e.Message, e.Code) }
 
 type wrapCall struct {
 	tool      string
@@ -80,11 +97,12 @@ type wrapApps struct {
 	mu          sync.Mutex
 	initialized bool
 	closed      bool
-	tools       map[string]wrapTool             // tool name → page
-	listReqs    map[string]bool                 // tools/list id → is first page
-	calls       map[string]wrapCall             // tools/call id → call
-	pending     map[string]chan json.RawMessage // acw id → waiter (nil once abandoned)
-	pages       map[string]*wrapPage            // uri → page
+	tools       map[string]wrapTool       // tool name → page
+	appTools    map[string]bool           // tool name → pages may run it (_meta.ui.visibility)
+	listReqs    map[string]bool           // tools/list id → is first page
+	calls       map[string]wrapCall       // tools/call id → call
+	pending     map[string]chan wrapReply // acw id → waiter (nil once abandoned)
+	pages       map[string]*wrapPage      // uri → page
 	nextID      int
 	wg          sync.WaitGroup
 }
@@ -97,9 +115,10 @@ func newWrapApps(server, postURL string, toChild *wrapLineWriter, log io.Writer)
 		log:      log,
 		http:     &http.Client{Timeout: wrapPostTimeout},
 		tools:    map[string]wrapTool{},
+		appTools: map[string]bool{},
 		listReqs: map[string]bool{},
 		calls:    map[string]wrapCall{},
-		pending:  map[string]chan json.RawMessage{},
+		pending:  map[string]chan wrapReply{},
 		pages:    map[string]*wrapPage{},
 	}
 }
@@ -200,6 +219,9 @@ func (a *wrapApps) serverHook(line []byte) wrapVerdict {
 		case "notifications/tools/list_changed", "notifications/resources/list_changed":
 			a.mu.Lock()
 			a.pages = map[string]*wrapPage{} // pages may have changed; refetch
+			if m.Method == "notifications/tools/list_changed" {
+				a.appTools = map[string]bool{} // relearned from the client's next tools/list
+			}
 			a.mu.Unlock()
 		}
 		return wrapVerdict{}
@@ -214,11 +236,7 @@ func (a *wrapApps) serverHook(line []byte) wrapVerdict {
 	if ch, ok := a.pending[id]; ok {
 		delete(a.pending, id)
 		if ch != nil {
-			if len(m.Error) > 0 {
-				ch <- nil
-			} else {
-				ch <- m.Result
-			}
+			ch <- wrapReply{result: m.Result, err: m.Error}
 		}
 		return wrapVerdict{drop: true}
 	}
@@ -269,12 +287,35 @@ func (a *wrapApps) learnTools(result json.RawMessage, first bool) {
 	}
 	if first {
 		a.tools = map[string]wrapTool{}
+		a.appTools = map[string]bool{}
 	}
 	for _, t := range r.Tools {
+		if t.Name != "" {
+			a.appTools[t.Name] = wrapAppVisible(t.Meta)
+		}
 		if uri := wrapToolPageURI(t.Meta); uri != "" && t.Name != "" {
 			a.tools[t.Name] = wrapTool{uri: uri, meta: append(json.RawMessage{}, t.Meta...)}
 		}
 	}
+}
+
+// wrapAppVisible reads _meta.ui.visibility: pages may run a tool when it
+// includes "app". No visibility means ["model","app"] (spec default).
+func wrapAppVisible(meta json.RawMessage) bool {
+	var m struct {
+		UI struct {
+			Visibility *[]string `json:"visibility"`
+		} `json:"ui"`
+	}
+	if len(meta) == 0 || json.Unmarshal(meta, &m) != nil || m.UI.Visibility == nil {
+		return true
+	}
+	for _, v := range *m.UI.Visibility {
+		if v == "app" {
+			return true
+		}
+	}
+	return false
 }
 
 // wrapToolPageURI reads _meta.ui.resourceUri, falling back to the
@@ -398,41 +439,87 @@ func (a *wrapApps) page(uri string) *wrapPage {
 // fetch sends resources/read to the server under the wrapper's own id and
 // waits for the (swallowed) reply.
 func (a *wrapApps) fetch(uri string) (html, mimeType string, meta json.RawMessage, err error) {
+	r, err := a.request("resources/read", map[string]string{"uri": uri}, wrapFetchTimeout)
+	var ce *wrapCallError
+	if errors.As(err, &ce) && ce.Code == -32001 {
+		return "", "", nil, errors.New("resources/read timed out")
+	}
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resources/read: %w", err)
+	}
+	if len(r.err) > 0 {
+		return "", "", nil, errors.New("resources/read failed")
+	}
+	return wrapPickPage(r.result, uri)
+}
+
+// callTool runs one of the server's tools for a page (step 2), under the
+// wrapper's own id so the reply never reaches the client. Only tools the
+// server lets pages use (wrapAppVisible) run; an isError result is returned
+// as an ordinary result for the page to show.
+func (a *wrapApps) callTool(name string, args json.RawMessage) (json.RawMessage, error) {
+	a.mu.Lock()
+	allowed := a.appTools[name]
+	a.mu.Unlock()
+	if !allowed {
+		return nil, &wrapCallError{Code: -32602, Message: fmt.Sprintf("tool %q can't be run from a page", name)}
+	}
+	params := map[string]any{"name": name}
+	if len(bytes.TrimSpace(args)) > 0 && string(bytes.TrimSpace(args)) != "null" {
+		params["arguments"] = args
+	}
+	r, err := a.request("tools/call", params, wrapCallTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if len(r.err) > 0 {
+		ce := &wrapCallError{}
+		if json.Unmarshal(r.err, ce) != nil || ce.Message == "" {
+			ce = &wrapCallError{Code: -32603, Message: "tool failed: " + string(r.err)}
+		}
+		return nil, ce
+	}
+	return r.result, nil
+}
+
+// request sends method to the server under a fresh "acw-N" id and waits up to
+// timeout for the reply, which serverHook swallows.
+func (a *wrapApps) request(method string, params any, timeout time.Duration) (wrapReply, error) {
+	notRunning := &wrapCallError{Code: -32000, Message: "tool program not running"}
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return "", "", nil, errors.New("server connection closed")
+		return wrapReply{}, notRunning
 	}
 	a.nextID++
 	id := fmt.Sprintf("%s%d", wrapIDPrefix, a.nextID)
 	idJSON, _ := json.Marshal(id)
 	key := string(idJSON)
-	ch := make(chan json.RawMessage, 1)
+	ch := make(chan wrapReply, 1)
 	a.pending[key] = ch
 	a.mu.Unlock()
 
-	req, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "id": id, "method": "resources/read",
-		"params": map[string]string{"uri": uri},
-	})
+	req, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+	if err != nil {
+		a.abandon(key)
+		return wrapReply{}, &wrapCallError{Code: -32602, Message: err.Error()}
+	}
 	if err := a.toChild.writeLine(req); err != nil {
 		a.abandon(key)
-		return "", "", nil, fmt.Errorf("send resources/read: %w", err)
+		return wrapReply{}, notRunning
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), wrapFetchTimeout)
-	defer cancel()
-	var result json.RawMessage
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
-	case result = <-ch:
-	case <-ctx.Done():
+	case r := <-ch:
+		if r.closed {
+			return wrapReply{}, notRunning
+		}
+		return r, nil
+	case <-timer.C:
 		a.abandon(key)
-		return "", "", nil, errors.New("resources/read timed out")
+		return wrapReply{}, &wrapCallError{Code: -32001, Message: "tool took too long"}
 	}
-	if result == nil {
-		return "", "", nil, errors.New("resources/read failed")
-	}
-	return wrapPickPage(result, uri)
 }
 
 // abandon stops waiting for id but keeps it registered, so a late reply is
@@ -505,7 +592,7 @@ func (a *wrapApps) shutdown(max time.Duration) {
 	a.closed = true
 	for k, ch := range a.pending {
 		if ch != nil {
-			ch <- nil
+			ch <- wrapReply{closed: true}
 		}
 		delete(a.pending, k)
 	}
