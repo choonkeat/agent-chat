@@ -182,6 +182,53 @@ About 5 working days.
 5. swe-swe `--without-mcp` mode: `mcp-cli-proxy --advertise-ui` plus
    `mcp --read-resource` (`/workspace/tasks/2026-11-16-mcp-cli-read-resource.md`).
 
+## Wrap safety (requested from the swe-swe session, 2026-11-18)
+
+Why: if swe-swe starts every tool server it sets up through `agent-chat wrap`
+(Later 3), one failure in `wrap` makes all of those servers disappear at once.
+Causes: an older agent-chat without `wrap`, npm unreachable, a bug in `wrap`.
+All 4 must hold before swe-swe wraps anything. Scope: only servers swe-swe
+sets up; servers the user added are left alone. swe-swe-side notes:
+`/workspace/tasks/2026-11-16-mcp-cli-read-resource.md` ("Phase 5", "Wrap safety").
+
+1. **Check first, fall back** (agent-chat side: must ship in `wrap`'s first
+   release, so before this branch merges).
+   - Add `agent-chat wrap --version`: prints `agent-chat wrap <version>` and
+     exits 0. It starts nothing, reads no env, and writes nothing.
+   - **Trap for swe-swe:** an *older* agent-chat run as `agent-chat wrap
+     --version` does not fail. Its flag parsing stops at the bare word `wrap`,
+     so it starts a **full chat server** (stdio MCP, HTTP port, chat-log
+     export if `AGENT_CHAT_*` env is inherited) and hangs until the timeout
+     kills it. So the safe check is two-step:
+     1. `agent-chat -h` (every version prints usage and exits; nothing starts).
+        New binaries mention `agent-chat wrap` in that usage. No mention =
+        no wrap, so fall back.
+     2. Only then run `agent-chat wrap --version` (short timeout) to confirm.
+   - Add the `wrap` line to the top-level `-h` usage.
+   - Tests: `wrap --version` exit 0 plus output, with no child started; `-h`
+     output contains `agent-chat wrap`.
+2. **Look it up once**: swe-swe side. It reuses the agent-chat binary already
+   downloaded for the chat server and runs no `swe-npx` per wrapped server.
+   Nothing to do in agent-chat: `wrap` lives in the same binary.
+3. **Keeps relaying even when its extras fail.** The only fatal error is the
+   tool server failing to start (exit 127).
+   - Already true and tested: agent-chat unreachable or POST fails, no
+     password, page fetch fails or times out, AGENT_CHAT_PORT unset (plain
+     relay), non-JSON lines, batches, lines over 16 MB.
+   - Missing: a **crash (Go panic) inside the extras** (the capability edit,
+     page tracking, delivery goroutine) would kill the whole wrapper. Fix:
+     recover in each hook call and in the delivery goroutine. On a panic,
+     forward the original line unchanged, log once to stderr, and switch the
+     extras off for the rest of the session (pure relay from then on).
+   - Tests: inject a panicking hook and a panicking delivery. Traffic still
+     flows unchanged, the extras are off afterwards, and exit codes are
+     unchanged.
+4. **Off switch** `SWE_SWE_NO_WRAP=1` in `.swe-swe/env`: swe-swe side. agent-chat
+   keeps `--no-advertise-ui` and the "no AGENT_CHAT_PORT = plain relay" rule
+   as its own lower-level switches.
+
+Estimate (agent-chat side, items 1 and 3): about 1.5 hours including tests.
+
 ## Logs
 
 ### Phase 1 (2026-11-17): done
