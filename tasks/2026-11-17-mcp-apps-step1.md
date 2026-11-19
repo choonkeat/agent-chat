@@ -1,6 +1,6 @@
 # MCP Apps, step 1: show tool pages in agent-chat via `agent-chat wrap`
 
-Filed 2026-11-17. Status: **IN PROGRESS** (phase 1/5 done). Branch: `mcp-apps`.
+Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-2/5 done). Branch: `mcp-apps`.
 Repo: agent-chat (this worktree: `/repos/agent-chat/worktrees/mcp-apps`).
 
 ## Goal
@@ -201,3 +201,28 @@ About 5 working days.
   502 (`localhost:6045/json/version`) on two warm-up attempts. Phase 1 touches
   no client-dist file; E2E is due at phase 4/5 anyway.
 
+### Phase 2 (2026-11-17): done
+
+- `wrapapps.go` + `wrapapps_test.go` (8 tests; fake page server via the
+  same `TestMain` re-exec, `httptest` stand-in for agent-chat). The relay
+  now takes a hook that can replace or drop a line and run something after
+  it is written; both directions write whole lines under a lock, so the
+  wrapper's own `resources/read` never lands mid-line.
+- Flags: `--name`, `--agent-chat-url` (default
+  `http://127.0.0.1:$AGENT_CHAT_PORT/api/mcp-app`). Neither set → plain
+  relay, no page tracking at all.
+- Beyond the plan: tools whose answer has `isError: true` get no page;
+  `tools/list` first page (no cursor) replaces the known tools, later pages
+  add; only `ui://` uris count; page cache cleared on `tools/list_changed`
+  and `resources/list_changed`; a failed fetch is retried next time; a
+  timed-out `acw-N` reply that arrives late is still swallowed; when the
+  server's output ends, waiting fetches fail at once and in-flight posts get
+  up to 3s. POST body also carries `toolMeta` (the tool's `_meta`).
+- Ordering test: the stand-in agent-chat blocks every POST, and the client
+  still gets the tool's answer and later replies.
+- Check with the real sample server and a capture server on a spare port:
+  the client got the normal answers; the capture got one POST with
+  server `mcp-apps-sample`, tool `show_calendar`, the 5428-byte page,
+  `resourceMeta {"ui":{"prefersBorder":true}}`.
+- `make unit-test` green. E2E not run (same reason as phase 1; no
+  client-dist change).

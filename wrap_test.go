@@ -19,6 +19,9 @@ import (
 //	then every stdin byte is echoed to stdout verbatim (so the test sees
 //	exactly what the server received), then exit with WRAP_FAKE_EXIT.
 func TestMain(m *testing.M) {
+	if os.Getenv("WRAP_FAKE_CHILD") == "apps" {
+		os.Exit(fakeAppsServer()) // wrapapps_test.go
+	}
 	if os.Getenv("WRAP_FAKE_CHILD") == "1" {
 		os.Stdout.WriteString(os.Getenv("WRAP_FAKE_EMIT"))
 		io.Copy(os.Stdout, os.Stdin)
@@ -33,6 +36,7 @@ func TestMain(m *testing.M) {
 func runFakeWrap(t *testing.T, flags []string, emit, input string, exit int) (string, int) {
 	t.Helper()
 	t.Setenv("WRAP_FAKE_CHILD", "1")
+	t.Setenv("AGENT_CHAT_PORT", "") // never reach the live agent-chat from tests
 	t.Setenv("WRAP_FAKE_EMIT", emit)
 	t.Setenv("WRAP_FAKE_EXIT", strconv.Itoa(exit))
 	args := append(append([]string{}, flags...), "--", os.Args[0])
@@ -221,7 +225,7 @@ func TestWrapRelayStreamsOverLongLineUnedited(t *testing.T) {
 		strings.Repeat("x", wrapMaxLineBytes) + `"}}` + "\n"
 	input := long + `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"capabilities":{}}}` + "\n"
 	var out bytes.Buffer
-	if err := wrapRelay(strings.NewReader(input), &out, wrapAdvertiseUI); err != nil {
+	if err := wrapRelay(strings.NewReader(input), &wrapLineWriter{w: &out}, wrapEditHook(wrapAdvertiseUI)); err != nil {
 		t.Fatal(err)
 	}
 	r := bufio.NewReader(&out)

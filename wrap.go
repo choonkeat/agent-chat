@@ -4,7 +4,8 @@ package main
 // wrapper for an MCP server. The agent (e.g. Claude Code) starts it in place of
 // the server; it starts the real server as a child and relays newline-delimited
 // JSON-RPC both ways, unchanged, except for one edit (phase 1 of
-// tasks/2026-11-17-mcp-apps-step1.md):
+// tasks/2026-11-17-mcp-apps-step1.md; page delivery, phase 2, is in
+// wrapapps.go):
 //
 //   - client→server `initialize`, and any client→server request whose
 //     params._meta carries "io.modelcontextprotocol/clientCapabilities" (the
@@ -28,8 +29,10 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -48,9 +51,11 @@ const (
 type wrapEditFunc func(line []byte) []byte
 
 func wrapUsage(w io.Writer) {
-	fmt.Fprintln(w, "usage: agent-chat wrap [--no-advertise-ui] -- <mcp server command> [args...]")
+	fmt.Fprintln(w, "usage: agent-chat wrap [--name NAME] [--no-advertise-ui] [--agent-chat-url URL] -- <mcp server command> [args...]")
 	fmt.Fprintln(w, "  Runs a stdio MCP server, relaying its traffic unchanged except that the")
 	fmt.Fprintln(w, "  client's capabilities also advertise MCP Apps (\"I can show pages\").")
+	fmt.Fprintln(w, "  When a tool with an MCP Apps page answers, the page and the answer are")
+	fmt.Fprintln(w, "  also sent to agent-chat, which shows the page in the chat.")
 }
 
 // runWrap is the `agent-chat wrap` entry point. stdin/stdout are the agent's
@@ -58,7 +63,9 @@ func wrapUsage(w io.Writer) {
 func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wrap", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	noAdvertise := fs.Bool("no-advertise-ui", false, "relay only; don't add the MCP Apps capability")
+	noAdvertise := fs.Bool("no-advertise-ui", false, "don't add the MCP Apps capability to the client's")
+	name := fs.String("name", "", "server name shown with its pages in agent-chat (default: the command's base name)")
+	postURL := fs.String("agent-chat-url", "", "where to send pages (default: http://127.0.0.1:$AGENT_CHAT_PORT/api/mcp-app; neither set = relay only)")
 	fs.Usage = func() { wrapUsage(stderr); fs.PrintDefaults() }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -101,29 +108,51 @@ func runWrap(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}()
 
-	var toServer wrapEditFunc
+	toChild := &wrapLineWriter{w: childIn}
+	toClient := &wrapLineWriter{w: stdout}
+
+	var advertise wrapEditFunc
 	if !*noAdvertise {
-		toServer = wrapAdvertiseUI
+		advertise = wrapAdvertiseUI
+	}
+	toServer, fromServer := wrapEditHook(advertise), wrapHook(nil)
+
+	// Page delivery is on only when there is an agent-chat to deliver to;
+	// otherwise the wrapper is a plain relay (plus the capability edit).
+	url := *postURL
+	if url == "" {
+		if port := os.Getenv("AGENT_CHAT_PORT"); port != "" {
+			url = "http://127.0.0.1:" + port + "/api/mcp-app"
+		}
+	}
+	var apps *wrapApps
+	if url != "" {
+		serverName := *name
+		if serverName == "" {
+			serverName = filepath.Base(cmdArgs[0])
+		}
+		apps = newWrapApps(serverName, url, toChild, stderr)
+		toServer = apps.clientHook(advertise)
+		fromServer = apps.serverHook
 	}
 
 	// client → server. When the agent closes our stdin, close the server's.
 	go func() {
-		if err := wrapRelay(stdin, childIn, toServer); err != nil {
+		if err := wrapRelay(stdin, toChild, toServer); err != nil {
 			fmt.Fprintf(stderr, "agent-chat wrap: client→server: %v\n", err)
 		}
+		toChild.mu.Lock()
 		childIn.Close()
+		toChild.mu.Unlock()
 	}()
 
 	// server → client. Must drain before cmd.Wait (it closes the pipe).
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if err := wrapRelay(childOut, stdout, nil); err != nil {
-			fmt.Fprintf(stderr, "agent-chat wrap: server→client: %v\n", err)
-		}
-	}()
-	wg.Wait()
+	if err := wrapRelay(childOut, toClient, fromServer); err != nil {
+		fmt.Fprintf(stderr, "agent-chat wrap: server→client: %v\n", err)
+	}
+	if apps != nil {
+		apps.shutdown(3 * time.Second)
+	}
 
 	return wrapExitCode(cmd.Wait())
 }
@@ -146,29 +175,66 @@ func wrapExitCode(err error) int {
 	return 1
 }
 
+// wrapVerdict is what a relay hook decides about one complete line.
+type wrapVerdict struct {
+	repl  []byte // replacement body (line ending re-attached); nil keeps the original
+	drop  bool   // swallow the line entirely
+	after func() // run after the line has been written (e.g. start a page fetch)
+}
+
+// wrapHook inspects one complete line (without its line ending).
+type wrapHook func(line []byte) wrapVerdict
+
+// wrapEditHook adapts an edit-only function to a hook.
+func wrapEditHook(edit wrapEditFunc) wrapHook {
+	if edit == nil {
+		return nil
+	}
+	return func(line []byte) wrapVerdict { return wrapVerdict{repl: edit(line)} }
+}
+
+// wrapLineWriter serialises whole lines onto one stream, so the wrapper's own
+// requests to the server never land in the middle of a relayed line.
+type wrapLineWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+// writeLine writes b plus "\n" as one unit.
+func (lw *wrapLineWriter) writeLine(b []byte) error {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	_, err := lw.w.Write(append(append([]byte{}, b...), '\n'))
+	return err
+}
+
 // wrapRelay copies newline-delimited messages from r to w, one line at a time,
-// flushing after each. edit (may be nil) can replace a complete line; its line
-// ending ("\n" or "\r\n") is preserved. A line longer than wrapMaxLineBytes is
-// streamed through unedited.
-func wrapRelay(r io.Reader, w io.Writer, edit wrapEditFunc) error {
+// writing each as soon as it is complete. hook (may be nil) can replace or
+// drop a complete line; the line ending ("\n" or "\r\n") is preserved. A line
+// longer than wrapMaxLineBytes is streamed through without the hook.
+func wrapRelay(r io.Reader, lw *wrapLineWriter, hook wrapHook) error {
 	br := bufio.NewReaderSize(r, 64*1024)
-	bw := bufio.NewWriterSize(w, 64*1024)
 	var line []byte
 	for {
 		chunk, err := br.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
 			line = append(line, chunk...)
 			if len(line) > wrapMaxLineBytes {
-				// Too long to parse: stream it raw up to its newline.
-				if _, werr := bw.Write(line); werr != nil {
+				// Too long to parse: stream it raw up to its newline, holding
+				// the stream so nothing is interleaved.
+				lw.mu.Lock()
+				_, werr := lw.w.Write(line)
+				var rerr error
+				if werr == nil {
+					rerr, werr = wrapStreamRest(br, lw.w)
+				}
+				lw.mu.Unlock()
+				line = line[:0]
+				if werr != nil {
 					return werr
 				}
-				line = line[:0]
-				if err := wrapStreamRest(br, bw); err != nil {
-					return wrapEOF(err)
-				}
-				if ferr := bw.Flush(); ferr != nil {
-					return ferr
+				if rerr != nil {
+					return wrapEOF(rerr)
 				}
 			}
 			continue
@@ -176,14 +242,24 @@ func wrapRelay(r io.Reader, w io.Writer, edit wrapEditFunc) error {
 		line = append(line, chunk...)
 		if len(line) > 0 {
 			out := line
-			if edit != nil && err == nil && len(line) <= wrapMaxLineBytes {
-				out = wrapApplyEdit(line, edit)
+			var v wrapVerdict
+			if hook != nil && err == nil && len(line) <= wrapMaxLineBytes {
+				body, ending := wrapSplitEnding(line)
+				v = hook(body)
+				if v.repl != nil {
+					out = append(v.repl, ending...)
+				}
 			}
-			if _, werr := bw.Write(out); werr != nil {
-				return werr
+			if !v.drop {
+				lw.mu.Lock()
+				_, werr := lw.w.Write(out)
+				lw.mu.Unlock()
+				if werr != nil {
+					return werr
+				}
 			}
-			if ferr := bw.Flush(); ferr != nil {
-				return ferr
+			if v.after != nil {
+				v.after()
 			}
 			line = line[:0]
 		}
@@ -193,17 +269,18 @@ func wrapRelay(r io.Reader, w io.Writer, edit wrapEditFunc) error {
 	}
 }
 
-// wrapStreamRest copies br to bw through the next newline (inclusive).
-func wrapStreamRest(br *bufio.Reader, bw *bufio.Writer) error {
+// wrapStreamRest copies br to w through the next newline (inclusive),
+// returning the read error and the write error separately.
+func wrapStreamRest(br *bufio.Reader, w io.Writer) (rerr, werr error) {
 	for {
 		chunk, err := br.ReadSlice('\n')
-		if _, werr := bw.Write(chunk); werr != nil {
-			return werr
+		if _, werr := w.Write(chunk); werr != nil {
+			return nil, werr
 		}
 		if errors.Is(err, bufio.ErrBufferFull) {
 			continue
 		}
-		return err
+		return err, nil
 	}
 }
 
@@ -214,20 +291,15 @@ func wrapEOF(err error) error {
 	return err
 }
 
-// wrapApplyEdit runs edit on a line minus its ending, and re-attaches the
-// ending to any replacement.
-func wrapApplyEdit(line []byte, edit wrapEditFunc) []byte {
-	body, ending := line, []byte(nil)
-	if bytes.HasSuffix(body, []byte("\r\n")) {
-		body, ending = body[:len(body)-2], []byte("\r\n")
-	} else if bytes.HasSuffix(body, []byte("\n")) {
-		body, ending = body[:len(body)-1], []byte("\n")
+// wrapSplitEnding splits a line into its body and its "\n"/"\r\n" ending.
+func wrapSplitEnding(line []byte) (body, ending []byte) {
+	if bytes.HasSuffix(line, []byte("\r\n")) {
+		return line[:len(line)-2], line[len(line)-2:]
 	}
-	repl := edit(body)
-	if repl == nil {
-		return line
+	if bytes.HasSuffix(line, []byte("\n")) {
+		return line[:len(line)-1], line[len(line)-1:]
 	}
-	return append(repl, ending...)
+	return line, nil
 }
 
 // wrapAdvertiseUI adds the MCP Apps capability to a client→server message
