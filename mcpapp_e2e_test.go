@@ -5,7 +5,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,11 +35,8 @@ func TestMcpAppEndToEnd(t *testing.T) {
 
 	useMcpAppBase(t)
 	events := useTestBus(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/mcp-app", handleMcpApp)
-	mux.HandleFunc(mcpAppPagePrefix, handleMcpAppPage)
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	useMcpAppRelay(t)
+	srv := newMcpAppMux(t)
 	if err := writeMcpAppToken(srv.Listener.Addr().(*net.TCPAddr).Port); err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +78,43 @@ func TestMcpAppEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(s.stderr.String(), "ui=true") {
 		t.Errorf("sample didn't log ui=true")
+	}
+
+	// Step 2: the chat window runs book_slot for the page, through agent-chat
+	// and the wrapper, on the same sample server.
+	var code int
+	var body map[string]json.RawMessage
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		code, body = browserCall(t, srv, `{"wrapper":"`+e.App.Wrapper+`","server":"mcp-apps-sample","tool":"book_slot","arguments":{"person":"Bob","day":"Wed 25"}}`, nil)
+		if code != http.StatusServiceUnavailable || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if code != 200 || !strings.Contains(string(body["result"]), "Pencilled in Bob on Wed 25") {
+		t.Fatalf("page tool run: %d %s", code, mustJSON(body))
+	}
+	if !strings.Contains(string(body["result"]), `"Wed 25":"pending"`) {
+		t.Errorf("the page should get the updated grid: %s", body["result"])
+	}
+	select {
+	case e2 := <-events:
+		if e2.Type != "mcpAppCall" || e2.AppCall == nil || e2.AppCall.Tool != "book_slot" {
+			t.Errorf("event = %+v", e2)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("no mcpAppCall event")
+	}
+	// Claude Code's side saw nothing of it, and later traffic still flows.
+	reply = s.request("tools/call", `{"name":"show_calendar","arguments":{}}`)
+	if !strings.Contains(stringify(reply), "pending") {
+		t.Errorf("the booking made from the page should be visible to Claude's own calls: %v", reply)
+	}
+	// Claude hears about it with the user's next message.
+	bus.ReceiveUserMessage("what changed?", nil, "")
+	if got := FormatMessages(bus.DrainMessages()); !strings.Contains(got, "page ran `book_slot` (day: Wed 25, person: Bob): Pencilled in Bob on Wed 25") {
+		t.Errorf("Claude's note:\n%s", got)
 	}
 }
 
