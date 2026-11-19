@@ -252,7 +252,7 @@ function mcpAppRunTool(entry, params) {
 }
 
 /** Has the user allowed this page to run tools? Asks in the page's bubble
-    the first time: Yes / No, plus Always allow after a Yes in an earlier
+    the first time: Allow / Deny, plus Always Allow after an Allow in an earlier
     session (remembered by agent-chat per tool program). Resolves true/false. */
 function mcpAppAllowed(entry) {
   if (entry.allowed) return Promise.resolve(true);
@@ -296,16 +296,16 @@ function mcpAppAsk(entry, offerAlways) {
       b.addEventListener('click', function () { box.remove(); resolve(answer); });
       box.appendChild(b);
     }
-    button('Yes', 'yes', 'primary');
-    if (offerAlways) button('Always allow', 'always');
-    button('No', 'no');
+    button('Allow', 'yes', 'primary');
+    if (offerAlways) button('Always Allow', 'always');
+    button('Deny', 'no');
     var menu = bubble && bubble.querySelector('.bubble-menu-btn');
     if (bubble) bubble.insertBefore(box, menu || null);
     scrollToBottom(false);
   });
 }
 
-// Settings: forget every "Always allow" and the earlier-session Yes answers.
+// Settings: forget every "Always Allow" and the earlier-session Allow answers.
 (function () {
   var btn = document.getElementById('btn-mcp-app-forget');
   if (!btn) return;

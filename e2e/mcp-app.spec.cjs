@@ -17,7 +17,7 @@
 //     reach the network (CSP).
 //   - step 2: with a wrapper (played here by the spec, polling
 //     /api/mcp-app/calls), a click runs the tool in place after "Let the page
-//     run its tools?": Yes / No, plus Always allow after a Yes in an earlier
+//     run its tools?": Allow / Deny, plus Always Allow after an Allow in an earlier
 //     session (seeded allow file), and Settings can forget it.
 const { test, expect, chromium } = require('@playwright/test');
 const { gotoRetry } = require('./goto-retry.cjs');
@@ -242,12 +242,12 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     if (server) server.proc.kill();
   });
 
-  test('Yes: the click books it in place, with no chat message', async () => {
+  test('Allow: the click books it in place, with no chat message', async () => {
     const frame = await open();
     await frame.locator('td.free[data-person="Bob"]').click();
     const ask = page.locator('.mcp-app-ask');
     await expect(ask).toContainText('Let the cal page run its tools?');
-    await expect(ask.locator('button')).toHaveText(['Yes', 'No']); // no Always allow the first time
+    await expect(ask.locator('button')).toHaveText(['Allow', 'Deny']); // no Always Allow the first time
     await ask.locator('button[data-answer="yes"]').click();
 
     await expect(frame.locator('[data-testid="mcp-app-status"]')).toHaveText('Booked (via tool call).');
@@ -262,7 +262,7 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     expect(wrapper.calls).toHaveLength(2);
   });
 
-  test('No: nothing runs and nothing is sent', async () => {
+  test('Deny: nothing runs and nothing is sent', async () => {
     const frame = await open();
     await frame.locator('td.free[data-person="Bob"]').click();
     await page.locator('.mcp-app-ask button[data-answer="no"]').click();
@@ -274,11 +274,11 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     await expect(page.locator('.bubble.user')).toHaveCount(0);
   });
 
-  test('Always allow after a Yes in an earlier session, until forgotten', async () => {
+  test('Always Allow after an Allow in an earlier session, until forgotten', async () => {
     const frame = await open({ allow: { servers: { cal: { yesSessions: ['an-earlier-session'] } } } });
     await frame.locator('td.free[data-person="Bob"]').click();
     const ask = page.locator('.mcp-app-ask');
-    await expect(ask.locator('button')).toHaveText(['Yes', 'Always allow', 'No']);
+    await expect(ask.locator('button')).toHaveText(['Allow', 'Always Allow', 'Deny']);
     await ask.locator('button[data-answer="always"]').click();
     await expect(frame.locator('td.pending[data-person="Bob"][data-day="Tue 24"]')).toHaveCount(1);
 
@@ -290,7 +290,7 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     await expect(again.locator('td.pending[data-person="Alice"]')).toHaveCount(1);
     await expect(page.locator('.mcp-app-ask')).toHaveCount(0);
 
-    // Settings → Forget: asked again, and without Always allow.
+    // Settings → Forget: asked again, and without Always Allow.
     await page.locator('#btn-settings').click();
     await page.locator('#btn-mcp-app-forget').click();
     await expect(page.locator('#btn-mcp-app-forget')).toHaveText('Forgotten');
@@ -298,6 +298,6 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     const third = page.frameLocator('iframe.mcp-app-frame');
     await expect(third.locator('#host')).toHaveText('· in agent-chat', { timeout: 10000 });
     await third.locator('td.free[data-person="Bob"]').click();
-    await expect(page.locator('.mcp-app-ask button')).toHaveText(['Yes', 'No']);
+    await expect(page.locator('.mcp-app-ask button')).toHaveText(['Allow', 'Deny']);
   });
 });

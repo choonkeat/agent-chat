@@ -356,3 +356,5 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
     appears
   - 5/5 pass (local chromium on 9333, `E2E_SERVER_PORT=0`)
 - Go: `mcpappallow_test.go`. `make unit-test` green.
+- 2026-11-19: buttons renamed at the user's request to **Allow / Always
+  Allow / Deny** (the answer values stay yes/always/no). E2E 5/5.
