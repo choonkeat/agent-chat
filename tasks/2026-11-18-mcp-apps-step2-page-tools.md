@@ -387,3 +387,27 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
     no line or note, the chat-log line, and the error line
   - E2E: the line appears after Allow, and 2 lines survive a reload. 5/5.
 - `make unit-test` green.
+
+### Phase 5 (2026-11-19): done
+
+- `mcp-app.js`: `mcpAppStyleVariables()` reads the live CSS variables via
+  `MCP_APP_STYLE_MAP`:
+  - `--color-background-primary` comes from `--bg-secondary` (the agent bubble
+    the page sits in)
+  - secondary, tertiary and inverse backgrounds, the text colours and the
+    borders are mapped the same way
+  - plus `--font-sans` (the body's computed font), `--font-mono`, and
+    `--border-radius-sm/md/lg`
+  - sent as `hostContext.styles.variables` in `ui/initialize` and in every
+    `host-context-changed` (which the theme MutationObserver already sends)
+- Sample `calendar.html`:
+  - `applyHostContext` sets `color-scheme` and the variables on init and on
+    change
+  - CSS uses `var(--color-background-primary, Canvas)` etc., keeping the old
+    fallbacks
+- E2E:
+  - the page body background and text equal the bubble's, in the starting
+    theme and after a flip
+  - a page that ignores the variables still shows
+  - 7/7
+- Screenshots (dark and light) were checked by eye. `make unit-test` green.

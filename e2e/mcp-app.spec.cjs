@@ -172,6 +172,38 @@ test.describe('MCP Apps page in chat', () => {
     await expect(frame.locator('#host')).toHaveText('· in agent-chat');
   });
 
+  test('the page takes the chat\'s colours, and follows a theme flip', async () => {
+    await gotoRetry(page, server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 10000 });
+    await postPage(server, { html: CALENDAR_HTML, result: CALENDAR_RESULT });
+    const frame = page.frameLocator('iframe.mcp-app-frame');
+    await expect(frame.locator('#host')).toHaveText('· in agent-chat', { timeout: 10000 });
+
+    // The colour the agent bubble around the page uses, as the browser writes it.
+    const bubbleBg = () => page.locator('.bubble.agent.mcp-app').evaluate((el) => getComputedStyle(el).backgroundColor);
+    const pageBg = () => frame.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
+    const pageText = () => frame.locator('body').evaluate((el) => getComputedStyle(el).color);
+    const chatText = () => page.locator('.bubble.agent.mcp-app').evaluate((el) => getComputedStyle(el).color);
+
+    const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme') || 'dark');
+    await expect.poll(pageBg).toBe(await bubbleBg());
+    await expect.poll(pageText).toBe(await chatText());
+    const first = await pageBg();
+
+    // Flip the theme: the page follows without a reload.
+    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme === 'light' ? 'dark' : 'light');
+    await expect.poll(pageBg).not.toBe(first);
+    await expect.poll(pageBg).toBe(await bubbleBg());
+    await expect.poll(pageText).toBe(await chatText());
+  });
+
+  test('a page that ignores the colours still shows', async () => {
+    await gotoRetry(page, server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 10000 });
+    await postPage(server, { html: '<!doctype html><html><head></head><body style="background:#fff;color:#000"><p id="p">plain</p></body></html>', tool: 'plain', result: { content: [] } });
+    await expect(page.frameLocator('iframe.mcp-app-frame').locator('#p')).toHaveText('plain', { timeout: 10000 });
+  });
+
   test('a page cannot post messages by itself or reach the network', async () => {
     const hostile = `<!doctype html><html><head></head><body><div id="out">starting</div><script>
       var out = document.getElementById('out'), results = {};

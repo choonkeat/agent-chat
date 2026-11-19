@@ -119,8 +119,45 @@ function mcpAppNotify(entry, method, params) {
   mcpAppPost(entry, { method: method, params: params || {} });
 }
 
+// The chat's own colours, fonts and corners under the spec's style names
+// (McpUiStyleVariableKey), so pages that use them blend into the bubble.
+// Read from the live CSS variables, so they follow the theme. Only names we
+// have a real value for are sent.
+var MCP_APP_STYLE_MAP = {
+  '--color-background-primary': '--bg-secondary',   // the agent bubble the page sits in
+  '--color-background-secondary': '--bg-primary',
+  '--color-background-tertiary': '--bg-tertiary',
+  '--color-background-inverse': '--text-primary',
+  '--color-text-primary': '--text-primary',
+  '--color-text-secondary': '--text-secondary',
+  '--color-text-tertiary': '--text-muted',
+  '--color-text-inverse': '--bg-primary',
+  '--color-border-primary': '--border-primary',
+  '--color-border-secondary': '--border-secondary'
+};
+
+function mcpAppStyleVariables() {
+  var root = getComputedStyle(document.documentElement);
+  var vars = {};
+  Object.keys(MCP_APP_STYLE_MAP).forEach(function (k) {
+    var v = root.getPropertyValue(MCP_APP_STYLE_MAP[k]).trim();
+    if (v) vars[k] = v;
+  });
+  vars['--font-sans'] = getComputedStyle(document.body).fontFamily;
+  vars['--font-mono'] = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  vars['--border-radius-sm'] = '6px';
+  vars['--border-radius-md'] = '8px';
+  vars['--border-radius-lg'] = '12px';
+  return vars;
+}
+
 function mcpAppHostContext() {
-  return { theme: mcpAppTheme(), displayMode: 'inline', availableDisplayModes: ['inline'] };
+  return {
+    theme: mcpAppTheme(),
+    styles: { variables: mcpAppStyleVariables() },
+    displayMode: 'inline',
+    availableDisplayModes: ['inline']
+  };
 }
 
 function mcpAppMessageText(content) {

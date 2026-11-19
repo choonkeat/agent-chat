@@ -6,9 +6,12 @@
 <title>Availability calendar</title>
 <style>
   :root { color-scheme: light dark; --free:#2e7d32; --pending:#b26a00; --booked:#777; }
-  body { font: 14px/1.4 system-ui, sans-serif; margin: 12px; background: Canvas; color: CanvasText; }
+  /* The host's colours and font when it sends them (spec style variables),
+     else the browser's own light/dark defaults. */
+  body { font: 14px/1.4 var(--font-sans, system-ui, sans-serif); margin: 12px;
+         background: var(--color-background-primary, Canvas); color: var(--color-text-primary, CanvasText); }
   table { border-collapse: collapse; }
-  th, td { padding: 6px 10px; border: 1px solid #8884; text-align: center; }
+  th, td { padding: 6px 10px; border: 1px solid var(--color-border-secondary, #8884); text-align: center; }
   td.free { color: var(--free); cursor: pointer; font-weight: 600; }
   td.free:hover { background: #2e7d3222; }
   td.pending { color: var(--pending); }
@@ -37,6 +40,17 @@
     });
   }
   function notify(method, params) { send({ method: method, params: params || {} }); }
+
+  // Theme and the host's style variables (hostContext.theme, .styles.variables).
+  function applyHostContext(ctx) {
+    if (!ctx) return;
+    var root = document.documentElement;
+    if (ctx.theme) root.style.colorScheme = ctx.theme;
+    var vars = ctx.styles && ctx.styles.variables;
+    if (vars) Object.keys(vars).forEach(function (k) {
+      if (/^--[a-z0-9-]+$/.test(k) && typeof vars[k] === 'string') root.style.setProperty(k, vars[k]);
+    });
+  }
 
   function render(g) {
     grid = g;
@@ -98,7 +112,7 @@
       case 'ui/notifications/tool-cancelled':
         status('Cancelled: ' + ((m.params && m.params.reason) || '')); break;
       case 'ui/notifications/host-context-changed':
-        break;
+        applyHostContext(m.params); break;
       case 'ui/resource-teardown':
         send({ id: m.id, result: {} }); break;
       default:
@@ -118,6 +132,7 @@
     clientInfo: { name: 'mcp-apps-sample-view', version: '0.1.0' },
     appCapabilities: { tools: {} }
   }).then(function (res) {
+    applyHostContext(res && res.hostContext);
     var hi = res && res.hostInfo;
     document.getElementById('host').textContent = hi ? '· in ' + hi.name : '';
     notify('ui/notifications/initialized');
