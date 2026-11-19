@@ -2739,6 +2739,7 @@ function handleSend() {
     if (stagedFiles[i].ref) fileRefs.push(stagedFiles[i].ref);
   }
   if (!text && fileRefs.length === 0) return;
+  acHide(); // a list left open would sit over the empty box after the send
 
   // Emptied before the message is submitted, not after: the pipeline draws the
   // words as a bubble immediately, so the box has nothing left to hold — and a
@@ -2998,6 +2999,79 @@ function acHide() {
   acTriggerPos = -1;
   acTriggerChar = '';
   acCache = null;
+  acHistory = false;
+  acDropdown.classList.remove('ac-history');
+}
+
+// --- Past messages in the same dropdown ---
+//
+// Ctrl+R anywhere in the box, Up with the cursor at the very start, or
+// Backspace in an empty box lists what the user already sent in this chat,
+// newest first. It is the `/` and `@` dropdown with an invisible trigger: the
+// anchor is where the cursor was when it opened, whatever is typed from there
+// filters the list, and picking one puts the message in place of that typed
+// filter.
+var acHistory = false;
+
+// The user's own messages on the page, newest first, each listed once (at its
+// most recent use). Read from the bubbles, which hold the text as it was sent.
+function acHistoryItems() {
+  var bubbles = document.querySelectorAll('.bubble.user[data-md]');
+  var seen = {};
+  var out = [];
+  for (var i = bubbles.length - 1; i >= 0; i--) {
+    var text = bubbles[i].dataset.md;
+    if (!text || !text.trim() || seen[text]) continue;
+    seen[text] = true;
+    out.push({ v: text, h: '' });
+  }
+  return out;
+}
+
+function acHistoryOpen() {
+  acHide();
+  acHistory = true;
+  acTriggerPos = chatInput.selectionStart;
+  acTriggerChar = '';
+  acDropdown.classList.add('ac-history');
+  acHistoryRender('');
+}
+// Known quirk, left alone: on iOS the caret of an empty box is drawn over the
+// list when it opens, and not drawn after Backspace closes it, until the next
+// keystroke. Not cured by re-placing the selection, by letting the Backspace
+// through uncancelled, or by blur+focus (all tried on a real iPhone).
+
+// Backspace with nothing typed since the list opened closes it again — the
+// same key that opens it on a phone, which has no Escape.
+function acHistoryAtAnchor() {
+  return acHistory && acVisible && chatInput.selectionStart === acTriggerPos &&
+    chatInput.selectionEnd === acTriggerPos;
+}
+
+// A tap anywhere outside the box and the list closes it too.
+document.addEventListener('pointerdown', function (e) {
+  if (!acHistory || !acVisible) return;
+  if (e.target === chatInput || acDropdown.contains(e.target)) return;
+  acHide();
+});
+
+// Filtered with the same matching as the other dropdowns, but ranked for
+// recall: messages containing the typed text as-is come first, loose
+// (letters-in-order) matches after, and recency decides within each group —
+// the dropdown's usual shortest-first tiebreak would bury the long messages
+// that are most worth recalling.
+function acHistoryRender(query) {
+  var all = acHistoryItems();
+  if (all.length === 0) { acShowStatus('No messages sent yet'); return; }
+  var q = query.toLowerCase();
+  var exact = [], loose = [];
+  for (var i = 0; i < all.length; i++) {
+    if (!q || all[i].v.toLowerCase().indexOf(q) >= 0) exact.push(all[i]);
+    else if (acFuzzyMatch(all[i], query)) loose.push(all[i]);
+  }
+  var list = exact.concat(loose);
+  if (list.length === 0) { acShowStatus('No sent message matches'); return; }
+  acShow(list, query);
 }
 
 function acUpdateActive() {
@@ -3248,7 +3322,22 @@ function acFetch(trigger, query) {
     });
 }
 
+// Some phone keyboards report Backspace only as the edit it asks for, with no
+// usable key name on keydown. The keydown route above cancels the edit, so
+// this only runs for those.
+chatInput.addEventListener('beforeinput', function (e) {
+  if (!e || e.inputType !== 'deleteContentBackward') return;
+  if (acHistoryAtAnchor()) { e.preventDefault(); acHide(); return; }
+  if (!acVisible && chatInput.value === '') acHistoryOpen();
+});
+
 chatInput.addEventListener('input', function (e) {
+  if (acHistory) {
+    var hc = chatInput.selectionStart;
+    if (hc < acTriggerPos) { acHide(); return; } // deleted back past the anchor
+    acHistoryRender(chatInput.value.substring(acTriggerPos, hc));
+    return;
+  }
   if (Object.keys(acTriggers).length === 0) return;
   acRepairPastedSpace(e);
 
@@ -3294,6 +3383,43 @@ acDropdown.addEventListener('mousedown', function (e) {
 var isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 768);
 
 chatInput.addEventListener('keydown', function (e) {
+  if (!e.isComposing) {
+    if (e.key === 'Backspace' && acHistoryAtAnchor()) {
+      e.preventDefault();
+      acHide();
+      return;
+    }
+    // Ctrl+R: open the past-messages list; again, step to the next (older) one.
+    // Only Ctrl — Cmd+R on a Mac stays the browser's reload.
+    if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === 'r' || e.key === 'R')) {
+      e.preventDefault();
+      var opts = acDropdown.querySelectorAll('.ac-option');
+      if (acHistory && acVisible && opts.length > 0) {
+        acActiveIndex = (acActiveIndex + 1) % opts.length;
+        acUpdateActive();
+      } else {
+        acHistoryOpen();
+      }
+      return;
+    }
+    // Up with the cursor at the very start of the box (nothing selected).
+    if (!acVisible && e.key === 'ArrowUp' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey &&
+        chatInput.selectionStart === 0 && chatInput.selectionEnd === 0) {
+      e.preventDefault();
+      acHistoryOpen();
+      return;
+    }
+    // Backspace in an empty box — the phone route, where there is no Ctrl or
+    // Up. Empty only: a phone tap often leaves the cursor at the start of a
+    // draft, and a stray Backspace there must not cover it. A held key's
+    // repeats are ignored so clearing a draft does not run on into the list.
+    if (!acVisible && e.key === 'Backspace' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey &&
+        chatInput.value === '') {
+      e.preventDefault();
+      acHistoryOpen();
+      return;
+    }
+  }
   // Autocomplete keyboard navigation
   if (acVisible) {
     var items = acDropdown.querySelectorAll('.ac-option');
@@ -3309,7 +3435,10 @@ chatInput.addEventListener('keydown', function (e) {
       acUpdateActive();
       return;
     }
-    if (e.key === 'Enter' || e.key === 'Tab') {
+    // A past-messages filter that matched nothing is just text: Enter sends it.
+    if (e.key === 'Enter' && acHistory && !items[acActiveIndex]) {
+      acHide();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
       // A bare `/clear` still has the `/` trigger live (it dies on the first
       // space), so the dropdown would otherwise eat the Enter that submits it —
