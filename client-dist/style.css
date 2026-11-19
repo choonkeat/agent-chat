@@ -1282,6 +1282,13 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   font-size: 0.75rem;
 }
 
+/* Past messages: one line each, however long or multi-line the message. */
+#autocomplete-dropdown.ac-history .ac-option {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .ac-status {
   padding: 0.4rem 0.75rem;
   font-size: 0.85rem;
