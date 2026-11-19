@@ -1467,3 +1467,28 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
 #draft-reply-btn:hover {
   background: var(--bg-elevated);
 }
+
+/* --- MCP Apps: a tool's page inside an agent bubble (mcp-app.js) --- */
+/* Wide enough for a real page, but leaving room on the right for the "⋯"
+   button, which sits 32px outside every agent bubble. */
+.bubble.mcp-app {
+  width: calc(100% - 40px);
+  max-width: calc(100% - 40px);
+  box-sizing: border-box;
+}
+.mcp-app-frame {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  background: transparent;
+}
+.mcp-app-frame.no-border {
+  border: none;
+}
+.mcp-app-error {
+  margin-top: 8px;
+  font-size: 0.9em;
+  opacity: 0.75;
+}

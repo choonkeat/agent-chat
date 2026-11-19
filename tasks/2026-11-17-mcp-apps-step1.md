@@ -1,6 +1,6 @@
 # MCP Apps, step 1: show tool pages in agent-chat via `agent-chat wrap`
 
-Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-3/5 done). Branch: `mcp-apps`.
+Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-4/5 done). Branch: `mcp-apps`.
 Repo: agent-chat (this worktree: `/repos/agent-chat/worktrees/mcp-apps`).
 
 ## Goal
@@ -259,3 +259,47 @@ About 5 working days.
   sample server: token file written 0600, page posted, page served back as
   `text/plain` with `CSP: sandbox`; a wrong password got 401.
 - `make unit-test` green. E2E not run (CDP 502 earlier; no client-dist change).
+
+### Phase 4 (2026-11-17): done
+
+- New `client-dist/mcp-app.js` (loaded after `app.js`; uses its globals),
+  hooked into both the live event switch and `replayHistory` as `mcpApp`.
+  Bubble = `addBubble("📱 \`server/tool\` page")` + `<iframe sandbox="allow-scripts"
+  referrerpolicy="no-referrer">`; html fetched from `api/mcp-app/page/<id>`
+  and set as `srcdoc`, with a CSP `<meta>` put first in `<head>`.
+- CSP: `default-src 'none'`, inline script/style, `data:`/`blob:` images and
+  media, `connect-src`/`frame-src`/`base-uri` `'none'` unless the resource's
+  `_meta.ui.csp` lists domains; only `http(s)://`/`ws(s)://` sources made of
+  plain URL characters are copied in, so a page can't inject a directive.
+- Beyond the plan:
+  - `ui/message` is accepted only while that page's iframe has focus (the
+    user clicked into it), so a page can't post chat messages on its own as
+    it loads. Sent through `submitUserMessage` as a new `page` source (no
+    interrupt word, no text-box lock), text "📱 From the \`server/tool\` page: …".
+  - `ui/request-display-mode` → `inline`; `ping` → `{}`; page logs
+    (`notifications/message`) go to the console; theme flips are sent as
+    `ui/notifications/host-context-changed`.
+  - Height: reported height + the iframe's own border (it is border-box
+    here), capped 60–800px. Without the border the page got a scrollbar.
+  - Bubble width `calc(100% - 40px)`: at 100% the "⋯" button (32px outside
+    every agent bubble) caused a sideways page scroll.
+  - Sample page now reports `scrollWidth/scrollHeight` (test-only file).
+- Shared CDP browser still answered 502, so checks ran on a local headless
+  chromium (`chromium --headless=new --remote-debugging-port=9333`) with
+  `CDP_ENDPOINT=http://localhost:9333 E2E_SERVER_PORT=0`; the worktree's
+  `node_modules` is a symlink to the main checkout's (gitignored).
+- New E2E `e2e/mcp-app.spec.cjs` (2 tests, written now rather than in
+  phase 5 because it was the only way to click inside the page): sample page
+  handshakes and draws; click → page's `tools/call` refused → `ui/message`
+  → user bubble; reload replays it; a hostile page's own `ui/message` and
+  `tools/call` are refused and its `fetch('https://example.com')` is blocked.
+- Screenshot after a click: the page in its bubble, and the user message
+  below it.
+- Tests: `make unit-test` green. Full E2E on the local chromium with
+  ephemeral ports (parallel): 251 passed, 2 failed, 20 min. Neither failure
+  is from this change:
+  - `markdown-images.spec.cjs:190` passed on a rerun (flaky under parallel load).
+  - `draft-keep.spec.cjs:147` ("another session does not pick up the draft")
+    fails every time on ephemeral ports: its two sessions get two ports, so two
+    origins and two separate localStorages. Pinned to one port
+    (`E2E_SERVER_PORT=3005`), `draft-keep` + `mcp-app` specs: 7/7 passed.
