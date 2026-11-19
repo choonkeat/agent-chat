@@ -12,3 +12,5 @@ tdspec/docs.json
 playwright-report/
 test-results/
 /*.png
+.pi/
+/my-agent-chat-rules.tmpl
