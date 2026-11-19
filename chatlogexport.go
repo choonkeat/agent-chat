@@ -119,6 +119,19 @@ func renderChatBubble(e Event, st *renderState, imageMap map[string]string) stri
 		if e.Timestamp > 0 {
 			st.lastTs = e.Timestamp
 		}
+	case "mcpApp":
+		if e.App == nil {
+			return ""
+		}
+		if st.lastTs > 0 && e.Timestamp > st.lastTs {
+			fmt.Fprintf(&b, "<small>took %s</small><br>\n", formatElapsed(e.Timestamp-st.lastTs))
+		}
+		b.WriteString("**AGENT**\n\n")
+		b.WriteString(blockquoteText(mcpAppSummary(e.App)))
+		b.WriteString("\n\n")
+		if e.Timestamp > 0 {
+			st.lastTs = e.Timestamp
+		}
 	case "agentMessage", "verbalReply":
 		body := strings.TrimSpace(e.Text)
 		imgBlock := imageBlock(e.Files, imageMap)

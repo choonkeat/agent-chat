@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -316,7 +318,20 @@ func (a *wrapApps) deliver(call wrapCall, tool wrapTool, result json.RawMessage)
 		a.logf("encode page for %s: %v", call.tool, err)
 		return
 	}
-	resp, err := a.http.Post(a.postURL, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, a.postURL, bytes.NewReader(body))
+	if err != nil {
+		a.logf("send page for %s to agent-chat: %v", call.tool, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	tok, err := a.token()
+	if err != nil {
+		// An agent-chat without MCP Apps support writes no token: skip quietly-ish.
+		a.logf("send page for %s to agent-chat: no password: %v", call.tool, err)
+		return
+	}
+	req.Header.Set(mcpAppTokenHeader, tok)
+	resp, err := a.http.Do(req)
 	if err != nil {
 		a.logf("send page for %s to agent-chat: %v", call.tool, err)
 		return
@@ -326,6 +341,20 @@ func (a *wrapApps) deliver(call wrapCall, tool wrapTool, result json.RawMessage)
 	if resp.StatusCode/100 != 2 {
 		a.logf("send page for %s to agent-chat: HTTP %d", call.tool, resp.StatusCode)
 	}
+}
+
+// token reads agent-chat's password for the port in postURL. Read on every
+// post, so a restarted agent-chat (new password) is picked up.
+func (a *wrapApps) token() (string, error) {
+	u, err := url.Parse(a.postURL)
+	if err != nil {
+		return "", err
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return "", fmt.Errorf("no port in %s", a.postURL)
+	}
+	return readMcpAppToken(port)
 }
 
 // page returns the cached page for uri, fetching it once. A failed fetch is

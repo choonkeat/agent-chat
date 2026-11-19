@@ -1,6 +1,6 @@
 # MCP Apps, step 1: show tool pages in agent-chat via `agent-chat wrap`
 
-Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-2/5 done). Branch: `mcp-apps`.
+Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-3/5 done). Branch: `mcp-apps`.
 Repo: agent-chat (this worktree: `/repos/agent-chat/worktrees/mcp-apps`).
 
 ## Goal
@@ -226,3 +226,36 @@ About 5 working days.
   `resourceMeta {"ui":{"prefersBorder":true}}`.
 - `make unit-test` green. E2E not run (same reason as phase 1; no
   client-dist change).
+
+### Phase 3 (2026-11-17): done
+
+- **Decision (user, 2026-11-17): require a password, plus loopback only.**
+  agent-chat makes a random 64-hex token per run and writes it, after the
+  listener is up, to `<user cache dir>/agent-chat/mcp-app-tokens/<port>`
+  (dir 0700, file 0600, temp file + rename). The wrapper reads the file for
+  the port in its post URL on every post (so a restarted agent-chat is
+  picked up) and sends it as `X-Agent-Chat-Token`. Blocks other machines,
+  other containers and other user accounts; not programs running as the
+  same user (they can read every file of the user's anyway; only a swe-swe
+  handed-out secret could do better). No token file (older agent-chat) →
+  the wrapper logs "no password" and skips the post; the tool is unaffected.
+- `mcpapp.go` + `mcpapp_test.go` (5 tests), one more wrapper test (no
+  password → no post). `POST /api/mcp-app`: loopback (403), token (401),
+  4 MB (413), mimeType must be `text/html;profile=mcp-app` (415), tool +
+  html required and `ui://` uri (400).
+- Pages are stored by sha256 under `<user cache dir>/agent-chat/mcp-app-pages/`,
+  not the per-run temp upload dir, so they survive restarts and identical
+  pages are stored once. Not under `/uploads/`, which would serve them as
+  `text/html` on agent-chat's own origin; instead
+  `GET /api/mcp-app/page/<sha256>` serves `text/plain` + `nosniff` +
+  `CSP: sandbox`. Nothing cleans the store yet (pages are a few KB).
+- Event: `{"type":"mcpApp","app":{id, server, tool, arguments, result,
+  resourceUri, pageId, resourceMeta, toolMeta}}` (new `Event.App`). The
+  current UI ignores unknown event types, so a phase-3-only build shows
+  nothing new and breaks nothing.
+- Chat log: `**AGENT**` + `> 📱 \`server/tool\` page shown`, with the usual
+  "took" line; the page itself isn't embedded.
+- Check: demo agent-chat on port 4019 (`env -i`, `-no-stdio-mcp`) + wrapper +
+  sample server: token file written 0600, page posted, page served back as
+  `text/plain` with `CSP: sandbox`; a wrong password got 401.
+- `make unit-test` green. E2E not run (CDP 502 earlier; no client-dist change).

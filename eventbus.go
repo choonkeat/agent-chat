@@ -77,6 +77,9 @@ type Event struct {
 	// bus keeps and broadcasts (see annotateFilePaths) and deliberately never
 	// written to the JSONL — it is a rendering aid, not part of the record.
 	FilePaths []FilePath `json:"file_paths,omitempty"`
+
+	// App is the tool page of an "mcpApp" event (see mcpapp.go).
+	App *McpApp `json:"app,omitempty"`
 }
 
 // ExportResult carries the bytes a browser POSTed back for an export request,

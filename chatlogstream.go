@@ -253,7 +253,7 @@ func (s *chatLogStream) recoverFromHistory(history []Event) {
 	assetsDir := exportAssetsDir(s.mdPath)
 	for _, e := range history {
 		switch e.Type {
-		case "userMessage", "agentMessage", "verbalReply":
+		case "userMessage", "agentMessage", "verbalReply", "mcpApp":
 		default:
 			continue
 		}
@@ -535,7 +535,7 @@ func (s *chatLogStream) HandleEvent(e Event) {
 		return
 	}
 	switch e.Type {
-	case "userMessage", "agentMessage", "verbalReply":
+	case "userMessage", "agentMessage", "verbalReply", "mcpApp":
 	default:
 		return
 	}

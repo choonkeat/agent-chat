@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -204,11 +205,18 @@ type fakeAgentChat struct {
 	gate  chan struct{}
 }
 
+// It also writes this process's password file for its port (in a temp base
+// dir) and rejects posts without that password, like the real handler.
 func newFakeAgentChat(t *testing.T, gate chan struct{}) *fakeAgentChat {
+	useMcpAppBase(t)
 	f := &fakeAgentChat{got: make(chan struct{}, 100), gate: gate}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/mcp-app" || r.Method != http.MethodPost {
 			http.Error(w, "unexpected", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get(mcpAppTokenHeader) != mcpAppToken() {
+			http.Error(w, "bad password", http.StatusUnauthorized)
 			return
 		}
 		var p wrapAppPost
@@ -225,6 +233,9 @@ func newFakeAgentChat(t *testing.T, gate chan struct{}) *fakeAgentChat {
 		f.got <- struct{}{}
 	}))
 	t.Cleanup(f.srv.Close)
+	if err := writeMcpAppToken(f.srv.Listener.Addr().(*net.TCPAddr).Port); err != nil {
+		t.Fatal(err)
+	}
 	return f
 }
 
@@ -379,5 +390,24 @@ func TestWrapPickPageBlob(t *testing.T) {
 	}
 	if _, _, _, err := wrapPickPage(json.RawMessage(`{"contents":[]}`), "ui://x/p"); err == nil {
 		t.Errorf("empty contents should be an error")
+	}
+}
+
+func TestWrapAppsSkipsPostWithoutPassword(t *testing.T) {
+	ac := newFakeAgentChat(t, nil)
+	useMcpAppBase(t) // a fresh, empty base: as if agent-chat were too old to write one
+	s := startWrapSession(t, "--agent-chat-url", ac.url())
+	s.handshake()
+	s.request("tools/call", `{"name":"show"}`)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(s.stderr.String(), "no password") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no 'no password' log line; stderr:\n%s", s.stderr.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.request("ping", "")
+	if n := ac.count(); n != 0 {
+		t.Errorf("got %d posts without a password, want 0", n)
 	}
 }

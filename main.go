@@ -481,6 +481,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/api/chatlog-path", handleChatlogPath)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.HandleFunc("/api/ctx-only", handleCtxOnly)
+	mux.HandleFunc("/api/mcp-app", handleMcpApp)
+	mux.HandleFunc(mcpAppPagePrefix, handleMcpAppPage)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
 	// This avoids relative-path resolution failures when the page is served
@@ -522,6 +524,10 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 		return "", nil, fmt.Errorf("listen error: %w", err)
 	}
 	actualPort := ln.Addr().(*net.TCPAddr).Port
+	// Where `agent-chat wrap` finds the password for posting tool pages here.
+	if err := writeMcpAppToken(actualPort); err != nil {
+		log.Printf("agent-chat: mcp-app token not written (tool pages will be refused): %v", err)
+	}
 	go func() {
 		http.Serve(ln, mux)
 		// Server stopped — mark as not running so next call restarts it
