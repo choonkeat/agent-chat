@@ -21,7 +21,6 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -57,6 +56,9 @@ type McpApp struct {
 	PageID       string          `json:"pageId"` // sha256 of the html; fetch from /api/mcp-app/page/<pageId>
 	ResourceMeta json.RawMessage `json:"resourceMeta,omitempty"`
 	ToolMeta     json.RawMessage `json:"toolMeta,omitempty"`
+	// Wrapper names the `agent-chat wrap` process that can run this page's
+	// tools (step 2); empty for pages from an older wrapper.
+	Wrapper string `json:"wrapper,omitempty"`
 }
 
 var (
@@ -208,14 +210,7 @@ func handleMcpApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	if !isLoopbackRemote(r.RemoteAddr) {
-		http.Error(w, "only accepted from this machine", http.StatusForbidden)
-		return
-	}
-	want := mcpAppToken()
-	got := r.Header.Get(mcpAppTokenHeader)
-	if want == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
-		http.Error(w, "wrong or missing "+mcpAppTokenHeader, http.StatusUnauthorized)
+	if !mcpAppWrapperAuth(w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, mcpAppMaxBody)
@@ -259,6 +254,7 @@ func handleMcpApp(w http.ResponseWriter, r *http.Request) {
 		PageID:       pageID,
 		ResourceMeta: p.ResourceMeta,
 		ToolMeta:     p.ToolMeta,
+		Wrapper:      p.Wrapper,
 	}
 	bus.Publish(Event{Type: "mcpApp", App: app})
 	w.Header().Set("Content-Type", "application/json")

@@ -17,7 +17,10 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +37,13 @@ const (
 	wrapIDPrefix     = "acw-"
 	wrapFetchTimeout = 10 * time.Second
 	wrapPostTimeout  = 2 * time.Second
+)
+
+// Polling agent-chat for page tool runs (step 2 phase 2). Errors back off
+// from wrapPollBackoffMin up to wrapPollBackoffMax (vars for tests).
+var (
+	wrapPollBackoffMin = time.Second
+	wrapPollBackoffMax = 30 * time.Second
 )
 
 // wrapCallTimeout caps how long a page's tool run may take (a var for tests).
@@ -84,6 +94,7 @@ type wrapAppPost struct {
 	HTML         string          `json:"html"`
 	ResourceMeta json.RawMessage `json:"resourceMeta,omitempty"`
 	ToolMeta     json.RawMessage `json:"toolMeta,omitempty"`
+	Wrapper      string          `json:"wrapper,omitempty"` // this process's id, for page tool runs
 }
 
 type wrapApps struct {
@@ -93,6 +104,10 @@ type wrapApps struct {
 	log     io.Writer
 	http    *http.Client
 	guard   *wrapGuard // nil in unit tests that build a wrapApps directly
+	id      string     // random per process: agent-chat routes page tool runs by it
+
+	pollOnce sync.Once
+	stop     chan struct{} // closed by shutdown: stops polling
 
 	mu          sync.Mutex
 	initialized bool
@@ -110,6 +125,8 @@ type wrapApps struct {
 func newWrapApps(server, postURL string, toChild *wrapLineWriter, log io.Writer) *wrapApps {
 	return &wrapApps{
 		server:   server,
+		id:       wrapNewID(),
+		stop:     make(chan struct{}),
 		postURL:  postURL,
 		toChild:  toChild,
 		log:      log,
@@ -121,6 +138,12 @@ func newWrapApps(server, postURL string, toChild *wrapLineWriter, log io.Writer)
 		pending:  map[string]chan wrapReply{},
 		pages:    map[string]*wrapPage{},
 	}
+}
+
+func wrapNewID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (a *wrapApps) logf(format string, args ...any) {
@@ -359,6 +382,7 @@ func (a *wrapApps) deliver(call wrapCall, tool wrapTool, result json.RawMessage)
 		HTML:         page.html,
 		ResourceMeta: page.meta,
 		ToolMeta:     tool.meta,
+		Wrapper:      a.id,
 	})
 	if err != nil {
 		a.logf("encode page for %s: %v", call.tool, err)
@@ -386,6 +410,138 @@ func (a *wrapApps) deliver(call wrapCall, tool wrapTool, result json.RawMessage)
 	resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		a.logf("send page for %s to agent-chat: HTTP %d", call.tool, resp.StatusCode)
+		return
+	}
+	// A page is on screen: from now on, wait for its tool runs.
+	a.pollOnce.Do(func() {
+		a.mu.Lock()
+		closed := a.closed
+		if !closed {
+			a.wg.Add(1)
+		}
+		a.mu.Unlock()
+		if !closed {
+			go func() {
+				defer a.wg.Done()
+				defer a.guard.catch()
+				a.pollLoop()
+			}()
+		}
+	})
+}
+
+// pollLoop waits on agent-chat for page tool runs and runs each one. It never
+// touches the relay: failures only back off, and an agent-chat that doesn't
+// know the address (from before step 2) ends the loop.
+func (a *wrapApps) pollLoop() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-a.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	pollURL := a.postURL + "/calls?wrapper=" + url.QueryEscape(a.id)
+	client := &http.Client{} // the poll is held open by agent-chat; ctx ends it
+	backoff := wrapPollBackoffMin
+	fail := func(format string, args ...any) bool {
+		a.logf(format, args...)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return false
+		}
+		backoff = min(backoff*2, wrapPollBackoffMax)
+		return true
+	}
+	for ctx.Err() == nil {
+		tok, err := a.token()
+		if err != nil {
+			if !fail("wait for page tool runs: no password: %v", err) {
+				return
+			}
+			continue
+		}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
+		req.Header.Set(mcpAppTokenHeader, tok)
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil || !fail("wait for page tool runs: %v", err) {
+				return
+			}
+			continue
+		}
+		var calls []mcpAppCallReq
+		status := resp.StatusCode
+		if status == http.StatusOK {
+			err = json.NewDecoder(io.LimitReader(resp.Body, mcpAppMaxBody)).Decode(&calls)
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		switch {
+		case status == http.StatusNotFound || status == http.StatusMethodNotAllowed:
+			a.logf("this agent-chat can't run page tools (HTTP %d); pages keep using chat messages", status)
+			return
+		case status != http.StatusOK:
+			if !fail("wait for page tool runs: HTTP %d", status) {
+				return
+			}
+			continue
+		case err != nil:
+			if !fail("wait for page tool runs: bad answer: %v", err) {
+				return
+			}
+			continue
+		}
+		backoff = wrapPollBackoffMin
+		for _, c := range calls {
+			a.wg.Add(1)
+			go func(c mcpAppCallReq) {
+				defer a.wg.Done()
+				defer a.guard.catch()
+				a.runPageCall(c)
+			}(c)
+		}
+	}
+}
+
+// runPageCall runs one page tool request and posts the answer back.
+func (a *wrapApps) runPageCall(c mcpAppCallReq) {
+	var ans mcpAppCallAnswer
+	res, err := a.callTool(c.Tool, c.Arguments)
+	if err != nil {
+		ce, ok := err.(*wrapCallError)
+		if !ok {
+			ce = &wrapCallError{Code: -32603, Message: err.Error()}
+		}
+		ans.Error = ce
+	} else {
+		ans.Result = res
+	}
+	body, _ := json.Marshal(ans)
+	tok, err := a.token()
+	if err != nil {
+		a.logf("answer page tool run %s: no password: %v", c.Tool, err)
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, a.postURL+"/calls/"+url.PathEscape(c.ID), bytes.NewReader(body))
+	if err != nil {
+		a.logf("answer page tool run %s: %v", c.Tool, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(mcpAppTokenHeader, tok)
+	resp, err := a.http.Do(req)
+	if err != nil {
+		a.logf("answer page tool run %s: %v", c.Tool, err)
+		return
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		a.logf("answer page tool run %s: HTTP %d", c.Tool, resp.StatusCode)
 	}
 }
 
@@ -589,6 +745,9 @@ func wrapPickPage(result json.RawMessage, uri string) (html, mimeType string, me
 // (no reply can come now), then give in-flight deliveries up to max to finish.
 func (a *wrapApps) shutdown(max time.Duration) {
 	a.mu.Lock()
+	if !a.closed {
+		close(a.stop)
+	}
 	a.closed = true
 	for k, ch := range a.pending {
 		if ch != nil {

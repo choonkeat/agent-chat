@@ -284,3 +284,39 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
   - list changes are followed
   - shutdown frees a waiting call
 - `make unit-test` green.
+
+### Phase 2 (2026-11-18): done
+
+- `mcpappcall.go` (agent-chat side): an in-memory `mcpAppRelay`.
+  - `GET /api/mcp-app/calls?wrapper=<id>`: the wrapper waits up to 25 s
+    (`mcpAppPollWait`) and gets a list of queued calls, or `[]`.
+  - `POST /api/mcp-app/calls/<callId>`: the wrapper's `{result}` or `{error}`.
+  - `POST /api/mcp-app/call`: from the browser. It takes
+    `{wrapper, server, tool, arguments}` and answers 200 with
+    `{result}`/`{error}`, or 503 "tool program not running" when the wrapper
+    hasn't polled within 35 s (`mcpAppPollStale`) or no wrapper is given (older
+    wrap).
+  - Wrapper endpoints share `mcpAppWrapperAuth` (loopback + token) with page
+    posts.
+  - The browser endpoint accepts only `application/json` (cross-site needs a
+    CORS preflight, which is never granted) and rejects `Sec-Fetch-Site`
+    other than same-origin.
+  - `McpApp.Wrapper` is stored with the page event.
+- Wrapper side (wrapapps.go):
+  - a random 32-hex `id`, sent as `wrapper` in page posts
+  - after the first 2xx page post, `pollLoop` starts (once)
+  - each call goes through `runPageCall` → `callTool` → POST the answer
+  - errors back off 1 s → 30 s
+  - 404/405 means an older agent-chat: log once and stop
+  - `shutdown` closes `stop` and cancels the poll
+  - all goroutines use `guard.catch()`
+- Tests (`mcpappcall_test.go`):
+  - routing to the owning wrapper, plus error answers
+  - not running / stale / no wrapper → 503 immediately
+  - password, loopback, missing id, unknown call
+  - the browser endpoint refuses cross-site and text/plain
+  - the real wrap + fake server + real handlers run a tool, and the client sees
+    nothing
+  - an old agent-chat stops polling after 1 try
+  - a failing agent-chat retries and the relay is untouched
+- `make unit-test` green.

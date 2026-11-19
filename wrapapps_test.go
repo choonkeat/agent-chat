@@ -208,6 +208,15 @@ type fakeAgentChat struct {
 	posts []wrapAppPost
 	got   chan struct{}
 	gate  chan struct{}
+	// polls counts GET /api/mcp-app/calls; pollStatus is its answer (0 = 404).
+	polls      int
+	pollStatus int
+}
+
+func (f *fakeAgentChat) pollCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.polls
 }
 
 // It also writes this process's password file for its port (in a temp base
@@ -216,6 +225,17 @@ func newFakeAgentChat(t *testing.T, gate chan struct{}) *fakeAgentChat {
 	useMcpAppBase(t)
 	f := &fakeAgentChat{got: make(chan struct{}, 100), gate: gate}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/mcp-app/calls" {
+			f.mu.Lock()
+			f.polls++
+			status := f.pollStatus
+			f.mu.Unlock()
+			if status == 0 {
+				status = http.StatusNotFound // like an agent-chat from before step 2
+			}
+			http.Error(w, "no", status)
+			return
+		}
 		if r.URL.Path != "/api/mcp-app" || r.Method != http.MethodPost {
 			http.Error(w, "unexpected", http.StatusNotFound)
 			return
