@@ -27,3 +27,16 @@ serve the HTML report from the last run.
 
 Example: `SLOW_MO=500 make e2e-test && make e2e-report`
 See .swe-swe/docs/AGENTS.md (if it exists) for context of this current environment
+
+## Releasing
+
+Before asking the user to OK a release (the CHANGELOG step of
+`/npm-login-and-publish`), run `./scripts/agent-sees-preview.sh </dev/null`
+and paste what it prints into the chat. It shows how the text the agent
+receives changed since the last release (from `testdata/agent-sees.txt`).
+`make publish` runs the same check and stops for a typed `yes` if it changed;
+pass `AGENT_SEES_OK=yes` only after the user has read it.
+
+After any deliberate change to what the agent receives, run `make agent-sees`
+and commit `testdata/agent-sees.txt` with the change. `make unit-test` fails
+until you do.

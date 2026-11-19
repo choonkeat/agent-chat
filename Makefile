@@ -1,4 +1,4 @@
-.PHONY: build publish publish-dry test unit-test e2e-test e2e-report bump refresh-npx-cache
+.PHONY: build publish publish-dry test unit-test e2e-test e2e-report bump refresh-npx-cache agent-sees agent-sees-preview
 
 build: build-platforms refresh-npx-cache
 	npm config set prefix $(HOME)/.swe-swe 2>/dev/null; npm link 2>/dev/null || true
@@ -29,7 +29,16 @@ build-platforms:
 publish-dry: build-platforms
 	DRY_RUN=true ./scripts/publish.sh
 
-publish: build-platforms
+# testdata/agent-sees.txt is a saved copy of what the agent receives for sample
+# messages. Rewrite it after a deliberate change, then commit it.
+agent-sees:
+	UPDATE_AGENT_SEES=1 go test -count=1 -run '^TestAgentSees$$' .
+
+# Shows how the agent's text changed since the last release; asks for a yes.
+agent-sees-preview:
+	./scripts/agent-sees-preview.sh
+
+publish: agent-sees-preview build-platforms
 	@# Binaries are built by the build-platforms prerequisite above. Only now,
 	@# right before publishing, prompt for the npm OTP if it isn't already in
 	@# the environment — so the short-lived OTP isn't burned during the build.
