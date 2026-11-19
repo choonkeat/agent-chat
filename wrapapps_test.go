@@ -109,11 +109,16 @@ type wrapSession struct {
 func startWrapSession(t *testing.T, flags ...string) *wrapSession {
 	t.Helper()
 	t.Setenv("WRAP_FAKE_CHILD", "apps")
+	return startWrap(t, append(append([]string{}, flags...), "--", os.Args[0]))
+}
+
+// startWrap runs `agent-chat wrap <args>` in-process with piped stdio.
+func startWrap(t *testing.T, args []string) *wrapSession {
+	t.Helper()
 	t.Setenv("AGENT_CHAT_PORT", "")
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	s := &wrapSession{t: t, in: inW, lines: make(chan string, 100), stderr: &syncBuf{}, exit: make(chan int, 1)}
-	args := append(append([]string{}, flags...), "--", os.Args[0])
 	go func() {
 		code := runWrap(args, inR, outW, s.stderr)
 		outW.Close()

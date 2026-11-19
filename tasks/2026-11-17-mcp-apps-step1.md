@@ -1,6 +1,6 @@
 # MCP Apps, step 1: show tool pages in agent-chat via `agent-chat wrap`
 
-Filed 2026-11-17. Status: **IN PROGRESS** (phases 1-4/5 done). Branch: `mcp-apps`.
+Filed 2026-11-17. Status: **DONE** (all 5 phases, 2026-11-17). Branch: `mcp-apps`.
 Repo: agent-chat (this worktree: `/repos/agent-chat/worktrees/mcp-apps`).
 
 ## Goal
@@ -303,3 +303,31 @@ About 5 working days.
     fails every time on ephemeral ports: its two sessions get two ports, so two
     origins and two separate localStorages. Pinned to one port
     (`E2E_SERVER_PORT=3005`), `draft-keep` + `mcp-app` specs: 7/7 passed.
+
+### Phase 5 (2026-11-17): done
+
+- `mcpapp_e2e_test.go`: builds the real sample server, runs it behind
+  `agent-chat wrap` (in-process) with a Claude-Code-shaped initialize, posts
+  to the real `/api/mcp-app` handler, and checks the `mcpApp` event and that
+  `/api/mcp-app/page/<id>` serves `calendar.html` byte for byte. Wrapper test
+  helper split into `startWrap(t, args)` for any child command.
+- Live check, real Claude Code 2.1.326, no settings changed: instead of
+  `claude mcp add`, a one-off `claude -p --mcp-config mcp.json
+  --strict-mcp-config` run with two servers: `sample` =
+  `agent-chat wrap --name mcp-apps-sample -- mcp-apps-sample --ui=auto`
+  (env `AGENT_CHAT_PORT=3005`), and `agent-chat` = a dev-build agent-chat on
+  3005 over HTTP MCP. Result, in order:
+  1. Claude Code connected through the wrapper; the sample logged
+     `initialize: mode=auto ui=true` (Claude Code alone gives `ui=false`).
+  2. Claude called `show_calendar`; the page appeared in the chat.
+  3. Claude's `send_message` waited; clicking "Bob, Wed 25" inside the page
+     arrived as the reply: "📱 From the `mcp-apps-sample/show_calendar` page:
+     Please book Bob on Wed 25 (book_slot)."
+  4. Claude called `book_slot {Bob, Wed 25}` and reported it booked.
+- Screenshot: [`2026-11-17-mcp-apps-step1-live.png`](2026-11-17-mcp-apps-step1-live.png)
+  (after reload).
+- Seen in the live check, for a later task: the page keeps showing the
+  answer it was opened with. After `book_slot` it still shows Bob/Wed 25 as
+  "free", because `book_slot` has no page of its own and nothing updates the
+  existing one. Fix belongs with "page buttons call tools directly" (Later 1).
+- `make unit-test` green; E2E as in phase 4.
