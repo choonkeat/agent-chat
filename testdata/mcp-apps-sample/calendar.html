@@ -1,0 +1,131 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Availability calendar</title>
+<style>
+  :root { color-scheme: light dark; --free:#2e7d32; --pending:#b26a00; --booked:#777; }
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 12px; background: Canvas; color: CanvasText; }
+  table { border-collapse: collapse; }
+  th, td { padding: 6px 10px; border: 1px solid #8884; text-align: center; }
+  td.free { color: var(--free); cursor: pointer; font-weight: 600; }
+  td.free:hover { background: #2e7d3222; }
+  td.pending { color: var(--pending); }
+  td.booked { color: var(--booked); }
+  #status { margin-top: 8px; min-height: 1.4em; font-size: 13px; opacity: .8; }
+</style>
+</head>
+<body>
+<div id="title"><b>Availability</b> <span id="host"></span></div>
+<table id="grid" data-testid="mcp-app-grid"></table>
+<div id="status" data-testid="mcp-app-status">Waiting for host…</div>
+<script>
+// Minimal MCP Apps "View" (spec 2026-01-26), no libraries.
+// Host = window.parent; JSON-RPC 2.0 over postMessage.
+(function () {
+  var nextId = 1, pending = {}, grid = null;
+  var statusEl = document.getElementById('status');
+  function status(t) { statusEl.textContent = t; }
+
+  function send(msg) { window.parent.postMessage(Object.assign({ jsonrpc: '2.0' }, msg), '*'); }
+  function request(method, params) {
+    var id = nextId++;
+    return new Promise(function (resolve, reject) {
+      pending[id] = { resolve: resolve, reject: reject };
+      send({ id: id, method: method, params: params || {} });
+    });
+  }
+  function notify(method, params) { send({ method: method, params: params || {} }); }
+
+  function render(g) {
+    grid = g;
+    var t = document.getElementById('grid'), h = '<tr><th></th>';
+    g.days.forEach(function (d) { h += '<th>' + d + '</th>'; });
+    h += '</tr>';
+    g.people.forEach(function (p) {
+      h += '<tr><th>' + p + '</th>';
+      g.days.forEach(function (d) {
+        var st = g.cells[p][d];
+        h += '<td class="' + st + '" data-person="' + p + '" data-day="' + d + '">' + st + '</td>';
+      });
+      h += '</tr>';
+    });
+    t.innerHTML = h;
+    reportSize();
+  }
+
+  function reportSize() {
+    var r = document.documentElement.getBoundingClientRect();
+    notify('ui/notifications/size-changed', { width: Math.ceil(r.width), height: Math.ceil(r.height) });
+  }
+
+  document.getElementById('grid').addEventListener('click', function (e) {
+    var td = e.target.closest('td.free');
+    if (!td) return;
+    var person = td.dataset.person, day = td.dataset.day;
+    status('Booking ' + person + ' on ' + day + '…');
+    // Preferred path: host relays tools/call to the server.
+    request('tools/call', { name: 'book_slot', arguments: { person: person, day: day } })
+      .then(function (res) {
+        if (res && res.structuredContent) render(res.structuredContent);
+        status(res && res.isError ? 'Error: ' + (res.content && res.content[0] && res.content[0].text) : 'Booked (via tool call).');
+      })
+      .catch(function () {
+        // Fallback: host can't call tools; ask the agent through the chat.
+        return request('ui/message', { role: 'user', content: { type: 'text',
+          text: 'Please book ' + person + ' on ' + day + ' (book_slot).' } })
+          .then(function () { status('Asked the agent to book it (via chat message).'); })
+          .catch(function (err) { status('Host could not book or relay: ' + (err && err.message)); });
+      });
+  });
+
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== window.parent) return;
+    var m = ev.data;
+    if (!m || m.jsonrpc !== '2.0') return;
+    if (m.id != null && pending[m.id] && !m.method) {          // response
+      var p = pending[m.id]; delete pending[m.id];
+      if (m.error) p.reject(m.error); else p.resolve(m.result);
+      return;
+    }
+    switch (m.method) {
+      case 'ui/notifications/tool-input':
+        status('Tool called; waiting for result…'); break;
+      case 'ui/notifications/tool-result':
+        if (m.params && m.params.structuredContent) render(m.params.structuredContent);
+        status('Click a green "free" cell to book it.'); break;
+      case 'ui/notifications/tool-cancelled':
+        status('Cancelled: ' + ((m.params && m.params.reason) || '')); break;
+      case 'ui/notifications/host-context-changed':
+        break;
+      case 'ui/resource-teardown':
+        send({ id: m.id, result: {} }); break;
+      default:
+        if (m.id != null) send({ id: m.id, error: { code: -32601, message: 'method not found: ' + m.method } });
+    }
+  });
+
+  if (window.parent === window) {
+    status('Opened directly, not inside an MCP Apps host. Showing demo data; clicks do nothing.');
+    render({ people: ['Alice'], days: ['Mon 23', 'Tue 24'], cells: { Alice: { 'Mon 23': 'free', 'Tue 24': 'booked' } } });
+    return;
+  }
+
+  request('ui/initialize', {
+    protocolVersion: '2026-01-26',
+    capabilities: {},
+    clientInfo: { name: 'mcp-apps-sample-view', version: '0.1.0' },
+    appCapabilities: { tools: {} }
+  }).then(function (res) {
+    var hi = res && res.hostInfo;
+    document.getElementById('host').textContent = hi ? '· in ' + hi.name : '';
+    notify('ui/notifications/initialized');
+    status('Connected. Waiting for tool result…');
+  }).catch(function (err) {
+    status('Host refused initialize: ' + (err && err.message));
+  });
+})();
+</script>
+</body>
+</html>
