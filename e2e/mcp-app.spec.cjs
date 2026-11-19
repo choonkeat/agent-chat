@@ -185,16 +185,17 @@ test.describe('MCP Apps page in chat', () => {
     const pageText = () => frame.locator('body').evaluate((el) => getComputedStyle(el).color);
     const chatText = () => page.locator('.bubble.agent.mcp-app').evaluate((el) => getComputedStyle(el).color);
 
+    // Compared afresh on every poll: the chat's own colours may still be
+    // settling (the starting theme can come from the browser's settings).
+    const matches = async () => [await pageBg(), await pageText()].join() === [await bubbleBg(), await chatText()].join();
     const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme') || 'dark');
-    await expect.poll(pageBg).toBe(await bubbleBg());
-    await expect.poll(pageText).toBe(await chatText());
+    await expect.poll(matches).toBe(true);
     const first = await pageBg();
 
     // Flip the theme: the page follows without a reload.
     await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme === 'light' ? 'dark' : 'light');
     await expect.poll(pageBg).not.toBe(first);
-    await expect.poll(pageBg).toBe(await bubbleBg());
-    await expect.poll(pageText).toBe(await chatText());
+    await expect.poll(matches).toBe(true);
   });
 
   test('a page that ignores the colours still shows', async () => {
