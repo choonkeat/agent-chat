@@ -19,7 +19,6 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
-	"mime"
 	"net/http"
 	"strings"
 	"sync"
@@ -253,12 +252,7 @@ func handleMcpAppCall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
-		http.Error(w, "only from the chat page", http.StatusForbidden)
-		return
-	}
-	if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
-		http.Error(w, "application/json only", http.StatusUnsupportedMediaType)
+	if !mcpAppFromChatPage(w, r, true) {
 		return
 	}
 	var b mcpAppCallBody

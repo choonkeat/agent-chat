@@ -260,6 +260,12 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
    replays the original result. Store the latest page result per app.
 2. Settings list of allowed tool programs with per-program remove.
 3. `ui/update-model-context` support (spec) as another way to tell Claude.
+4. (Noted 2026-11-18; user: "note the website issue for later") The chat's
+   live connection (`/ws`, `CheckOrigin` returns true in main.go) and other
+   browser endpoints accept requests from any website open in the browser. A
+   hostile site could read the chat or send messages as the user. This predates
+   MCP Apps. Fix idea: same-origin check on `/ws` upgrades and on state-changing
+   POSTs, mindful that agent-chat runs inside swe-swe's cross-origin iframe.
 
 ## Logs
 
@@ -320,3 +326,33 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
   - an old agent-chat stops polling after 1 try
   - a failing agent-chat retries and the relay is untouched
 - `make unit-test` green.
+
+### Phase 3 (2026-11-19): done
+
+- `mcpappallow.go`: `GET/POST/DELETE /api/mcp-app/allow`.
+  - The store is `<cache>/agent-chat/mcp-app-allow.json` (0600, atomic) with
+    `{servers: {name: {yesSessions, always}}}`.
+  - Sessions are told apart by `SESSION_UUID`, or a random id per run.
+  - `offerAlways` = a Yes from another session. "no" deletes the entry, and
+    DELETE forgets everything. The last 5 sessions are kept.
+  - `mcpAppFromChatPage` (Sec-Fetch-Site same-origin, JSON bodies) is now
+    shared with `/api/mcp-app/call`.
+- `mcp-app.js`:
+  - `serverTools` is advertised only when `app.wrapper` is set
+  - `tools/call` order: no wrapper → refusal (step 1 fallback), then the focus
+    rule, then busy (one at a time), then `mcpAppAllowed` (the in-bubble
+    question `.mcp-app-ask`: Yes / Always allow / No; a Yes is remembered for
+    the page), then `mcpAppRunTool` → `api/mcp-app/call`
+  - Settings: "Tool pages" row with `#btn-mcp-app-forget`
+- Change from plan: after **No**, the sample's fallback chat message is
+  refused too. The user is on the No button, not in the page, so nothing is
+  sent at all. That's better than plan step 2's "falls back to a chat message".
+- E2E (`e2e/mcp-app.spec.cjs`, the spec plays the wrapper):
+  - Yes books in place with no user bubble, and a second click doesn't ask
+  - No runs nothing and sends nothing
+  - Always allow is offered after a seeded earlier-session Yes, survives a
+    reload, and Settings Forget brings the question back without Always
+  - the hostile page (now with a wrapper) is still refused and no question
+    appears
+  - 5/5 pass (local chromium on 9333, `E2E_SERVER_PORT=0`)
+- Go: `mcpappallow_test.go`. `make unit-test` green.

@@ -16,8 +16,10 @@
 //   ui/notifications/size-changed → iframe height (capped)
 //   ui/message           → a user chat message "📱 From the … page: …",
 //                          only while the user is in that page (it has focus)
-//   tools/call           → error: agent-chat can't call tools yet; the page
-//                          should fall back to ui/message
+//   tools/call           → run the tool through the wrapper that showed the
+//                          page (step 2, POST api/mcp-app/call), after the
+//                          user allows it; pages from an older wrapper get an
+//                          error and fall back to ui/message
 //   ui/open-link         → new tab, http(s) only
 //   anything else        → -32601
 
@@ -28,7 +30,7 @@ var MCP_APP_MIN_HEIGHT = 60;
 var MCP_APP_MAX_HEIGHT = 800;
 var MCP_APP_UI_MIME = 'text/html;profile=mcp-app';
 
-// One entry per page on screen: { iframe, app, initialized }.
+// One entry per page on screen: { iframe, app, initialized, allowed, busy }.
 var mcpAppFrames = [];
 
 // Pages send chat messages as their own source: no interrupt word, no text
@@ -139,7 +141,7 @@ function mcpAppHandle(entry, m) {
       mcpAppReply(entry, m.id, {
         protocolVersion: MCP_APP_PROTOCOL,
         hostInfo: { name: 'agent-chat', version: (typeof SERVER_VERSION === 'string' ? SERVER_VERSION : '') },
-        hostCapabilities: { openLinks: {} },
+        hostCapabilities: entry.app.wrapper ? { openLinks: {}, serverTools: {} } : { openLinks: {} },
         hostContext: mcpAppHostContext()
       });
       return;
@@ -177,7 +179,36 @@ function mcpAppHandle(entry, m) {
       mcpAppReply(entry, m.id, {});
       return;
     case 'tools/call':
-      if (isRequest) mcpAppError(entry, m.id, -32000, "agent-chat can't call tools yet; use ui/message");
+      if (!isRequest) return;
+      if (!entry.app.wrapper) {
+        mcpAppError(entry, m.id, -32000, "this page's tool program can't be reached; use ui/message");
+        return;
+      }
+      // Same rule as ui/message: only while the user is in the page.
+      if (document.activeElement !== entry.iframe) {
+        mcpAppError(entry, m.id, -32000, 'tools/call needs the user to be using the page (click in it first)');
+        return;
+      }
+      if (entry.busy) {
+        mcpAppError(entry, m.id, -32000, 'busy: one tool run at a time');
+        return;
+      }
+      entry.busy = true;
+      mcpAppAllowed(entry).then(function (ok) {
+        if (!ok) {
+          entry.busy = false;
+          mcpAppError(entry, m.id, -32000, 'the user did not allow this page to run tools');
+          return;
+        }
+        return mcpAppRunTool(entry, params).then(function (answer) {
+          entry.busy = false;
+          if (answer.error) mcpAppError(entry, m.id, answer.error.code || -32000, answer.error.message || 'tool failed');
+          else mcpAppReply(entry, m.id, answer.result);
+        });
+      }).catch(function (err) {
+        entry.busy = false;
+        mcpAppError(entry, m.id, -32000, 'tool run failed: ' + (err && err.message));
+      });
       return;
     case 'ui/open-link':
       if (!isRequest) return;
@@ -202,6 +233,89 @@ function mcpAppHandle(entry, m) {
       if (isRequest && m.method) mcpAppError(entry, m.id, -32601, 'method not found: ' + m.method);
   }
 }
+
+/** Run a tool for a page through agent-chat and the wrapper that showed it.
+    Resolves to {result} or {error}. */
+function mcpAppRunTool(entry, params) {
+  return fetch('api/mcp-app/call', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      wrapper: entry.app.wrapper,
+      server: entry.app.server || '',
+      tool: String(params.name || ''),
+      arguments: params.arguments || {}
+    })
+  }).then(function (r) {
+    return r.json().catch(function () { return { error: { code: -32000, message: 'HTTP ' + r.status } }; });
+  });
+}
+
+/** Has the user allowed this page to run tools? Asks in the page's bubble
+    the first time: Yes / No, plus Always allow after a Yes in an earlier
+    session (remembered by agent-chat per tool program). Resolves true/false. */
+function mcpAppAllowed(entry) {
+  if (entry.allowed) return Promise.resolve(true);
+  var server = entry.app.server || '';
+  return fetch('api/mcp-app/allow?server=' + encodeURIComponent(server))
+    .then(function (r) { return r.ok ? r.json() : {}; })
+    .catch(function () { return {}; })
+    .then(function (st) {
+      if (st.always) { entry.allowed = true; return true; }
+      return mcpAppAsk(entry, !!st.offerAlways).then(function (answer) {
+        fetch('api/mcp-app/allow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ server: server, answer: answer })
+        }).catch(function () {});
+        entry.allowed = answer !== 'no';
+        return entry.allowed;
+      });
+    });
+}
+
+/** Show the question under the page; resolves 'yes', 'no' or 'always'. */
+function mcpAppAsk(entry, offerAlways) {
+  return new Promise(function (resolve) {
+    var bubble = entry.iframe.closest('.bubble');
+    var box = document.createElement('div');
+    box.className = 'mcp-app-ask';
+    box.setAttribute('role', 'group');
+    var q = document.createElement('span');
+    q.className = 'mcp-app-ask-text';
+    q.textContent = entry.app.server
+      ? 'Let the ' + entry.app.server + ' page run its tools?'
+      : 'Let this page run its tools?';
+    box.appendChild(q);
+    function button(label, answer, cls) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.className = 'mcp-app-ask-btn' + (cls ? ' ' + cls : '');
+      b.dataset.answer = answer;
+      b.addEventListener('click', function () { box.remove(); resolve(answer); });
+      box.appendChild(b);
+    }
+    button('Yes', 'yes', 'primary');
+    if (offerAlways) button('Always allow', 'always');
+    button('No', 'no');
+    var menu = bubble && bubble.querySelector('.bubble-menu-btn');
+    if (bubble) bubble.insertBefore(box, menu || null);
+    scrollToBottom(false);
+  });
+}
+
+// Settings: forget every "Always allow" and the earlier-session Yes answers.
+(function () {
+  var btn = document.getElementById('btn-mcp-app-forget');
+  if (!btn) return;
+  btn.addEventListener('click', function () {
+    fetch('api/mcp-app/allow', { method: 'DELETE' }).then(function (r) {
+      btn.textContent = r.ok ? 'Forgotten' : 'Could not forget (HTTP ' + r.status + ')';
+      setTimeout(function () { btn.textContent = 'Forget allowed tool programs'; }, 2000);
+    });
+  });
+})();
 
 window.addEventListener('message', function (ev) {
   var m = ev.data;

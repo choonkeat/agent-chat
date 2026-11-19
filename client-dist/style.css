@@ -1492,3 +1492,46 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   font-size: 0.9em;
   opacity: 0.75;
 }
+/* "Let the … page run its tools?" (step 2 phase 3) */
+.mcp-app-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-secondary);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 0.9em;
+}
+.mcp-app-ask-text {
+  flex: 1 1 auto;
+  margin-right: 4px;
+  color: var(--text-primary);
+}
+.mcp-app-ask-btn {
+  padding: 0.25rem 0.8rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.mcp-app-ask-btn.primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+.mcp-app-forget-row { cursor: default; }
+#btn-mcp-app-forget {
+  margin-top: 0.35rem;
+  padding: 0.2rem 0.7rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}

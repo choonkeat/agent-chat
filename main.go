@@ -502,6 +502,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc(mcpAppCallsPath, handleMcpAppCalls)
 	mux.HandleFunc(mcpAppCallsPath+"/", handleMcpAppCallResult)
 	mux.HandleFunc(mcpAppCallPath, handleMcpAppCall)
+	mux.HandleFunc("/api/mcp-app/allow", handleMcpAppAllow)
 	mux.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir))))
 	// Serve index.html with inlined config (replaces the old /config.js endpoint).
 	// This avoids relative-path resolution failures when the page is served
