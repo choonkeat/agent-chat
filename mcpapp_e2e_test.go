@@ -113,7 +113,7 @@ func TestMcpAppEndToEnd(t *testing.T) {
 	}
 	// Claude hears about it with the user's next message.
 	bus.ReceiveUserMessage("what changed?", nil, "")
-	if got := FormatMessages(bus.DrainMessages()); !strings.Contains(got, "page ran `book_slot` (day: Wed 25, person: Bob): Pencilled in Bob on Wed 25") {
+	if got := FormatMessages(bus.DrainMessages()); !strings.Contains(got, "page ran `book_slot` (day: Wed 25, person: Bob): Pencilled in Bob on Wed 25.\n") {
 		t.Errorf("Claude's note:\n%s", got)
 	}
 }

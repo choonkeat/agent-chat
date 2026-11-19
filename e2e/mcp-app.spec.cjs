@@ -193,7 +193,8 @@ test.describe('MCP Apps page in chat', () => {
     const first = await pageBg();
 
     // Flip the theme: the page follows without a reload.
-    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme === 'light' ? 'dark' : 'light');
+    // The way swe-swe does it: the theme cookie, which the chat re-reads.
+    await page.evaluate((t) => { document.cookie = 'agent-chat-theme=' + t + '; path=/'; applyTheme(); }, theme === 'light' ? 'dark' : 'light');
     await expect.poll(pageBg).not.toBe(first);
     await expect.poll(matches).toBe(true);
   });

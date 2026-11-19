@@ -285,7 +285,7 @@ type McpAppCall struct {
 	Server    string          `json:"server,omitempty"`
 	Tool      string          `json:"tool"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Summary   string          `json:"summary"` // first text of the answer, cut to mcpAppCallSummaryMax
+	Summary   string          `json:"summary"` // first paragraph of the answer's text, cut to mcpAppCallSummaryMax
 	IsError   bool            `json:"isError,omitempty"`
 	Line      string          `json:"line"` // mcpAppCallLine, for the chat window
 }
@@ -314,7 +314,8 @@ func mcpAppCallRecord(b mcpAppCallBody, a mcpAppCallAnswer) *McpAppCall {
 		c.IsError = r.IsError
 		for _, p := range r.Content {
 			if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
-				c.Summary = strings.TrimSpace(p.Text)
+				// The first paragraph: tools often add a table or details after it.
+				c.Summary = strings.SplitN(strings.TrimSpace(p.Text), "\n\n", 2)[0]
 				break
 			}
 		}

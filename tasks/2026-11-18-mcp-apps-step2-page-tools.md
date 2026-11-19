@@ -1,6 +1,6 @@
 # MCP Apps step 2: page buttons run tools directly
 
-Status: planned 2026-11-18, not started. Builds on
+Status: **DONE** (all 6 phases, 2026-11-19). Builds on
 `tasks/2026-11-17-mcp-apps-step1.md` (done; branch `mcp-apps`, not merged).
 
 ## Goal
@@ -411,3 +411,44 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
   - a page that ignores the variables still shows
   - 7/7
 - Screenshots (dark and light) were checked by eye. `make unit-test` green.
+
+### Phase 6 (2026-11-19): done
+
+- `mcpapp_e2e_test.go` covers the real sample behind `wrap`, then a
+  browser-style `/api/mcp-app/call` running `book_slot {Bob, Wed 25}`:
+  - the answer carries the updated grid, and an `mcpAppCall` event is
+    published
+  - Claude's own next `show_calendar` sees the booking
+  - the note reaches Claude with the next message
+- Full E2E run (ephemeral ports, local chromium): 256 passed, 2 failed.
+  - `draft-keep:147` is the known ephemeral-port-only failure.
+  - The new colours test caught the bubble mid-transition. Fixed to compare
+    afresh on every poll (0163fb0), and to flip the theme through the theme
+    cookie as swe-swe does: app.js re-reads it every 2 s and would undo a bare
+    `data-theme` change. 7/7, twice.
+- Live check, real Claude Code 2.1.327, no settings changed:
+  - setup: a one-off `claude -p --mcp-config` with the sample behind
+    `agent-chat wrap` (own `XDG_CACHE_HOME`) and a dev agent-chat on 3005;
+    the browser was driven by script
+  - Claude showed the calendar, then waited in `send_message`
+  - clicking Bob/Wed 25 in the page, then Allow: the cell turned pending at
+    once and the line appeared. Claude was not woken (agent bubbles 1 → 1,
+    user bubbles 0).
+  - the message "what changed?" reached Claude as
+    "Meanwhile, from tool pages:\n- 📱 `mcp-apps-sample` page ran `book_slot`
+    (day: Wed 25, person: Bob): Pencilled in Bob on Wed 25. …\n\nwhat changed?"
+  - Claude answered: "The only change: Bob on Wed 25 went from free to
+    pending … It was done on the calendar page, not by me."
+  - screenshots:
+    [booked](2026-11-19-mcp-apps-step2-live-booked.png) and
+    [Claude knows, light theme after reload](2026-11-19-mcp-apps-step2-live-claude-knows.png)
+- Fixed after the live run: the line carried the tool's whole text table. The
+  summary is now the first paragraph only ("Pencilled in Bob on Wed 25."),
+  checked in the e2e Go test.
+- Seen, not changed:
+  1. After a reload the page shows its original answer (Later 1).
+  2. An orange "Type check_messages in your agent terminal to connect this
+     chat" bubble appeared once when "what changed?" was sent, while Claude
+     was connected over HTTP MCP and parked in `send_message`. It's transient
+     (not in replay) and not part of this work. Worth a look separately.
+- `make unit-test` green.
