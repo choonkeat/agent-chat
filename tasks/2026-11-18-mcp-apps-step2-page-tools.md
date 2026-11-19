@@ -358,3 +358,32 @@ About 11 hours (phases 1–6), plus 1.5 hours of wrap safety beforehand.
 - Go: `mcpappallow_test.go`. `make unit-test` green.
 - 2026-11-19: buttons renamed at the user's request to **Allow / Always
   Allow / Deny** (the answer values stay yes/always/no). E2E 5/5.
+
+### Phase 4 (2026-11-19): done
+
+- Bus (eventbus.go):
+  - `AddAgentNote(text)` holds notes outside the message queue, so they
+    never wake a wait and never count as queued
+  - `attachNotes` moves them onto the first message (`UserMessage.Notes`) of
+    the next non-empty drain (`DrainMessagesStamped`, `WaitForMessagesStamped`),
+    so limbo redelivery keeps them
+  - `FormatMessages` prepends "Meanwhile, from tool pages:\n- …"
+- `handleMcpAppCall` builds `mcpAppCallRecord`:
+  - none when the tool never ran (-32602 refused, -32000 not running or
+    cancelled)
+  - the summary is the first text content, whitespace collapsed, cut to 300
+    characters plus "…"
+  - it publishes `mcpAppCall` (with `line`) and adds the same line as a note
+  - line format: "📱 `cal` page ran `book_slot` (day: Tue 24, person: Bob):
+    Pencilled in" (args are `key: value`, keys sorted, cut to 120 characters;
+    errors read ": error: …")
+- Chat log: `**USER**` plus the blockquoted line (the user's click), and
+  `chatlogstream` type lists. Browser: `renderMcpAppCall` adds a system-style
+  bubble `.mcp-app-call`, for both live events and replay.
+- Tests:
+  - `mcpappnote_test.go`: the note comes before the message, each note
+    arrives once, limbo keeps notes, a note doesn't wake a wait and survives an
+    empty drain, the handler publishes the line and note, a refused run makes
+    no line or note, the chat-log line, and the error line
+  - E2E: the line appears after Allow, and 2 lines survive a reload. 5/5.
+- `make unit-test` green.

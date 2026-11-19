@@ -132,6 +132,17 @@ func renderChatBubble(e Event, st *renderState, imageMap map[string]string) stri
 		if e.Timestamp > 0 {
 			st.lastTs = e.Timestamp
 		}
+	case "mcpAppCall":
+		// The user's click in a tool page, so it counts as the user's turn.
+		if e.AppCall == nil {
+			return ""
+		}
+		b.WriteString("**USER**\n\n")
+		b.WriteString(blockquoteText(mcpAppCallLine(e.AppCall)))
+		b.WriteString("\n\n")
+		if e.Timestamp > 0 {
+			st.lastTs = e.Timestamp
+		}
 	case "agentMessage", "verbalReply":
 		body := strings.TrimSpace(e.Text)
 		imgBlock := imageBlock(e.Files, imageMap)

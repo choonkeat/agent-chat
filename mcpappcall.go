@@ -20,6 +20,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -269,5 +270,118 @@ func handleMcpAppCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, mcpAppCallAnswer{Error: &wrapCallError{Code: -32000, Message: "tool program not running"}})
 		return
 	}
+	if c := mcpAppCallRecord(b, a); c != nil {
+		c.Line = mcpAppCallLine(c)
+		bus.Publish(Event{Type: "mcpAppCall", AppCall: c})
+		bus.AddAgentNote(mcpAppCallLine(c))
+	}
 	writeJSON(w, http.StatusOK, a)
+}
+
+// McpAppCall is the payload of an "mcpAppCall" event (step 2 phase 4): a page
+// ran one of its tools. Shown as a line in the chat, and told to the agent
+// with the user's next message.
+type McpAppCall struct {
+	Server    string          `json:"server,omitempty"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	Summary   string          `json:"summary"` // first text of the answer, cut to mcpAppCallSummaryMax
+	IsError   bool            `json:"isError,omitempty"`
+	Line      string          `json:"line"` // mcpAppCallLine, for the chat window
+}
+
+const mcpAppCallSummaryMax = 300
+
+// mcpAppCallRecord turns an answer into a record, or nil when the tool never
+// ran (the wrapper refused it, or the tool program is gone).
+func mcpAppCallRecord(b mcpAppCallBody, a mcpAppCallAnswer) *McpAppCall {
+	c := &McpAppCall{Server: b.Server, Tool: b.Tool, Arguments: b.Arguments}
+	if a.Error != nil {
+		if a.Error.Code == -32602 || a.Error.Code == -32000 {
+			return nil
+		}
+		c.IsError = true
+		c.Summary = a.Error.Message
+	} else {
+		var r struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		json.Unmarshal(a.Result, &r)
+		c.IsError = r.IsError
+		for _, p := range r.Content {
+			if p.Type == "text" && strings.TrimSpace(p.Text) != "" {
+				c.Summary = strings.TrimSpace(p.Text)
+				break
+			}
+		}
+	}
+	c.Summary = mcpAppCut(strings.Join(strings.Fields(c.Summary), " "), mcpAppCallSummaryMax)
+	return c
+}
+
+func mcpAppCut(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return strings.TrimSpace(string(r[:max])) + "…"
+}
+
+// mcpAppCallLine is the one-line description used in the chat, the chat log
+// and the agent's note:
+// 📱 `cal` page ran `book_slot` (day: Tue 24, person: Bob): Pencilled in…
+func mcpAppCallLine(c *McpAppCall) string {
+	var b strings.Builder
+	b.WriteString("📱 ")
+	if c.Server != "" {
+		b.WriteString("`" + strings.ReplaceAll(c.Server, "`", "") + "` page")
+	} else {
+		b.WriteString("A page")
+	}
+	b.WriteString(" ran `" + strings.ReplaceAll(c.Tool, "`", "") + "`")
+	if args := mcpAppArgsText(c.Arguments); args != "" {
+		b.WriteString(" (" + args + ")")
+	}
+	b.WriteString(": ")
+	if c.IsError {
+		b.WriteString("error: ")
+	}
+	if c.Summary == "" {
+		b.WriteString("done")
+	} else {
+		b.WriteString(c.Summary)
+	}
+	return b.String()
+}
+
+// mcpAppArgsText shows tool arguments as "key: value, …" (keys sorted),
+// cut to 120 characters.
+func mcpAppArgsText(raw json.RawMessage) string {
+	var m map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &m) != nil || len(m) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := m[k]
+		var s string
+		switch x := v.(type) {
+		case string:
+			s = x
+		default:
+			bs, _ := json.Marshal(x)
+			s = string(bs)
+		}
+		parts = append(parts, k+": "+s)
+	}
+	return mcpAppCut(strings.Join(strings.Fields(strings.Join(parts, ", ")), " "), 120)
 }

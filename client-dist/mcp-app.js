@@ -379,3 +379,12 @@ function renderMcpApp(event) {
     });
   scrollToBottom(false);
 }
+
+/** Draw an "mcpAppCall" event: a page ran one of its tools (step 2 phase 4).
+    The same line goes to the agent with the user's next message. */
+function renderMcpAppCall(event) {
+  var c = event && event.appCall;
+  if (!c || !c.line) return;
+  addBubble(c.line, 'system', null, 'mcp-app-call', event.ts, undefined, event.seq, false);
+  scrollToBottom(false);
+}

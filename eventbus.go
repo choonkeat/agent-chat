@@ -36,6 +36,10 @@ type UserMessage struct {
 	// shows the raw Text. A "{{message}}" placeholder is substituted with the
 	// message; if absent, the template is prepended as a preamble.
 	Template string `json:"template,omitempty"`
+	// Notes are things that happened in the chat since the agent last heard
+	// from the user, e.g. a tool page running a tool (step 2 of MCP Apps).
+	// They ride with the next delivered batch, on its first message.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // Event represents a chat event sent to browser clients.
@@ -80,6 +84,8 @@ type Event struct {
 
 	// App is the tool page of an "mcpApp" event (see mcpapp.go).
 	App *McpApp `json:"app,omitempty"`
+	// AppCall is a page's tool run of an "mcpAppCall" event (mcpappcall.go).
+	AppCall *McpAppCall `json:"appCall,omitempty"`
 }
 
 // ExportResult carries the bytes a browser POSTed back for an export request,
@@ -99,6 +105,9 @@ type ExportHandle struct {
 // EventBus fans out events to WebSocket subscribers, carries the user-message
 // queue, and maintains an in-memory event log for browser reconnect.
 type EventBus struct {
+	notesMu sync.Mutex
+	notes   []string // waiting for the next delivery to the agent (AddAgentNote)
+
 	mu               sync.RWMutex
 	subscribers      map[chan Event]struct{}
 	eventLog         []Event  // session event log for reconnect replay
@@ -447,6 +456,29 @@ func (eb *EventBus) PublishToolMarker(toolName string, toolSeq int64) {
 	eb.Publish(Event{Type: "toolMarker", AgentToolName: toolName, AgentToolSeq: toolSeq})
 }
 
+// AddAgentNote holds text for the agent until the user's next delivered
+// message. It is not a message: it never wakes a waiting tool call and never
+// counts as queued.
+func (eb *EventBus) AddAgentNote(text string) {
+	eb.notesMu.Lock()
+	eb.notes = append(eb.notes, text)
+	eb.notesMu.Unlock()
+}
+
+// attachNotes moves waiting notes onto the first message of a non-empty batch.
+func (eb *EventBus) attachNotes(msgs []UserMessage) {
+	if len(msgs) == 0 {
+		return
+	}
+	eb.notesMu.Lock()
+	notes := eb.notes
+	eb.notes = nil
+	eb.notesMu.Unlock()
+	if len(notes) > 0 {
+		msgs[0].Notes = append(append([]string(nil), msgs[0].Notes...), notes...)
+	}
+}
+
 // DrainMessages returns all currently queued messages, or nil if none are queued.
 // Unstamped variant for callers that don't have an MCP tool ordinal to attach.
 func (eb *EventBus) DrainMessages() []UserMessage {
@@ -462,6 +494,7 @@ func (eb *EventBus) DrainMessagesStamped(toolName string, toolSeq int64) []UserM
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
+			eb.attachNotes(msgs)
 			eb.publishConsumed(msgs, toolName, toolSeq)
 			if len(msgs) > 0 {
 				eb.SetLimbo(msgs)
@@ -511,6 +544,7 @@ func (eb *EventBus) WaitForMessagesStamped(ctx context.Context, toolName string,
 		case msg := <-eb.msgQueue:
 			msgs = append(msgs, msg)
 		default:
+			eb.attachNotes(msgs)
 			eb.publishConsumed(msgs, toolName, toolSeq)
 			eb.SetLimbo(msgs)
 			return msgs, nil
@@ -707,6 +741,13 @@ func FormatMessages(msgs []UserMessage) string {
 		}
 	}
 	out := execTemplate("format-messages", data)
+	var notes []string
+	for _, m := range msgs {
+		notes = append(notes, m.Notes...)
+	}
+	if len(notes) > 0 {
+		out = "Meanwhile, from tool pages:\n- " + strings.Join(notes, "\n- ") + "\n\n" + out
+	}
 	if style := messageStyle(msgs); style != "" {
 		out += "\n\n" + execTemplate("style-note", styleNoteData{Style: style})
 	}

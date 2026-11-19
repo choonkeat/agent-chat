@@ -254,12 +254,20 @@ test.describe('MCP Apps page buttons run tools (step 2)', () => {
     await expect(frame.locator('td.pending[data-person="Bob"][data-day="Tue 24"]')).toHaveCount(1);
     expect(wrapper.calls.map((c) => [c.tool, c.arguments])).toEqual([['book_slot', { person: 'Bob', day: 'Tue 24' }]]);
     await expect(page.locator('.bubble.user')).toHaveCount(0);
+    // A line in the chat (Claude gets the same line with the next message).
+    await expect(page.locator('.bubble.mcp-app-call'))
+      .toHaveText('📱 cal page ran book_slot (day: Tue 24, person: Bob): Pencilled in');
 
     // Allowed for this page now: the next click doesn't ask.
     await frame.locator('td.free[data-person="Alice"]').click();
     await expect(frame.locator('td.pending[data-person="Alice"]')).toHaveCount(1);
     await expect(page.locator('.mcp-app-ask')).toHaveCount(0);
     expect(wrapper.calls).toHaveLength(2);
+    await expect(page.locator('.bubble.mcp-app-call')).toHaveCount(2);
+
+    // The lines survive a reload.
+    await page.reload();
+    await expect(page.locator('.bubble.mcp-app-call')).toHaveCount(2, { timeout: 10000 });
   });
 
   test('Deny: nothing runs and nothing is sent', async () => {
