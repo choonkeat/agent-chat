@@ -497,6 +497,7 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	mux.HandleFunc("/api/chatlog-path", handleChatlogPath)
 	mux.HandleFunc("/autocomplete", handleAutocomplete)
 	mux.HandleFunc("/api/ctx-only", handleCtxOnly)
+	mux.HandleFunc("/api/changelog", handleChangelog)
 	mux.HandleFunc("/api/mcp-app", handleMcpApp)
 	mux.HandleFunc(mcpAppPagePrefix, handleMcpAppPage)
 	mux.HandleFunc(mcpAppCallsPath, handleMcpAppCalls)
@@ -515,8 +516,8 @@ func startHTTPServer(mcpServer *mcp.Server) (string, net.Listener, error) {
 	// this chat is actually running with.
 	indexBefore, indexAfter, _ := strings.Cut(string(indexHTML), "<!--CONFIG-->")
 	renderIndex := func() string {
-		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q,CHAT_NUDGE_TEXT=%q,SESSION_UUID=%q,UPLOAD_MAX_BYTES=%d;</script>",
-			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined(), chatNudgeText, os.Getenv("SESSION_UUID"), uploadMaxBytes)
+		configScript := fmt.Sprintf("<script>var THEME_COOKIE_NAME=%q,SERVER_VERSION=%q,AUTOCOMPLETE_TRIGGERS=%s,WORKSPACE_ROOT=%q,CTX_ONLY_DEFAULT=%t,CTX_ONLY_SESSION=%q,CHAT_NUDGE_TEXT=%q,SESSION_UUID=%q,UPLOAD_MAX_BYTES=%d,WHATS_NEW_LATEST=%q;</script>",
+			themeCookieName, version+" ("+commit+")", string(triggerCharsJSON), workspaceRootPath(), conversationContextOnly, ctxOnlyInlined(), chatNudgeText, os.Getenv("SESSION_UUID"), uploadMaxBytes, latestChangelogVersion())
 		return indexBefore + configScript + indexAfter
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

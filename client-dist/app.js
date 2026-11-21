@@ -3969,6 +3969,86 @@ if (btnSettings) {
     if (settingsPanel.hidden) openSettings(); else closeSettings();
   });
 }
+
+// --- What's new ---
+// The newest release in the CHANGELOG built into this binary (WHATS_NEW_LATEST,
+// inlined by the server) against the release this browser last opened the
+// panel on. Kept in a cookie for the same reason as the message style: each
+// session has its own port and localStorage is per port, so it would forget
+// on every new session; a cookie follows the user across them, iframe or not.
+//
+// A browser with no cookie yet is told nothing: the cookie is set quietly to
+// the current release, so only releases that land after it light the dot.
+var WHATS_NEW_COOKIE = 'agent-chat-seen-version';
+var btnWhatsNew = document.getElementById('btn-whats-new');
+var whatsNewDot = document.getElementById('whats-new-dot');
+var whatsNewPanel = document.getElementById('whats-new-panel');
+var whatsNewBody = document.getElementById('whats-new-body');
+var whatsNewVersion = document.getElementById('whats-new-version');
+var btnWhatsNewDone = document.getElementById('btn-whats-new-done');
+var whatsNewLatest = typeof WHATS_NEW_LATEST !== 'undefined' ? WHATS_NEW_LATEST : '';
+var whatsNewLoaded = false;
+
+/** Compare dotted versions numerically: >0 when a is newer than b. A
+    pre-release suffix ("1.2.0-rc1") is compared by its numeric parts only. */
+function compareVersions(a, b) {
+  var pa = String(a).split(/[.-]/), pb = String(b).split(/[.-]/);
+  for (var i = 0; i < Math.max(pa.length, pb.length); i++) {
+    var x = parseInt(pa[i], 10) || 0, y = parseInt(pb[i], 10) || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+function syncWhatsNewDot() {
+  if (!whatsNewDot) return;
+  var seen = getCookie(WHATS_NEW_COOKIE);
+  var unread = !!whatsNewLatest && !!seen && compareVersions(whatsNewLatest, seen) > 0;
+  whatsNewDot.hidden = !unread;
+  if (btnWhatsNew) btnWhatsNew.title = unread ? "What's new in agent-chat (unread)" : "What's new in agent-chat";
+}
+
+function markWhatsNewSeen() {
+  if (whatsNewLatest) writeStyleCookie(WHATS_NEW_COOKIE, whatsNewLatest);
+  syncWhatsNewDot();
+}
+
+function openWhatsNew() {
+  if (!whatsNewPanel) return;
+  if (settingsPanel && !settingsPanel.hidden) closeSettings();
+  whatsNewPanel.hidden = false;
+  btnWhatsNew.classList.add('active');
+  if (whatsNewVersion) whatsNewVersion.textContent = whatsNewLatest ? 'v' + whatsNewLatest : '';
+  markWhatsNewSeen();
+  if (whatsNewLoaded) return;
+  fetch('api/changelog').then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function (data) {
+    whatsNewLoaded = true;
+    whatsNewBody.innerHTML = data.markdown ? renderMarkdown(data.markdown) : 'No release notes in this build.';
+  }).catch(function () {
+    // An older server has no such route; the link below still works.
+    whatsNewBody.textContent = 'Release notes are not available from this server.';
+  });
+}
+
+function closeWhatsNew() {
+  if (!whatsNewPanel) return;
+  whatsNewPanel.hidden = true;
+  if (btnWhatsNew) btnWhatsNew.classList.remove('active');
+}
+
+if (btnWhatsNew) {
+  if (whatsNewLatest && !getCookie(WHATS_NEW_COOKIE)) writeStyleCookie(WHATS_NEW_COOKIE, whatsNewLatest);
+  syncWhatsNewDot();
+  btnWhatsNew.addEventListener('click', function () {
+    if (whatsNewPanel.hidden) openWhatsNew(); else closeWhatsNew();
+  });
+  // Opening Settings puts the other panel away, so only one sits above the chat.
+  if (btnSettings) btnSettings.addEventListener('click', closeWhatsNew);
+}
+if (btnWhatsNewDone) btnWhatsNewDone.addEventListener('click', closeWhatsNew);
 if (msgStyleInput) {
   msgStyleInput.addEventListener('input', function () {
     setMsgStyle(msgStyleInput.value);

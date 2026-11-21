@@ -13,6 +13,7 @@
         <div id="voice-controls">
           <select id="voice-select"></select>
         </div>
+        <button id="btn-whats-new" title="What's new in agent-chat" aria-label="What's new"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8l1.5 4.2 4.2 1.5-4.2 1.5L8 13.2 6.5 9 2.3 7.5 6.5 6z"/><path d="M13 1.8v2.4M11.8 3h2.4"/></svg><span id="whats-new-dot" hidden></span></button>
         <button id="btn-download" title="Export chat as HTML"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7.5 8 11l3.5-3.5M3 13h10"/></svg></button>
         <button id="btn-settings" title="How the agent replies"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.2" width="12.4" height="9.2" rx="2.2"/><path d="M5 11.4v2.6l3-2.6"/><path d="M4.8 5.6h6.4M4.8 8.2h3.8"/></svg></button>
       </div>
@@ -60,6 +61,16 @@
               <button type="button" id="btn-style-save">Save as…</button>
               <button type="button" id="btn-settings-done">Done</button>
             </span>
+          </div>
+        </div>
+      </div>
+      <div id="whats-new-panel" hidden>
+        <div id="whats-new-inner">
+          <div class="settings-title">What's new <span class="settings-scope" id="whats-new-version"></span></div>
+          <div id="whats-new-body" class="whats-new-body">Loading…</div>
+          <div class="whats-new-actions">
+            <a id="whats-new-full" href="https://github.com/choonkeat/agent-chat/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Full changelog →</a>
+            <button type="button" id="btn-whats-new-done">Done</button>
           </div>
         </div>
       </div>

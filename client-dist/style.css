@@ -94,6 +94,127 @@ body {
   color: var(--text-secondary);
 }
 
+#btn-whats-new {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  margin-right: 0.15rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+#btn-whats-new:hover {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+#btn-whats-new.active {
+  color: #2563eb;
+}
+
+/* Unread: a release newer than the one this browser last opened the panel on. */
+#whats-new-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 0 1.5px var(--bg-primary);
+}
+
+#whats-new-dot[hidden] {
+  display: none;
+}
+
+#whats-new-panel {
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  margin: 0.15rem 0 0.35rem;
+}
+
+#whats-new-inner {
+  padding: 0.6rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.whats-new-body {
+  max-height: 50vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-primary) transparent;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.whats-new-body h2 {
+  font-size: 0.9rem;
+  margin: 0.8rem 0 0.2rem;
+  color: var(--text-primary);
+}
+
+.whats-new-body h2:first-child {
+  margin-top: 0;
+}
+
+.whats-new-body h3 {
+  font-size: 0.78rem;
+  margin: 0.4rem 0 0.15rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.whats-new-body ul {
+  margin: 0.15rem 0;
+  padding-left: 1.1rem;
+}
+
+.whats-new-body li {
+  margin: 0.2rem 0;
+}
+
+.whats-new-body code {
+  font-size: 0.9em;
+  padding: 0 0.2em;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+}
+
+.whats-new-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+#whats-new-full {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+#btn-whats-new-done {
+  padding: 0.3rem 0.85rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 14px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+}
+
 #btn-settings {
   display: flex;
   align-items: center;
