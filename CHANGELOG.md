@@ -2,6 +2,39 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.20.0] — 2026-11-21
+
+### Changes
+- **Tool pages (MCP Apps) show in the chat.** Start a tool server through
+  the new `agent-chat wrap` command, e.g. `claude mcp add cal --
+  agent-chat wrap --name cal -- <server command>`, and when one of its
+  tools returns a page, the page appears in the chat as its own bubble.
+  The page runs sandboxed, takes the chat's colours and fonts in both
+  themes, and can open http/https links. Text it sends becomes a chat
+  message, but only while the page has focus. Nothing changes for tool
+  servers that aren't wrapped.
+- **Buttons in a tool page can run that server's tools.** The first time,
+  the page's bubble asks "Let the <name> page run its tools?" with Allow /
+  Deny, plus Always Allow if you allowed it in an earlier session.
+  Settings has "Forget allowed tool programs" to clear those answers. Only
+  tools the server marks as usable by pages can run, one at a time. Each
+  run shows a line in the chat ("📱 cal page ran book_slot (...):
+  Pencilled in"), and the same line goes to the agent with your next
+  message under "Meanwhile, from tool pages:". A run does not wake the
+  agent by itself.
+- **`agent-chat wrap` never breaks the tool it wraps.** Its traffic passes
+  through unchanged. If the chat isn't running, or something in the extras
+  fails, the tool works as before, just without pages. `agent-chat wrap
+  --version` prints the version and starts nothing. `agent-chat -h` now
+  lists the subcommands, so a launcher can check for `wrap` safely first:
+  an older agent-chat ignores the bare word `wrap` and starts a full chat
+  server instead.
+- **Recall your earlier messages into the text box.** Ctrl+R, Up with the
+  cursor at the very start, or Backspace in an empty box (on a phone)
+  lists your own messages in this chat, newest first. Type to filter, then
+  pick one to fill the box. Ctrl+R again steps to the next older match.
+  Escape, a tap outside, or Backspace before typing anything closes it.
+
 ## [0.19.1] — 2026-11-15
 
 ### Fixes
