@@ -1518,6 +1518,10 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   font-size: 0.8rem;
   color: var(--text-secondary);
   text-decoration: none;
+  /* `anywhere`, not `break-word`: only `anywhere` lowers the min-content width,
+     which is what stops a long unbroken filename widening this flex item, the
+     bubble, and the page. */
+  overflow-wrap: anywhere;
 }
 
 .file-attachment-link:hover {
