@@ -633,6 +633,31 @@ function parseBlockquotes(text) {
   });
 }
 
+// Splits a bare URL match into [url, trailing prose]. The sentence around a URL
+// supplies its final "." or ",", and a closing bracket belongs to the URL only
+// when the URL also opened it (wiki/Foo_(bar) keeps its ")", "(see x.com)" does
+// not). Runs on escaped text, so a trailing entity is one unit, not a ";".
+function splitUrlTrailingPunctuation(url) {
+  var openers = { ')': '(', ']': '[', '}': '{' };
+  var end = url.length, prev;
+  do {
+    prev = end;
+    var head = url.slice(0, end);
+    var entity = head.match(/&(?:amp|lt|gt);$/);
+    var last = head.charAt(end - 1);
+    if (entity) {
+      end -= entity[0].length;
+    } else if (/[.,:;!?'"*_~]/.test(last)) {
+      end--;
+    } else if (openers[last] && head.split(last).length > head.split(openers[last]).length) {
+      end--;
+    }
+  } while (end < prev);
+  // Nothing but a scheme left ("https://..."): not a link, leave it whole.
+  if (/^https?:\/*$/.test(url.slice(0, end))) return [url, ''];
+  return [url.slice(0, end), url.slice(end)];
+}
+
 function renderMarkdown(text, filePaths) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -757,7 +782,10 @@ function renderMarkdown(text, filePaths) {
     return '<a href="' + resolveAgainstParent(url) + '" target="_blank" rel="noopener">' + text + '</a>';
   });
   // Bare URLs
-  html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, function(match) {
+    var parts = splitUrlTrailingPunctuation(match);
+    return '<a href="' + parts[0] + '" target="_blank" rel="noopener">' + parts[0] + '</a>' + parts[1];
+  });
   // Bare workspace paths the server confirmed exist. Runs here, after the two
   // link rules, so an already-linked path is never re-wrapped and the anchors
   // above are skipped as tags.
