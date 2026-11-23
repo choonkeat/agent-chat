@@ -658,6 +658,33 @@ function splitUrlTrailingPunctuation(url) {
   return [url.slice(0, end), url.slice(end)];
 }
 
+// renderMarkdown's first pass escapes & < > but not ", because the code
+// highlighter needs real quotes. So every value placed in a double-quoted
+// attribute must go through this, or a " in it opens new attributes. Unlike
+// escapeAttr, it leaves & alone: this text is already entity-escaped.
+function quoteEscaped(value) {
+  return value.replace(/"/g, '&quot;');
+}
+
+// Links bare URLs in text only. Skipping tags keeps a URL inside an existing
+// href, src or alt from being rewritten into markup there, and skipping anchor
+// text keeps [https://a.com](https://b.com) from nesting one link in another.
+function linkBareUrls(html) {
+  var anchorDepth = 0;
+  return html.split(/(<[^>]*>)/).map(function(part, i) {
+    if (i % 2) {
+      if (/^<a\b/i.test(part)) anchorDepth++;
+      else if (/^<\/a\s*>/i.test(part) && anchorDepth > 0) anchorDepth--;
+      return part;
+    }
+    if (anchorDepth > 0) return part;
+    return part.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, function(match) {
+      var parts = splitUrlTrailingPunctuation(match);
+      return '<a href="' + quoteEscaped(parts[0]) + '" target="_blank" rel="noopener">' + parts[0] + '</a>' + parts[1];
+    });
+  }).join('');
+}
+
 function renderMarkdown(text, filePaths) {
   // Escape HTML
   var html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -762,7 +789,7 @@ function renderMarkdown(text, filePaths) {
   // Must run before the link rule so the leading "!" is consumed.
   html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, function(_, alt, url) {
     if (/^\s*javascript:/i.test(url)) return alt;
-    return '<img src="' + resolveAgainstParent(url) + '" alt="' + alt + '">';
+    return '<img src="' + quoteEscaped(resolveAgainstParent(url)) + '" alt="' + quoteEscaped(alt) + '">';
   });
   // Links [text](url) — accept absolute (http/https) AND relative URLs since
   // chat content often links by path. Block `javascript:` for safety.
@@ -779,13 +806,10 @@ function renderMarkdown(text, filePaths) {
         + '" data-files-path="' + filesPath.replace(/"/g, '&quot;')
         + '" target="_blank" rel="noopener">' + text + '</a>';
     }
-    return '<a href="' + resolveAgainstParent(url) + '" target="_blank" rel="noopener">' + text + '</a>';
+    return '<a href="' + quoteEscaped(resolveAgainstParent(url)) + '" target="_blank" rel="noopener">' + text + '</a>';
   });
   // Bare URLs
-  html = html.replace(/(?<!["=])(https?:\/\/[^\s<]+)/g, function(match) {
-    var parts = splitUrlTrailingPunctuation(match);
-    return '<a href="' + parts[0] + '" target="_blank" rel="noopener">' + parts[0] + '</a>' + parts[1];
-  });
+  html = linkBareUrls(html);
   // Bare workspace paths the server confirmed exist. Runs here, after the two
   // link rules, so an already-linked path is never re-wrapped and the anchors
   // above are skipped as tags.

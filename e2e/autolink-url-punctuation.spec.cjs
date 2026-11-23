@@ -120,4 +120,43 @@ test.describe('renderMarkdown — bare URL punctuation', () => {
     });
     expect(html).not.toContain('href="https://"');
   });
+
+  // Parsed in an inert <template>, so nothing in these inputs can execute.
+  for (const [name, input] of [
+    ['bare URL', 'https://a.com/"onmouseover="x'],
+    ['markdown link', '[t](https://a.com/"onmouseover="x)'],
+    ['image URL', '![t](https://a.com/"onerror="x)'],
+    ['image alt', '![a"onerror="x](https://a.com/i.png)'],
+    ['URL inside a link href', '[t](https://a.com/,https://b.com/"onclick="x)'],
+    ['URL inside an image alt', '![https://b.com/"onerror="x](https://a.com/i.png)'],
+  ]) {
+    test(`a double quote cannot add an attribute: ${name}`, async ({ page }) => {
+      await gotoRetry(page, server.url);
+      await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+      const elements = await page.evaluate((md) => {
+        const t = document.createElement('template');
+        // @ts-ignore -- page global from app.js
+        t.innerHTML = window.renderMarkdown(md);
+        return [...t.content.querySelectorAll('*')].map((el) => ({
+          tag: el.tagName,
+          attrs: el.getAttributeNames().sort(),
+        }));
+      }, input);
+      expect(elements).toHaveLength(1);
+      const allowed = elements[0].tag === 'IMG' ? ['alt', 'src'] : ['href', 'rel', 'target'];
+      expect(elements[0].attrs).toEqual(allowed);
+    });
+  }
+
+  test('a URL used as link text stays one link', async ({ page }) => {
+    await gotoRetry(page, server.url);
+    await expect(page.locator('#chat-input')).toBeEnabled({ timeout: 5000 });
+    const hrefs = await page.evaluate(() => {
+      const t = document.createElement('template');
+      // @ts-ignore -- page global from app.js
+      t.innerHTML = window.renderMarkdown('[https://a.com](https://b.com)');
+      return [...t.content.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    });
+    expect(hrefs).toEqual(['https://b.com']);
+  });
 });
