@@ -2,6 +2,15 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.21.1] — 2026-11-28
+
+### Fixes
+- **Paste buttons go away once you move on.** "Quote it" and "Paste as
+  attachment instead" stayed on screen as long as the pasted text was
+  untouched, even while you typed something else below it, so it was
+  unclear what they would act on. Typing anything now hides them, and
+  Esc hides them without changing the text.
+
 ## [0.21.0] — 2026-11-28
 
 ### Changes
