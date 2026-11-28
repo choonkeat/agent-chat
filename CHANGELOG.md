@@ -2,6 +2,40 @@
 
 All notable changes to agent-chat are documented in this file.
 
+## [0.21.0] — 2026-11-28
+
+### Changes
+- **What's new panel.** A sparkle button next to download shows the
+  newest 3 releases from this changelog. A red dot on it means a release
+  came out since you last opened the panel in this browser. The first
+  time a browser sees it, no dot shows: only later releases light it.
+- **Turn a paste into an attachment.** Pasting 5 or more lines that stay
+  in the text box now shows a "Paste as attachment instead (N lines)"
+  button. Tap it to move the text out of the box into a .txt attachment.
+  The button goes away when you send, edit the pasted text, or paste
+  again.
+- **Quote what you paste.** A paste that starts on a line of its own (in
+  an empty box, or after pressing Enter) shows a "Quote it" button, even
+  for a single line. Tap it to mark the pasted text as a quote: each line
+  gets `> ` in front. Ctrl+Z undoes it. A paste that carries on a line you
+  already typed does not show the button.
+- **Tap an attachment for its menu.** Attachments waiting to be sent no
+  longer have an x. Tapping one opens a menu: Move into chat, View and
+  Delete for text files; View and Delete for others. Move into chat puts
+  the text back where the cursor is, and offers the attachment button
+  again so you can undo it. Very large text (8000+ bytes) asks for a
+  second tap first. View opens your local copy in a new tab.
+
+### Fixes
+- **Links no longer swallow the end of a sentence.** A web address at the
+  end of a sentence took the full stop, comma or question mark into the
+  link. Brackets that belong to the address are kept.
+- **A double quote in a link or image can no longer break the message's
+  layout.** A `"` in a web address or image description could spill
+  extra markup into the rendered message.
+- **Long attachment names wrap inside the bubble** instead of widening it
+  and making the chat page scroll sideways.
+
 ## [0.20.0] — 2026-11-21
 
 ### Changes
