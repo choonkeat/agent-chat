@@ -1510,12 +1510,15 @@ function updateSendButton() {
 }
 
 function renderStaging() {
+  closeChipMenu();
   fileStaging.innerHTML = '';
-  if (stagedFiles.length === 0) {
+  var pill = pastePillPending() ? makePastePill() : null;
+  if (stagedFiles.length === 0 && !pill) {
     fileStaging.classList.remove('visible');
     return;
   }
   fileStaging.classList.add('visible');
+  if (pill) fileStaging.appendChild(pill);
   for (var i = 0; i < stagedFiles.length; i++) {
     var sf = stagedFiles[i];
     var chip = document.createElement('div');
@@ -1547,26 +1550,247 @@ function renderStaging() {
       : sf.uploadFailed ? 'Upload failed \u2014 remove and re-add' : sf.name;
     chip.appendChild(nameSpan);
 
-    var removeBtn = document.createElement('button');
-    removeBtn.className = 'file-remove';
-    removeBtn.textContent = '\u00d7';
-    removeBtn.dataset.index = i;
-    removeBtn.addEventListener('click', function(e) {
-      var idx = parseInt(e.currentTarget.dataset.index);
-      var entry = stagedFiles[idx];
-      if (entry) {
-        if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
-        if (entry.abortController) entry.abortController.abort();
-      }
-      stagedFiles.splice(idx, 1);
-      renderStaging();
-      updateSendButton();
-    });
-    chip.appendChild(removeBtn);
+    // The whole chip is the control: tapping it opens [Move into chat | View |
+    // Delete]. There is no separate x — next to a tappable chip it hid that
+    // the chip did anything, and a slip onto it deleted the file outright.
+    var caret = document.createElement('span');
+    caret.className = 'file-caret';
+    caret.setAttribute('aria-hidden', 'true');
+    caret.textContent = '\u25be';
+    chip.appendChild(caret);
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('tabindex', '0');
+    chip.setAttribute('aria-haspopup', 'menu');
+    chip.setAttribute('aria-label', sf.name + ' \u2014 options');
+    chip.addEventListener('click', (function(entry) {
+      return function(e) { toggleChipMenu(e.currentTarget, entry); };
+    })(sf));
+    chip.addEventListener('keydown', (function(entry) {
+      return function(e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        toggleChipMenu(e.currentTarget, entry, true);
+      };
+    })(sf));
 
     fileStaging.appendChild(chip);
   }
 }
+
+// --- Chip menu ---
+// One menu open at a time, positioned above the chip it belongs to (the
+// composer sits at the bottom of the screen, so below would be off it).
+
+var chipMenu = null;      // the open menu element, or null
+var chipMenuEntry = null; // the stagedFiles entry it acts on
+
+// Text files can go back into the message box; anything bigger than this is
+// not offered at all (a megabyte of text in a textarea locks the page up).
+var MOVE_INTO_CHAT_MAX_BYTES = 1024 * 1024;
+var TEXT_FILE_EXTENSIONS = ['txt', 'md', 'markdown', 'log', 'json', 'jsonl', 'csv', 'tsv',
+  'yaml', 'yml', 'toml', 'ini', 'env', 'xml', 'html', 'htm', 'css', 'js', 'mjs', 'cjs',
+  'ts', 'tsx', 'jsx', 'go', 'py', 'rb', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cc',
+  'cpp', 'hpp', 'cs', 'php', 'sh', 'bash', 'zsh', 'sql', 'diff', 'patch', 'elm', 'svg'];
+
+function isTextEntry(entry) {
+  if (!entry || !entry.file) return false;
+  var type = entry.file.type || '';
+  if (type.indexOf('text/') === 0) return true;
+  if (/^application\/(json|xml|javascript|x-sh|x-yaml|yaml|toml|sql)\b/.test(type)) return true;
+  var dot = entry.name.lastIndexOf('.');
+  if (dot < 0) return false;
+  return TEXT_FILE_EXTENSIONS.indexOf(entry.name.slice(dot + 1).toLowerCase()) >= 0;
+}
+
+function closeChipMenu() {
+  if (!chipMenu) return;
+  if (chipMenu.parentNode) chipMenu.parentNode.removeChild(chipMenu);
+  chipMenu = null;
+  chipMenuEntry = null;
+}
+
+function toggleChipMenu(chip, entry, byKeyboard) {
+  if (chipMenu && chipMenuEntry === entry) { closeChipMenu(); return; }
+  closeChipMenu();
+  var items = [];
+  if (isTextEntry(entry) && entry.file.size <= MOVE_INTO_CHAT_MAX_BYTES) {
+    items.push(['move', 'Move into chat']);
+  }
+  if (entry.file) items.push(['view', 'View']);
+  items.push(['delete', 'Delete']);
+
+  var menu = document.createElement('div');
+  menu.id = 'chip-menu';
+  menu.setAttribute('role', 'menu');
+  for (var i = 0; i < items.length; i++) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('role', 'menuitem');
+    btn.className = 'chip-menu-item chip-menu-' + items[i][0];
+    btn.dataset.action = items[i][0];
+    btn.textContent = items[i][1];
+    // Keep the composer's caret where it was: Move into chat inserts there.
+    btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      var action = e.currentTarget.dataset.action;
+      var target = chipMenuEntry;
+      // A big file asks once, in the menu itself: the first tap turns the
+      // item into the question, the second does it. (A native confirm() is
+      // unreliable inside a cross-origin iframe, which is where this runs.)
+      if (action === 'move' && target.file.size >= PASTE_AS_FILE_MIN_CHARS &&
+          !e.currentTarget.classList.contains('armed')) {
+        e.currentTarget.classList.add('armed');
+        e.currentTarget.textContent = 'Tap again: all ' +
+          formatUploadSize(target.file.size) + ' into the message box';
+        return;
+      }
+      closeChipMenu();
+      runChipAction(action, target);
+    });
+    menu.appendChild(btn);
+  }
+  document.body.appendChild(menu);
+  var r = chip.getBoundingClientRect();
+  var left = Math.max(4, Math.min(r.left, window.innerWidth - menu.offsetWidth - 4));
+  menu.style.left = left + 'px';
+  menu.style.bottom = (window.innerHeight - r.top + 4) + 'px';
+  chipMenu = menu;
+  chipMenuEntry = entry;
+  if (byKeyboard) menu.firstChild.focus();
+}
+
+document.addEventListener('mousedown', function(e) {
+  if (!chipMenu) return;
+  if (chipMenu.contains(e.target)) return;
+  if (e.target.closest && e.target.closest('.file-chip')) return; // the chip toggles itself
+  closeChipMenu();
+}, true);
+document.addEventListener('keydown', function(e) {
+  if (chipMenu && e.key === 'Escape') { closeChipMenu(); chatInput.focus(); }
+});
+window.addEventListener('resize', closeChipMenu);
+
+function removeStagedEntry(entry) {
+  var idx = stagedFiles.indexOf(entry);
+  if (idx < 0) return;
+  if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+  if (entry.abortController) entry.abortController.abort();
+  stagedFiles.splice(idx, 1);
+  renderStaging();
+  updateSendButton();
+}
+
+function runChipAction(action, entry) {
+  if (!entry || stagedFiles.indexOf(entry) < 0) return;
+  if (action === 'delete') { removeStagedEntry(entry); return; }
+  if (action === 'view') { viewStagedEntry(entry); return; }
+  if (action === 'move') moveEntryIntoChat(entry);
+}
+
+// Open the local copy in a new tab. Text goes as text/plain so a .md or .json
+// shows in the tab instead of downloading.
+function viewStagedEntry(entry) {
+  var blob = isTextEntry(entry)
+    ? new Blob([entry.file], { type: 'text/plain;charset=utf-8' })
+    : entry.file;
+  var url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+}
+
+function moveEntryIntoChat(entry) {
+  entry.file.text().then(function(text) {
+    if (stagedFiles.indexOf(entry) < 0) return; // deleted meanwhile
+    text = normalizeNewlines(text).replace(/\n+$/, '');
+    removeStagedEntry(entry);
+    insertBlockAtCursor(text, entry.name);
+  });
+}
+
+// Insert a block of text at the composer's caret on lines of its own, then
+// offer to turn it back into a file (the pill) in case that was a slip.
+function insertBlockAtCursor(text, name) {
+  if (chatInput.disabled || chatInput.readOnly) return;
+  chatInput.focus();
+  var v = chatInput.value;
+  var start = chatInput.selectionStart;
+  var end = chatInput.selectionEnd;
+  var lead = start > 0 && v.charAt(start - 1) !== '\n' ? '\n' : '';
+  var trail = end < v.length && v.charAt(end) !== '\n' ? '\n' : '';
+  insertAtCursor(lead + text + trail);
+  pastePill = { text: text, start: start + lead.length, name: name };
+  renderStaging();
+}
+
+// --- "Paste as attachment instead" pill ---
+// The way out of chat for text that stayed inline: a multi-line paste under
+// the attachment threshold, or a file just moved into chat. Shown while that
+// text is still in the composer exactly as it landed; editing it, sending it,
+// or the next paste retires the pill.
+
+var PASTE_PILL_MIN_LINES = 5;
+var pastePill = null; // { text, start, name|undefined }
+
+// Where the pill's text sits in the composer now, or -1.
+function pastePillIndex() {
+  if (!pastePill) return -1;
+  var v = chatInput.value;
+  if (v.substr(pastePill.start, pastePill.text.length) === pastePill.text) return pastePill.start;
+  return v.indexOf(pastePill.text);
+}
+
+function pastePillPending() {
+  if (pastePill && pastePillIndex() < 0) pastePill = null;
+  return !!pastePill;
+}
+
+function makePastePill() {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'paste-pill';
+  btn.title = 'Take this text out of the message box and attach it as a file instead';
+  btn.textContent = '📎 Paste as attachment instead (' + countLines(pastePill.text) + ' lines)';
+  btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+  btn.addEventListener('click', pastePillToFile);
+  return btn;
+}
+
+function pastePillToFile() {
+  var at = pastePillIndex();
+  var pill = pastePill;
+  pastePill = null;
+  if (at < 0 || chatInput.disabled || chatInput.readOnly) { renderStaging(); return; }
+  var v = chatInput.value;
+  var end = at + pill.text.length;
+  // Take one line break with it, so no blank line is left where it was.
+  if (v.charAt(end) === '\n') end++;
+  else if (at > 0 && v.charAt(at - 1) === '\n') at--;
+  chatInput.focus();
+  chatInput.setSelectionRange(at, end);
+  if (!(document.execCommand && document.execCommand('delete'))) {
+    chatInput.value = v.slice(0, at) + v.slice(end);
+    chatInput.setSelectionRange(at, at);
+    chatInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  stageTextAsFile(pill.text, pill.name);
+}
+
+// Called on every paste that lands as text: remember where it went, then look
+// once the browser has inserted it (its default action runs after our handler).
+function notePastedText(text) {
+  text = normalizeNewlines(text);
+  if (countLines(text) < PASTE_PILL_MIN_LINES) { pastePill = null; return; }
+  var start = chatInput.selectionStart;
+  setTimeout(function() {
+    pastePill = { text: text, start: start };
+    renderStaging();
+  }, 0);
+}
+
+chatInput.addEventListener('input', function() {
+  if (pastePill && !pastePillPending()) renderStaging();
+});
 
 // Paperclip button
 btnAttach.addEventListener('click', function() {
@@ -1654,9 +1878,9 @@ function belongsInAttachment(text) {
 
 // Stage text as a .txt attachment, named with its own line count so the chip
 // says what it swallowed.
-function stageTextAsFile(text) {
+function stageTextAsFile(text, name) {
   text = normalizeNewlines(text);
-  addStagedFiles([new File([text], 'pasted-' + countLines(text) + '-lines.txt', { type: 'text/plain' })]);
+  addStagedFiles([new File([text], name || ('pasted-' + countLines(text) + '-lines.txt'), { type: 'text/plain' })]);
 }
 
 // Insert text at the cursor, replacing any selection. Prefers execCommand so
@@ -1825,6 +2049,7 @@ function handleTransfer(dt, insertByHand, isPaste) {
   // that skip this check put a 5000-row sheet straight into the composer. A
   // drop is left alone: there the files win (see below).
   if (hasText && (files.length === 0 || isPaste) && belongsInAttachment(text)) {
+    pastePill = null;
     stageTextAsFile(text);
     return true;
   }
@@ -1853,6 +2078,7 @@ function handleTransfer(dt, insertByHand, isPaste) {
         return true;
       }
     }
+    notePastedText(text);
     if (insertByHand) {
       insertPastedText(text);
       return true;
@@ -1865,6 +2091,7 @@ function handleTransfer(dt, insertByHand, isPaste) {
   // own path as text, and the file is what the user meant, so text never wins
   // there.
   if (isPaste && hasText) {
+    notePastedText(text);
     if (insertByHand) insertPastedText(text);
     return insertByHand;
   }

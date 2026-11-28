@@ -206,6 +206,26 @@ async function pasteSizedFile(page, name, type, size) {
   }, { n: name, t: type, sz: size });
 }
 
+/**
+ * A plain-text paste the way a real browser finishes it: when the handler
+ * leaves the default alone, insert the text at the caret ourselves (a
+ * synthetic ClipboardEvent never inserts anything on its own).
+ */
+async function pasteTextInserted(page, text) {
+  return page.evaluate((payload) => {
+    const el = document.getElementById('chat-input');
+    el.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', payload);
+    const evt = new ClipboardEvent('paste', {
+      clipboardData: dt, bubbles: true, cancelable: true,
+    });
+    el.dispatchEvent(evt);
+    if (!evt.defaultPrevented) document.execCommand('insertText', false, payload);
+    return evt.defaultPrevented;
+  }, text);
+}
+
 /** n lines of filler text, joined by newlines. */
 function lines(n) {
   return Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n');
@@ -319,7 +339,9 @@ test.describe('Paste to upload', () => {
       await ready(page, server.url);
       await pasteNothing(page, []);
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
-      await page.locator('#file-staging .file-remove').click();
+      await page.locator('#file-staging .file-chip').click();
+      await expect(page.locator('#chip-menu .chip-menu-item')).toHaveText(['Delete']); // nothing to view
+      await page.locator('#chip-menu .chip-menu-delete').click();
       await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
     } finally { await context.close().catch(() => {}); }
   });
@@ -580,6 +602,160 @@ test.describe('Paste to upload', () => {
       const prevented = await pasteText(page, lines(30).split('\n').join('\r'));
       expect(prevented).toBe(true);
       await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-30-lines.txt', { timeout: 3000 });
+    } finally { await context.close().catch(() => {}); }
+  });
+  // --- "Paste as attachment instead" pill (PASTE_PILL_MIN_LINES is 5) ---
+
+  test('a 22-line paste stays inline and offers "Paste as attachment instead"', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await textarea.fill('see below:\n');
+      await pasteTextInserted(page, lines(22));
+      const pill = page.locator('#paste-pill');
+      await expect(pill).toHaveText(/^📎 Paste as attachment instead \(22 lines\)$/, { timeout: 3000 });
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+      await pill.click();
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-22-lines.txt', { timeout: 3000 });
+      await expect(textarea).toHaveValue('see below:'); // the line break before it goes too
+      await expect(pill).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a 4-line paste does not offer "Paste as attachment instead"', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteTextInserted(page, lines(4));
+      await page.waitForTimeout(300);
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('editing the pasted text retires the pill', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteTextInserted(page, lines(6));
+      await expect(page.locator('#paste-pill')).toHaveCount(1, { timeout: 3000 });
+      await textarea.press('Backspace'); // eats the last character of "line 6"
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  // --- Chip menu ---
+
+  test('tapping a text chip offers Move into chat, View, Delete', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteText(page, lines(30)); // staged as pasted-30-lines.txt
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await expect(chip.locator('.file-remove')).toHaveCount(0); // no x any more
+      await chip.click();
+      await expect(page.locator('#chip-menu .chip-menu-item')).toHaveText(['Move into chat', 'View', 'Delete']);
+      await page.locator('#chip-menu .chip-menu-move').click();
+      await expect(textarea).toHaveValue(lines(30));
+      await expect(chip).toHaveCount(0);
+      // ...and the way back is offered at once.
+      await page.locator('#paste-pill').click();
+      await expect(page.locator('#file-staging .file-name')).toHaveText('pasted-30-lines.txt', { timeout: 3000 });
+      await expect(textarea).toHaveValue('');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('moving text into chat puts it on its own lines at the caret', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteText(page, lines(30));
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(1, { timeout: 3000 });
+      await textarea.fill('before after');
+      await textarea.evaluate((el) => el.setSelectionRange(6, 6)); // after "before"
+      await page.locator('#file-staging .file-chip').click();
+      await page.locator('#chip-menu .chip-menu-move').click();
+      await expect(textarea).toHaveValue('before\n' + lines(30) + '\n after');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('an image chip offers View and Delete only; Escape closes the menu', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pastePng(page, '');
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await chip.click();
+      await expect(page.locator('#chip-menu .chip-menu-item')).toHaveText(['View', 'Delete']);
+      await page.keyboard.press('Escape');
+      await expect(page.locator('#chip-menu')).toHaveCount(0);
+      await chip.click();
+      await page.locator('#chip-menu .chip-menu-delete').click();
+      await expect(chip).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('View opens the staged file in a new tab', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteText(page, lines(30));
+      await page.locator('#file-staging .file-chip').click();
+      const [popup] = await Promise.all([
+        context.waitForEvent('page'),
+        page.locator('#chip-menu .chip-menu-view').click(),
+      ]);
+      await expect(popup.locator('body')).toContainText('line 30');
+    } finally { await context.close().catch(() => {}); }
+  });
+  test('moving 8000+ characters into chat takes a second tap', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteText(page, 'x'.repeat(8000)); // staged as pasted-1-lines.txt
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await chip.click();
+      const move = page.locator('#chip-menu .chip-menu-move');
+      await move.click();
+      await expect(move).toHaveText('Tap again: all 7.8 KB into the message box');
+      await expect(chip).toHaveCount(1); // nothing moved yet
+      await expect(textarea).toHaveValue('');
+      await move.click();
+      await expect(chip).toHaveCount(0);
+      await expect(textarea).toHaveValue('x'.repeat(8000));
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('closing the menu forgets a half-done big move', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteText(page, 'x'.repeat(8000));
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await chip.click();
+      await page.locator('#chip-menu .chip-menu-move').click();
+      await page.keyboard.press('Escape');
+      await chip.click();
+      await expect(page.locator('#chip-menu .chip-menu-move')).toHaveText('Move into chat');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('the chip menu opens from the keyboard and closes on an outside click', async () => {
+    const { context, page } = await openPage();
+    try {
+      await ready(page, server.url);
+      await pasteText(page, lines(30));
+      const chip = page.locator('#file-staging .file-chip');
+      await expect(chip).toHaveCount(1, { timeout: 3000 });
+      await chip.focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator('#chip-menu .chip-menu-move')).toBeFocused();
+      await page.locator('#messages').click({ position: { x: 5, y: 5 } });
+      await expect(page.locator('#chip-menu')).toHaveCount(0);
+      await expect(chip).toHaveCount(1); // closing is not deleting
     } finally { await context.close().catch(() => {}); }
   });
 });
