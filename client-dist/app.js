@@ -1730,9 +1730,9 @@ function insertBlockAtCursor(text, name) {
 // Offers for text that stayed inline. "Paste as attachment instead" is the way
 // out of chat for a multi-line paste under the attachment threshold, or a file
 // just moved into chat. "Quote it" is offered for any paste that starts on a
-// line of its own (not one that carries on a line already typed). Shown while
-// that text is still in the composer exactly as it landed; editing it, sending
-// it, or the next paste retires them.
+// line of its own (not one that carries on a line already typed). Shown until
+// the next keystroke: typing anything, Esc, sending, or the next paste retires
+// them.
 
 var PASTE_PILL_MIN_LINES = 5;
 var pastePill = null; // { text, start, name|undefined, attach, quote }
@@ -1830,8 +1830,22 @@ function notePastedText(text) {
   }, 0);
 }
 
+// Any other typing after the offers appear means they were passed over, so
+// they go. The paste's own input event fires before notePastedText's timeout
+// sets the pill, so it never retires its own offer. Esc dismisses them too.
+function dismissPastePill() {
+  if (!pastePill) return false;
+  pastePill = null;
+  renderStaging();
+  return true;
+}
+
 chatInput.addEventListener('input', function() {
-  if (pastePill && !pastePillPending()) renderStaging();
+  dismissPastePill();
+});
+
+chatInput.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape' && !chipMenu && !acVisible && dismissPastePill()) e.preventDefault();
 });
 
 // Paperclip button

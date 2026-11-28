@@ -687,6 +687,34 @@ test.describe('Paste to upload', () => {
     } finally { await context.close().catch(() => {}); }
   });
 
+  test('typing on after a paste dismisses both offers', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteTextInserted(page, lines(6));
+      await expect(page.locator('#paste-pill')).toHaveCount(1, { timeout: 3000 });
+      await expect(page.locator('#quote-pill')).toHaveCount(1);
+      await textarea.press('Shift+Enter'); // a new line after the paste, text untouched
+      await textarea.type('my comment');
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+      await expect(page.locator('#quote-pill')).toHaveCount(0);
+      await expect(textarea).toHaveValue(lines(6) + '\nmy comment');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('Esc dismisses the offers and leaves the text alone', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteTextInserted(page, lines(6));
+      await expect(page.locator('#quote-pill')).toHaveCount(1, { timeout: 3000 });
+      await textarea.press('Escape');
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+      await expect(page.locator('#quote-pill')).toHaveCount(0);
+      await expect(textarea).toHaveValue(lines(6));
+    } finally { await context.close().catch(() => {}); }
+  });
+
   // --- Chip menu ---
 
   test('tapping a text chip offers Move into chat, View, Delete', async () => {
