@@ -1354,8 +1354,9 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   color: #ef4444;
 }
 
-/* Offer to turn a multi-line paste that stayed inline into an attachment. */
-#paste-pill {
+/* Offers for a multi-line paste that stayed inline: make it an attachment
+   (#paste-pill) or a quote (#quote-pill). */
+.paste-offer {
   align-self: center;
   background: var(--bg-elevated);
   border: 1px dashed var(--text-muted);
@@ -1367,7 +1368,7 @@ body.chip-append #quick-replies .chip:not(:disabled)::after,
   cursor: pointer;
 }
 
-#paste-pill:hover {
+.paste-offer:hover {
   color: var(--text-primary);
   border-style: solid;
 }

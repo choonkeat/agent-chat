@@ -622,6 +622,50 @@ test.describe('Paste to upload', () => {
     } finally { await context.close().catch(() => {}); }
   });
 
+  test('"Quote it" marks every pasted line as a quote, in place', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await textarea.fill('see below:\n');
+      await pasteTextInserted(page, 'a\nb\n\nc\nd');
+      const quote = page.locator('#quote-pill');
+      await expect(quote).toHaveText('❝ Quote it', { timeout: 3000 });
+      await quote.click();
+      await expect(textarea).toHaveValue('see below:\n> a\n> b\n>\n> c\n> d');
+      await expect(quote).toHaveCount(0);
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+      await expect(page.locator('#file-staging .file-chip')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a one-line paste into an empty box offers "Quote it" only', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await pasteTextInserted(page, 'one line');
+      const quote = page.locator('#quote-pill');
+      await expect(quote).toHaveCount(1, { timeout: 3000 });
+      await expect(page.locator('#paste-pill')).toHaveCount(0);
+      await quote.click();
+      await expect(textarea).toHaveValue('> one line');
+    } finally { await context.close().catch(() => {}); }
+  });
+
+  test('a paste that carries on a typed line does not offer "Quote it"', async () => {
+    const { context, page } = await openPage();
+    try {
+      const textarea = await ready(page, server.url);
+      await textarea.fill('look at ');
+      await pasteTextInserted(page, 'this bit');
+      await page.waitForTimeout(300);
+      await expect(page.locator('#quote-pill')).toHaveCount(0);
+      // A long one still offers the attachment, but not the quote.
+      await pasteTextInserted(page, lines(6));
+      await expect(page.locator('#paste-pill')).toHaveCount(1, { timeout: 3000 });
+      await expect(page.locator('#quote-pill')).toHaveCount(0);
+    } finally { await context.close().catch(() => {}); }
+  });
+
   test('a 4-line paste does not offer "Paste as attachment instead"', async () => {
     const { context, page } = await openPage();
     try {

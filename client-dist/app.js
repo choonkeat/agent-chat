@@ -1512,13 +1512,16 @@ function updateSendButton() {
 function renderStaging() {
   closeChipMenu();
   fileStaging.innerHTML = '';
-  var pill = pastePillPending() ? makePastePill() : null;
-  if (stagedFiles.length === 0 && !pill) {
+  var pending = pastePillPending();
+  var pill = pending && pastePill.attach ? makePastePill() : null;
+  var quote = pending && pastePill.quote ? makeQuotePill() : null;
+  if (stagedFiles.length === 0 && !pill && !quote) {
     fileStaging.classList.remove('visible');
     return;
   }
   fileStaging.classList.add('visible');
   if (pill) fileStaging.appendChild(pill);
+  if (quote) fileStaging.appendChild(quote);
   for (var i = 0; i < stagedFiles.length; i++) {
     var sf = stagedFiles[i];
     var chip = document.createElement('div');
@@ -1719,18 +1722,20 @@ function insertBlockAtCursor(text, name) {
   var lead = start > 0 && v.charAt(start - 1) !== '\n' ? '\n' : '';
   var trail = end < v.length && v.charAt(end) !== '\n' ? '\n' : '';
   insertAtCursor(lead + text + trail);
-  pastePill = { text: text, start: start + lead.length, name: name };
+  pastePill = { text: text, start: start + lead.length, name: name, attach: true, quote: true };
   renderStaging();
 }
 
-// --- "Paste as attachment instead" pill ---
-// The way out of chat for text that stayed inline: a multi-line paste under
-// the attachment threshold, or a file just moved into chat. Shown while that
-// text is still in the composer exactly as it landed; editing it, sending it,
-// or the next paste retires the pill.
+// --- "Paste as attachment instead" / "Quote it" pills ---
+// Offers for text that stayed inline. "Paste as attachment instead" is the way
+// out of chat for a multi-line paste under the attachment threshold, or a file
+// just moved into chat. "Quote it" is offered for any paste that starts on a
+// line of its own (not one that carries on a line already typed). Shown while
+// that text is still in the composer exactly as it landed; editing it, sending
+// it, or the next paste retires them.
 
 var PASTE_PILL_MIN_LINES = 5;
-var pastePill = null; // { text, start, name|undefined }
+var pastePill = null; // { text, start, name|undefined, attach, quote }
 
 // Where the pill's text sits in the composer now, or -1.
 function pastePillIndex() {
@@ -1749,6 +1754,7 @@ function makePastePill() {
   var btn = document.createElement('button');
   btn.type = 'button';
   btn.id = 'paste-pill';
+  btn.className = 'paste-offer';
   btn.title = 'Take this text out of the message box and attach it as a file instead';
   btn.textContent = '📎 Paste as attachment instead (' + countLines(pastePill.text) + ' lines)';
   btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
@@ -1776,14 +1782,50 @@ function pastePillToFile() {
   stageTextAsFile(pill.text, pill.name);
 }
 
+// The pill's sibling: keep the text inline but mark it as quoted, "> " at the
+// start of every line (a bare ">" on an empty one, so the quote stays one
+// block). Inserted as an edit the browser can undo with Ctrl+Z.
+function makeQuotePill() {
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.id = 'quote-pill';
+  btn.className = 'paste-offer';
+  btn.title = 'Mark the pasted text as a quote';
+  btn.textContent = '❝ Quote it';
+  btn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+  btn.addEventListener('click', pastePillToQuote);
+  return btn;
+}
+
+function quoteLines(text) {
+  return text.split('\n').map(function(l) { return l === '' ? '>' : '> ' + l; }).join('\n');
+}
+
+function pastePillToQuote() {
+  var at = pastePillIndex();
+  var pill = pastePill;
+  pastePill = null;
+  if (at < 0 || chatInput.disabled || chatInput.readOnly) { renderStaging(); return; }
+  var end = at + pill.text.length;
+  chatInput.focus();
+  chatInput.setSelectionRange(at, end);
+  insertAtCursor(quoteLines(pill.text));
+  renderStaging();
+}
+
 // Called on every paste that lands as text: remember where it went, then look
 // once the browser has inserted it (its default action runs after our handler).
 function notePastedText(text) {
   text = normalizeNewlines(text);
-  if (countLines(text) < PASTE_PILL_MIN_LINES) { pastePill = null; return; }
   var start = chatInput.selectionStart;
+  var attach = countLines(text) >= PASTE_PILL_MIN_LINES;
+  var quote = text.trim() !== '' && (start === 0 || chatInput.value.charAt(start - 1) === '\n');
+  if (!attach && !quote) {
+    if (pastePill) { pastePill = null; renderStaging(); }
+    return;
+  }
   setTimeout(function() {
-    pastePill = { text: text, start: start };
+    pastePill = { text: text, start: start, attach: attach, quote: quote };
     renderStaging();
   }, 0);
 }
